@@ -1,5 +1,11 @@
 <!doctype html>
-<html>
+<!--
+  `dark` lives here, not on a div inside #root: Radix portals (dropdowns,
+  tooltips, etc.) render into document.body, a sibling of #root, so a div-level
+  class would leave portaled content outside its reach and falling back to the
+  light theme's CSS variables.
+-->
+<html class="dark">
   <head>
     <meta charset="UTF-8" />
     <title>fractal</title>
