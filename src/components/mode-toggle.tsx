@@ -74,7 +74,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       */}
       <span
         aria-hidden
-        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform duration-200 ease-out"
+        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
         style={{ transform: `translateX(${itemOffsets[activeIndex]}px)` }}
       />
 
