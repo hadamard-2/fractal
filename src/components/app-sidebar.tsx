@@ -104,15 +104,13 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar collapsible="icon" {...props}>
+    <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
         <div className="flex items-center gap-2 px-2 py-1.5">
           <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
             <Blocks className="size-4" />
           </div>
-          <span className="truncate text-sm font-semibold group-data-[collapsible=icon]:hidden">
-            Fractal
-          </span>
+          <span className="truncate text-sm font-semibold">Fractal</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
