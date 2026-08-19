@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
@@ -7,15 +7,35 @@ if (started) {
   app.quit();
 }
 
+// The app draws its own title bar, so the native File/Edit/View menu is removed.
+// This also drops the accelerators it provided (Ctrl+R reload, Ctrl+Shift+I devtools).
+Menu.setApplicationMenu(null);
+
+// Matches --background in src/index.css (neutral-950) so the OS-drawn window
+// buttons sit on the same colour as the title bar we render underneath them.
+const TITLE_BAR_BACKGROUND = '#0a0a0a';
+const TITLE_BAR_SYMBOL = '#fafafa';
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
+    // Hide the native title bar but keep the real window controls as an overlay;
+    // the renderer draws the bar itself and inset via the titlebar-area-* env vars.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: TITLE_BAR_BACKGROUND,
+      symbolColor: TITLE_BAR_SYMBOL,
+      height: 36,
+    },
+    backgroundColor: TITLE_BAR_BACKGROUND,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+
+  mainWindow.maximize();
 
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -25,9 +45,6 @@ const createWindow = () => {
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
-
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
 };
 
 // This method will be called when Electron has finished

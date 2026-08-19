@@ -1,10 +1,25 @@
+import { useState } from 'react';
+
+import { ModeToggle, type Mode } from '@/components/mode-toggle';
+import { TitleBar } from '@/components/title-bar';
+
 export default function App() {
+  const [mode, setMode] = useState<Mode>('execute');
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-slate-100">
-      <h1 className="text-3xl font-semibold tracking-tight">
-        💖 Hello from React
-      </h1>
-      <p className="text-slate-400">Styled with Tailwind CSS v4.</p>
-    </main>
+    <div className="dark min-h-screen bg-background text-foreground">
+      <TitleBar />
+
+      <div
+        className="flex flex-col"
+        style={{ paddingTop: 'env(titlebar-area-height, 2.25rem)' }}
+      >
+        <div className="flex justify-end px-3 pt-4 pb-2">
+          <ModeToggle value={mode} onValueChange={setMode} />
+        </div>
+
+        <main className="flex flex-1 items-center justify-center" />
+      </div>
+    </div>
   );
 }
