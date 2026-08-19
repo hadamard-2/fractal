@@ -10,7 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx,.mts ."
   },
   "keywords": [],
   "author": {
@@ -35,6 +35,7 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@tailwindcss/vite": "4.3.3",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
@@ -45,6 +46,7 @@
     "eslint": "^8.57.1",
     "eslint-import-resolver-typescript": "^4.4.5",
     "eslint-plugin-import": "^2.32.0",
+    "tailwindcss": "4.3.3",
     "typescript": "~5.9.3",
     "vite": "^5.4.21"
   },
