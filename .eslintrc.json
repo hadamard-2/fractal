@@ -19,5 +19,8 @@
         "project": "./tsconfig.json"
       }
     }
-  }
+  },
+  "ignorePatterns": [
+    "src/components/ai-elements/**"
+  ]
 }
