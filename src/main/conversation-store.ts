@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CONTRACT_VERSION, type Conversation, type Entry } from '@/shared/agent-contract';
@@ -22,13 +22,31 @@ export class ConversationStore {
     return path.join(this.dir, `${id}.json`);
   }
 
+  /** Parse JSON from disk, rethrowing with the failing path if it's corrupt or truncated. */
+  private readJson<T>(filePath: string): T {
+    const raw = readFileSync(filePath, 'utf8');
+    try {
+      return JSON.parse(raw) as T;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Conversation file ${filePath} is corrupt or truncated: ${message}`);
+    }
+  }
+
+  /** Write JSON via write-temp-then-rename so a crash mid-write can't leave a half-written file. */
+  private writeJsonAtomic(filePath: string, value: unknown): void {
+    const tmpPath = `${filePath}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(value, null, 2));
+    renameSync(tmpPath, filePath);
+  }
+
   private readIndex(): Conversation[] {
     if (!existsSync(this.indexPath)) return [];
-    return JSON.parse(readFileSync(this.indexPath, 'utf8')) as Conversation[];
+    return this.readJson<Conversation[]>(this.indexPath);
   }
 
   private writeIndex(list: Conversation[]) {
-    writeFileSync(this.indexPath, JSON.stringify(list, null, 2));
+    this.writeJsonAtomic(this.indexPath, list);
   }
 
   create(repoRoot: string): Conversation {
@@ -41,7 +59,7 @@ export class ConversationStore {
       updatedAt: now,
       schemaVersion: CONTRACT_VERSION,
     };
-    writeFileSync(this.filePath(conversation.id), JSON.stringify({ conversation, entries: [] }, null, 2));
+    this.writeJsonAtomic(this.filePath(conversation.id), { conversation, entries: [] });
     this.writeIndex([...this.readIndex(), conversation]);
     return conversation;
   }
@@ -53,7 +71,7 @@ export class ConversationStore {
   load(id: string): StoredConversation | null {
     const p = this.filePath(id);
     if (!existsSync(p)) return null;
-    const raw = JSON.parse(readFileSync(p, 'utf8')) as StoredConversation;
+    const raw = this.readJson<StoredConversation>(p);
     if (raw.conversation.schemaVersion > CONTRACT_VERSION) {
       throw new Error(
         `Conversation ${id} was created by a newer version of Fractal ` +
@@ -71,7 +89,7 @@ export class ConversationStore {
     if (idx >= 0) stored.entries[idx] = entry;
     else stored.entries.push(entry);
     stored.conversation.updatedAt = Date.now();
-    writeFileSync(this.filePath(id), JSON.stringify(stored, null, 2));
+    this.writeJsonAtomic(this.filePath(id), stored);
     this.syncIndex(stored.conversation);
   }
 
@@ -80,7 +98,7 @@ export class ConversationStore {
     if (!stored) throw new Error(`Conversation ${id} not found`);
     if (patch.title !== undefined) stored.conversation.title = patch.title;
     stored.conversation.updatedAt = Date.now();
-    writeFileSync(this.filePath(id), JSON.stringify(stored, null, 2));
+    this.writeJsonAtomic(this.filePath(id), stored);
     this.syncIndex(stored.conversation);
   }
 
@@ -94,6 +112,6 @@ export class ConversationStore {
 
   /** Test-only: write raw stored content, bypassing validation. */
   forceWriteRawForTest(id: string, raw: StoredConversation): void {
-    writeFileSync(this.filePath(id), JSON.stringify(raw, null, 2));
+    this.writeJsonAtomic(this.filePath(id), raw);
   }
 }

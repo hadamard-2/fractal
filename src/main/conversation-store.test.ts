@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ConversationStore } from '@/main/conversation-store';
@@ -55,5 +55,26 @@ describe('ConversationStore', () => {
     // Simulate a future build having written this conversation.
     store.forceWriteRawForTest(c.id, { conversation: { ...c, schemaVersion: 99 }, entries: [] });
     expect(() => store.load(c.id)).toThrow(/newer version of Fractal/);
+  });
+
+  test('a corrupt conversation file fails loudly with a path-naming error', () => {
+    const c = store.create('/repo');
+    const filePath = path.join(dir, 'conversations', `${c.id}.json`);
+    writeFileSync(filePath, '{ not valid json');
+    expect(() => store.load(c.id)).toThrow(filePath);
+  });
+
+  test('a corrupt index.json makes list() fail loudly with a path-naming error', () => {
+    store.create('/repo');
+    const indexPath = path.join(dir, 'conversations', 'index.json');
+    writeFileSync(indexPath, '{ not valid json');
+    expect(() => store.list()).toThrow(indexPath);
+  });
+
+  test('saveEntry leaves no .tmp file behind', () => {
+    const c = store.create('/repo');
+    store.saveEntry(c.id, { ...entry('e1'), conversationId: c.id });
+    const files = readdirSync(path.join(dir, 'conversations'));
+    expect(files.some((f) => f.endsWith('.tmp'))).toBe(false);
   });
 });
