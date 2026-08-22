@@ -46,8 +46,8 @@ describe('ConversationStore', () => {
     expect(reopened.list()).toHaveLength(1);
   });
 
-  test('load of unknown id is null', () => {
-    expect(store.load('nope')).toBeNull();
+  test('load of an unknown but validly-shaped id is null', () => {
+    expect(store.load('00000000-0000-0000-0000-000000000000')).toBeNull();
   });
 
   test('refuses a conversation written by a newer contract version', () => {
@@ -69,6 +69,18 @@ describe('ConversationStore', () => {
     const indexPath = path.join(dir, 'conversations', 'index.json');
     writeFileSync(indexPath, '{ not valid json');
     expect(() => store.list()).toThrow(indexPath);
+  });
+
+  test('rejects a traversal-shaped conversation id instead of reading outside its directory', () => {
+    expect(() => store.load('../../../../etc/passwd')).toThrow(/must be a UUID/);
+    expect(() => store.saveEntry('../../../../etc/passwd', entry('e1'))).toThrow(/must be a UUID/);
+  });
+
+  test('a conversation file with the wrong shape produces a legible error, not a TypeError', () => {
+    const c = store.create('/repo');
+    const filePath = path.join(dir, 'conversations', `${c.id}.json`);
+    writeFileSync(filePath, JSON.stringify({ notAConversation: true }));
+    expect(() => store.load(c.id)).toThrow(/does not have the expected shape/);
   });
 
   test('saveEntry leaves no .tmp file behind', () => {

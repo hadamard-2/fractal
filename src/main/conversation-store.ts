@@ -8,6 +8,32 @@ interface StoredConversation {
   entries: Entry[];
 }
 
+// Ids are always minted by randomUUID() (conversation-store.create, or
+// randomUUID() elsewhere). A strict UUID shape check therefore rejects any
+// id the renderer could have supplied to escape `dir` (e.g. `../../etc`)
+// by construction, without needing to special-case path separators.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertValidId(id: string): void {
+  if (!UUID_RE.test(id)) {
+    // Deliberately does not echo `id` verbatim: an attacker-chosen id is the
+    // exact string this guard exists to keep out of error messages/logs.
+    throw new Error('Conversation id must be a UUID; rejected an id of the wrong shape.');
+  }
+}
+
+function isStoredConversation(value: unknown): value is StoredConversation {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.conversation === 'object' &&
+    v.conversation !== null &&
+    typeof (v.conversation as Record<string, unknown>).id === 'string' &&
+    typeof (v.conversation as Record<string, unknown>).schemaVersion === 'number' &&
+    Array.isArray(v.entries)
+  );
+}
+
 export class ConversationStore {
   private readonly dir: string;
   private readonly indexPath: string;
@@ -19,18 +45,33 @@ export class ConversationStore {
   }
 
   private filePath(id: string) {
+    assertValidId(id);
     return path.join(this.dir, `${id}.json`);
   }
 
   /** Parse JSON from disk, rethrowing with the failing path if it's corrupt or truncated. */
   private readJson<T>(filePath: string): T {
     const raw = readFileSync(filePath, 'utf8');
+    let parsed: unknown;
     try {
-      return JSON.parse(raw) as T;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Conversation file ${filePath} is corrupt or truncated: ${message}`);
+      parsed = JSON.parse(raw);
+    } catch {
+      // Deliberately does not include the underlying parser's message: V8's
+      // SyntaxError embeds a snippet of the file's own contents, which would
+      // turn this error into a small file-read primitive for any caller who
+      // can trigger a parse failure and read the thrown message.
+      throw new Error(`Conversation file ${filePath} is corrupt or truncated.`);
     }
+    return parsed as T;
+  }
+
+  /** Parse and shape-check a stored conversation file before anything dereferences it. */
+  private readStoredConversation(filePath: string): StoredConversation {
+    const parsed = this.readJson<unknown>(filePath);
+    if (!isStoredConversation(parsed)) {
+      throw new Error(`Conversation file ${filePath} does not have the expected shape.`);
+    }
+    return parsed;
   }
 
   /** Write JSON via write-temp-then-rename so a crash mid-write can't leave a half-written file. */
@@ -71,7 +112,7 @@ export class ConversationStore {
   load(id: string): StoredConversation | null {
     const p = this.filePath(id);
     if (!existsSync(p)) return null;
-    const raw = this.readJson<StoredConversation>(p);
+    const raw = this.readStoredConversation(p);
     if (raw.conversation.schemaVersion > CONTRACT_VERSION) {
       throw new Error(
         `Conversation ${id} was created by a newer version of Fractal ` +
