@@ -22,6 +22,10 @@ interface Runtime {
   order: EntryId[];
   abort?: AbortController;
   pending: Map<string, (decision: PermissionDecision) => void>;
+  // Maps an in-flight agent entry to the user entry that started its turn,
+  // so settle() can persist both together regardless of which path
+  // (complete/error/cancel) settles the turn.
+  turnUserEntry: Map<EntryId, Entry>;
 }
 
 export class SessionManager {
@@ -44,7 +48,7 @@ export class SessionManager {
     let rt = this.runtimes.get(conversationId);
     if (!rt) {
       const stored = this.store.load(conversationId);
-      rt = { seq: 0, entries: new Map(), order: [], pending: new Map() };
+      rt = { seq: 0, entries: new Map(), order: [], pending: new Map(), turnUserEntry: new Map() };
       for (const e of stored?.entries ?? []) {
         rt.entries.set(e.id, e);
         rt.order.push(e.id);
@@ -72,6 +76,12 @@ export class SessionManager {
     this.emit(conversationId, { type: 'entry.added', entry: structuredClone(entry) });
   }
 
+  // `precedingEntry` (the user entry that started this turn) is persisted
+  // immediately before the agent entry so the two land together or neither
+  // does — spec §4's "looks as though the turn never happened" requires the
+  // user's message to not survive on disk with no reply if main crashes
+  // mid-turn. It was already emitted live via entry.added; only the write
+  // was deferred.
   private settle(conversationId: string, entryId: EntryId, status: Entry['status']) {
     const rt = this.runtime(conversationId);
     const entry = rt.entries.get(entryId);
@@ -88,6 +98,11 @@ export class SessionManager {
       status,
       ...(entry.error ? { error: structuredClone(entry.error) } : {}),
     });
+    const userEntry = rt.turnUserEntry.get(entryId);
+    if (userEntry) {
+      this.store.saveEntry(conversationId, userEntry);
+      rt.turnUserEntry.delete(entryId);
+    }
     this.store.saveEntry(conversationId, entry); // write-on-settle
   }
 
@@ -102,8 +117,11 @@ export class SessionManager {
       status: 'complete',
       parts: [{ id: randomUUID(), kind: 'text', text }],
     };
+    // Emitted live immediately so the sender sees their message right away,
+    // but persistence is deferred to settle() (see settle's doc comment):
+    // writing it now would let a mid-turn crash leave an orphaned user
+    // message with no reply and no marker on disk.
     this.addEntry(conversationId, userEntry);
-    this.store.saveEntry(conversationId, userEntry);
 
     const agentEntry: Entry = {
       id: randomUUID(),
@@ -114,12 +132,26 @@ export class SessionManager {
       parts: [],
     };
     this.addEntry(conversationId, agentEntry);
+    rt.turnUserEntry.set(agentEntry.id, userEntry);
 
     const abort = new AbortController();
     rt.abort = abort;
     // Tracks the live streaming text part directly, so later deltas don't
     // need a non-null `find(...)!` to relocate it.
     let textPart: TextPart | null = null;
+
+    const requestPermission = (partId: string): Promise<PermissionDecision> => {
+      const requestId = randomUUID();
+      this.emit(conversationId, {
+        type: 'permission.requested',
+        entryId: agentEntry.id,
+        partId,
+        requestId,
+      });
+      return new Promise<PermissionDecision>((resolve) => {
+        rt.pending.set(requestId, resolve);
+      });
+    };
 
     const onStep = (step: AdapterStep) => {
       const entry = rt.entries.get(agentEntry.id);
@@ -175,26 +207,11 @@ export class SessionManager {
           });
           break;
         }
-        case 'need-permission': {
-          const requestId = randomUUID();
-          this.emit(conversationId, {
-            type: 'permission.requested',
-            entryId: entry.id,
-            partId: step.partId,
-            requestId,
-          });
-          // Ruling 3 (as briefed): a no-op resolver. The echo adapter never
-          // emits need-permission, so this never actually blocks anything;
-          // making the adapter genuinely await an answer is backend-shaped
-          // work with no backend to shape it against yet.
-          rt.pending.set(requestId, () => undefined);
-          break;
-        }
       }
     };
 
     void this.adapter
-      .run({ text, emit: onStep, signal: abort.signal })
+      .run({ text, emit: onStep, requestPermission, signal: abort.signal })
       .then(() => {
         if (!abort.signal.aborted) this.settle(conversationId, agentEntry.id, 'complete');
       })
@@ -220,6 +237,18 @@ export class SessionManager {
       }
     }
     if (streaming) this.settle(conversationId, streaming.id, 'interrupted');
+    // A cancelled turn must not strand a permission promise an adapter is
+    // still awaiting: resolve every request still parked for this
+    // conversation as denied (rather than leaving it hanging, or rejecting
+    // and forcing every adapter to try/catch requestPermission). A denial
+    // is the decision that already matches "the turn was cancelled" — the
+    // adapter should stop, not proceed as if allowed.
+    for (const [requestId, resolve] of rt.pending) {
+      rt.pending.delete(requestId);
+      const decision: PermissionDecision = { outcome: 'deny', reason: 'Turn cancelled' };
+      resolve(decision);
+      this.emit(conversationId, { type: 'permission.resolved', requestId, decision });
+    }
   }
 
   respondToPermission({ requestId, decision }: { requestId: string; decision: PermissionDecision }): void {

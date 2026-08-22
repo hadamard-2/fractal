@@ -8,6 +8,7 @@ describe('echo adapter', () => {
     await adapter.run({
       text: 'hello',
       emit: (s) => steps.push(s),
+      requestPermission: () => Promise.resolve({ outcome: 'allow' }),
       signal: new AbortController().signal,
     });
     const kinds = steps.map((s) => s.kind);
@@ -22,7 +23,12 @@ describe('echo adapter', () => {
     const steps: AdapterStep[] = [];
     const ctrl = new AbortController();
     ctrl.abort();
-    await createEchoAdapter().run({ text: 'x', emit: (s) => steps.push(s), signal: ctrl.signal });
+    await createEchoAdapter().run({
+      text: 'x',
+      emit: (s) => steps.push(s),
+      requestPermission: () => Promise.resolve({ outcome: 'allow' }),
+      signal: ctrl.signal,
+    });
     expect(steps).toHaveLength(0);
   });
 });
