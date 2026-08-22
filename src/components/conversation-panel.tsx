@@ -18,7 +18,7 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-e
 import { useConversation } from '@/renderer/use-conversation';
 
 export function ConversationPanel({ conversationId }: { conversationId: string | null }) {
-  const { entries, missedEvents, snapshotError, status, send, cancel } = useConversation(conversationId);
+  const { entries, missedEvents, snapshotError, status, send, cancel, reload } = useConversation(conversationId);
   const [input, setInput] = useState('');
 
   const handleSubmit = (message: PromptInputMessage) => {
@@ -36,12 +36,18 @@ export function ConversationPanel({ conversationId }: { conversationId: string |
     <div className="relative flex size-full flex-col overflow-hidden">
       {snapshotError && (
         <div className="shrink-0 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          Failed to load this conversation: {snapshotError}
+          Failed to load this conversation: {snapshotError}{' '}
+          <button type="button" onClick={reload} className="underline">
+            Reload
+          </button>
         </div>
       )}
       {missedEvents && (
         <div className="shrink-0 border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
-          Some events were missed — this transcript may be incomplete.
+          Some events were missed — this transcript may be incomplete.{' '}
+          <button type="button" onClick={reload} className="underline">
+            Reload
+          </button>
         </div>
       )}
       <Conversation>
