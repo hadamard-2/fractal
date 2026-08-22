@@ -40,6 +40,10 @@ const createWindow = () => {
 
   mainWindowRef = mainWindow;
 
+  mainWindow.on('closed', () => {
+    mainWindowRef = null;
+  });
+
   mainWindow.maximize();
 
   // and load the index.html of the app.

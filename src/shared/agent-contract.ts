@@ -106,7 +106,7 @@ export interface FractalAgentApi {
   getConversation(
     id: ConversationId,
   ): Promise<{ conversation: Conversation; entries: Entry[]; seq: number } | null>;
-  createConversation(): Promise<Conversation>;
+  createConversation(): Promise<Conversation | null>;
 
   // turn control
   sendMessage(input: { conversationId: ConversationId; text: string }): Promise<{ entryId: EntryId }>;

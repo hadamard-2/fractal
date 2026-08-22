@@ -7,7 +7,11 @@ import { AGENT_EVENT_CHANNEL, AGENT_INVOKE_CHANNEL, type AgentInvokeRequest } fr
 
 export function registerAgentIpc(getWindow: () => BrowserWindow | null): void {
   const store = new ConversationStore(app.getPath('userData'));
-  const emit = (event: AgentEvent) => getWindow()?.webContents.send(AGENT_EVENT_CHANNEL, event);
+  const emit = (event: AgentEvent) => {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send(AGENT_EVENT_CHANNEL, event);
+  };
   const manager = new SessionManager({ store, adapter: createEchoAdapter(), emit });
 
   ipcMain.handle(AGENT_INVOKE_CHANNEL, async (_e, req: AgentInvokeRequest) => {
@@ -30,6 +34,10 @@ export function registerAgentIpc(getWindow: () => BrowserWindow | null): void {
         return manager.cancelTurn(req.input);
       case 'respondToPermission':
         return manager.respondToPermission(req.input);
+      default: {
+        const unreachable: never = req;
+        throw new Error(`Unrecognized agent invoke method: ${(unreachable as AgentInvokeRequest).method}`);
+      }
     }
   });
 }
