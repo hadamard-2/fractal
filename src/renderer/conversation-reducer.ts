@@ -1,10 +1,20 @@
-import type { AgentEvent, Conversation, Entry, Part } from '@/shared/agent-contract';
+import { isWorkPart, type AgentEvent, type Conversation, type Entry, type Part } from '@/shared/agent-contract';
 
 export interface ConversationState {
   conversation: Conversation | null;
   entries: Entry[];
   seq: number;
+  // Distinguishes "seq 0 because we have a real baseline of 0" (a freshly
+  // created conversation with no events emitted yet) from "seq 0 because we
+  // have no baseline at all" (a bare initialState() before any snapshot or
+  // event arrived). A plain `seq: number` conflates the two, which turns
+  // gap detection off for good the moment a new conversation seeds at seq 0.
+  baselineKnown: boolean;
   missedEvents: boolean;
+  // Set by the hook when the snapshot fetch itself fails (as opposed to a
+  // dropped event mid-stream, which is `missedEvents`). Not touched by
+  // `reduce` — it rides along on the spread in `base` like any other field.
+  snapshotError: string | null;
 }
 
 export function initialState(snapshot?: {
@@ -16,7 +26,9 @@ export function initialState(snapshot?: {
     conversation: snapshot?.conversation ?? null,
     entries: snapshot?.entries ?? [],
     seq: snapshot?.seq ?? 0,
+    baselineKnown: snapshot !== undefined,
     missedEvents: false,
+    snapshotError: null,
   };
 }
 
@@ -29,8 +41,8 @@ function mapPart(entry: Entry, partId: string, fn: (p: Part) => Part): Entry {
 }
 
 export function reduce(state: ConversationState, event: AgentEvent): ConversationState {
-  const gap = state.seq !== 0 && event.seq !== state.seq + 1;
-  const base = { ...state, seq: event.seq, missedEvents: state.missedEvents || gap };
+  const gap = state.baselineKnown && event.seq !== state.seq + 1;
+  const base = { ...state, seq: event.seq, baselineKnown: true, missedEvents: state.missedEvents || gap };
 
   switch (event.type) {
     case 'entry.added':
@@ -55,7 +67,7 @@ export function reduce(state: ConversationState, event: AgentEvent): Conversatio
       return {
         ...base,
         entries: mapEntry(state.entries, event.entryId, (e) =>
-          mapPart(e, event.partId, (p) => ({ ...p, ...event.patch }) as Part),
+          mapPart(e, event.partId, (p) => (isWorkPart(p) ? ({ ...p, ...event.patch } as Part) : p)),
         ),
       };
     case 'entry.status':

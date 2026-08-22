@@ -20,27 +20,41 @@ export function useConversation(conversationId: string | null) {
     // replay only the buffered events the snapshot hasn't already captured
     // (seq > snapshot.seq) — seq makes "already captured" decidable instead
     // of guesswork.
-    let ready = false;
+    // `settled` covers both outcomes of the snapshot fetch: once it resolves
+    // or rejects, there is no longer a baseline still in flight to buffer
+    // against, so further events are either applied live (resolved) or
+    // simply not collected (rejected — a snapshot that never arrives means
+    // buffered events could never be correctly ordered against it anyway).
+    let settled = false;
     const buffered: AgentEvent[] = [];
 
     const unsub = window.fractal.agent.onAgentEvent((event) => {
       if (event.conversationId !== conversationId) return;
-      if (!ready) {
+      if (!settled) {
         buffered.push(event);
         return;
       }
-      setState((s) => reduce(s, event));
+      setState((s) => (s.snapshotError ? s : reduce(s, event)));
     });
 
-    void window.fractal.agent.getConversation(conversationId).then((snap) => {
-      if (cancelled) return;
-      let seeded = initialState(snap ?? undefined);
-      for (const event of buffered) {
-        if (event.seq > seeded.seq) seeded = reduce(seeded, event);
-      }
-      setState(seeded);
-      ready = true;
-    });
+    void window.fractal.agent
+      .getConversation(conversationId)
+      .then((snap) => {
+        if (cancelled) return;
+        let seeded = initialState(snap ?? undefined);
+        for (const event of buffered) {
+          if (event.seq > seeded.seq) seeded = reduce(seeded, event);
+        }
+        setState(seeded);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        buffered.length = 0; // no baseline is coming; nothing to replay against
+        setState((s) => ({ ...s, snapshotError: err instanceof Error ? err.message : String(err) }));
+      })
+      .finally(() => {
+        settled = true;
+      });
 
     return () => {
       cancelled = true;
@@ -72,5 +86,13 @@ export function useConversation(conversationId: string | null) {
 
   const createConversation = useCallback(() => window.fractal.agent.createConversation(), []);
 
-  return { entries: state.entries, missedEvents: state.missedEvents, status, send, cancel, createConversation };
+  return {
+    entries: state.entries,
+    missedEvents: state.missedEvents,
+    snapshotError: state.snapshotError,
+    status,
+    send,
+    cancel,
+    createConversation,
+  };
 }
