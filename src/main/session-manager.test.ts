@@ -21,11 +21,25 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+// Polls until `check()` is true rather than sleeping a fixed duration. The
+// echo adapter now paces its steps with real setTimeout delays (so a human
+// can observe streaming), which means a fixed sleep has to guess a margin
+// over that pacing — thin under CI contention, wasteful if padded generously.
+// Polling waits for the actual condition instead, so it is fast when the
+// adapter is fast and only as slow as it needs to be otherwise.
+async function waitUntil(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!check()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitUntil: condition not met within timeout');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe('SessionManager', () => {
   test('a turn emits a monotonic seq per conversation and settles the agent entry', async () => {
     const c = store.create('/repo');
     mgr.sendMessage({ conversationId: c.id, text: 'hi' });
-    await new Promise((r) => setTimeout(r, 200)); // let the echo adapter's paced steps drain
+    await waitUntil(() => events.some((e) => e.type === 'entry.status' && e.conversationId === c.id));
 
     const seqs = events.filter((e) => e.conversationId === c.id).map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
@@ -72,7 +86,7 @@ describe('SessionManager', () => {
   test('snapshot returns entries and the current seq', async () => {
     const c = store.create('/repo');
     mgr.sendMessage({ conversationId: c.id, text: 'hi' });
-    await new Promise((r) => setTimeout(r, 200)); // let the echo adapter's paced steps drain
+    await waitUntil(() => events.some((e) => e.type === 'entry.status' && e.conversationId === c.id));
     const snap = mgr.snapshot(c.id);
     if (!snap) throw new Error('expected a snapshot for a known conversation');
     expect(snap.seq).toBeGreaterThan(0);
@@ -181,7 +195,7 @@ describe('SessionManager', () => {
   test('the emitted part.added event is a snapshot, not a live reference mutated by later deltas', async () => {
     const c = store.create('/repo');
     mgr.sendMessage({ conversationId: c.id, text: 'hi' });
-    await new Promise((r) => setTimeout(r, 200)); // let the echo adapter's paced steps drain
+    await waitUntil(() => events.some((e) => e.type === 'part.added' && e.conversationId === c.id));
 
     const partAdded = events.find(
       (e): e is Extract<AgentEvent, { type: 'part.added' }> =>

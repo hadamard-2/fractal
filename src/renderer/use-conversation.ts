@@ -69,24 +69,36 @@ function subscribeAndSeed(
 export function useConversation(conversationId: string | null) {
   const [state, setState] = useState<ConversationState>(() => initialState());
   const [status, setStatus] = useState<Status>('ready');
-  // Tracks the unsubscribe for whichever subscription is currently live, so
-  // reload() can tear down the mount effect's subscription before starting
-  // its own.
+  // Tracks the unsubscribe for whichever subscription is currently live —
+  // the mount effect's, or a later reload()'s replacement of it — so
+  // whoever tears down (the effect's cleanup, or the next reload()) always
+  // closes the subscription that is actually live rather than a stale one
+  // captured in an old closure.
   const unsubRef = useRef<(() => void) | null>(null);
+  // True once this conversation's mount effect has torn down (unmount, or
+  // conversationId changing out from under it). Shared by both the mount
+  // path's and reload()'s isCancelled, so an in-flight snapshot fetch from
+  // either path is a no-op once the hook is no longer showing this
+  // conversation — the same guarantee the mount path already had.
+  const unmountedRef = useRef(false);
   const reloadingRef = useRef(false);
 
   useEffect(() => {
     setState(initialState());
+    unmountedRef.current = false;
     if (!conversationId) return;
-    let cancelled = false;
 
-    const unsub = subscribeAndSeed(conversationId, setState, () => cancelled);
+    const unsub = subscribeAndSeed(conversationId, setState, () => unmountedRef.current);
     unsubRef.current = unsub;
 
     return () => {
-      cancelled = true;
-      unsub();
-      if (unsubRef.current === unsub) unsubRef.current = null;
+      unmountedRef.current = true;
+      // Close through the ref, not the `unsub` this closure captured: by
+      // the time this cleanup runs, reload() may have already replaced
+      // unsubRef.current with a newer subscription's unsub, and it is that
+      // live one — not this effect's original — that must be torn down.
+      unsubRef.current?.();
+      unsubRef.current = null;
     };
   }, [conversationId]);
 
@@ -94,17 +106,14 @@ export function useConversation(conversationId: string | null) {
   // a failed initial load (snapshotError) without remounting the component —
   // nothing in the current UI can otherwise force that remount. Guarded by
   // reloadingRef so a reload racing an in-flight one is a no-op rather than
-  // a second overlapping subscription.
+  // a second overlapping subscription, and by unmountedRef so a reload's
+  // in-flight snapshot fetch cannot land on an unmounted hook.
   const reload = useCallback(() => {
     if (!conversationId || reloadingRef.current) return;
     reloadingRef.current = true;
     unsubRef.current?.();
 
-    // reload() is a one-shot action, not an effect, so there is no unmount
-    // to race against beyond what reloadingRef already guards (a second
-    // reload) and the mount effect already guards (conversationId changing
-    // out from under it, which unsubscribes via unsubRef above).
-    const unsub = subscribeAndSeed(conversationId, setState, () => false, () => {
+    const unsub = subscribeAndSeed(conversationId, setState, () => unmountedRef.current, () => {
       reloadingRef.current = false;
     });
     unsubRef.current = unsub;
