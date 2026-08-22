@@ -6,6 +6,7 @@ import {
   type Entry,
   type EntryId,
   type PermissionDecision,
+  type TextPart,
 } from '@/shared/agent-contract';
 import type { ConversationStore } from '@/main/conversation-store';
 import type { AdapterStep, BackendAdapter } from '@/main/backend-adapter';
@@ -53,6 +54,11 @@ export class SessionManager {
     return rt;
   }
 
+  // Invariant: an emitted event never shares a mutable object with runtime
+  // state. Every emit site below that carries an object the runtime keeps
+  // mutating in place (entry, part, patch, provenance) must pass a
+  // structuredClone of it, not the live reference — otherwise a later
+  // in-place mutation silently rewrites an event that already "went out".
   private emit(conversationId: string, event: DistributiveOmit<AgentEvent, 'v' | 'seq' | 'conversationId'>) {
     const rt = this.runtime(conversationId);
     rt.seq += 1;
@@ -63,8 +69,6 @@ export class SessionManager {
     const rt = this.runtime(conversationId);
     rt.entries.set(entry.id, entry);
     rt.order.push(entry.id);
-    // Ruling 2: emit a deep copy so later in-place mutation of the live entry
-    // can't retroactively change an event that already went out.
     this.emit(conversationId, { type: 'entry.added', entry: structuredClone(entry) });
   }
 
@@ -82,7 +86,7 @@ export class SessionManager {
       type: 'entry.status',
       entryId,
       status,
-      ...(entry.error ? { error: entry.error } : {}),
+      ...(entry.error ? { error: structuredClone(entry.error) } : {}),
     });
     this.store.saveEntry(conversationId, entry); // write-on-settle
   }
@@ -113,30 +117,30 @@ export class SessionManager {
 
     const abort = new AbortController();
     rt.abort = abort;
-    let textPartId: string | null = null;
+    // Tracks the live streaming text part directly, so later deltas don't
+    // need a non-null `find(...)!` to relocate it.
+    let textPart: TextPart | null = null;
 
     const onStep = (step: AdapterStep) => {
       const entry = rt.entries.get(agentEntry.id);
       if (!entry) return;
       switch (step.kind) {
         case 'text': {
-          if (!textPartId) {
-            textPartId = randomUUID();
-            const part = { id: textPartId, kind: 'text' as const, text: '' };
-            entry.parts.push(part);
+          if (!textPart) {
+            textPart = { id: randomUUID(), kind: 'text', text: '' };
+            entry.parts.push(textPart);
             this.emit(conversationId, {
               type: 'part.added',
               entryId: entry.id,
               index: entry.parts.length - 1,
-              part,
+              part: structuredClone(textPart),
             });
           }
-          const tp = entry.parts.find((p) => p.id === textPartId)!;
-          if (tp.kind === 'text') tp.text += step.delta;
+          textPart.text += step.delta;
           this.emit(conversationId, {
             type: 'text.appended',
             entryId: entry.id,
-            partId: textPartId,
+            partId: textPart.id,
             delta: step.delta,
           });
           break;
@@ -147,7 +151,7 @@ export class SessionManager {
             type: 'part.added',
             entryId: entry.id,
             index: entry.parts.length - 1,
-            part: step.part,
+            part: structuredClone(step.part),
           });
           break;
         }
@@ -158,7 +162,7 @@ export class SessionManager {
             type: 'part.updated',
             entryId: entry.id,
             partId: step.partId,
-            patch: step.patch,
+            patch: structuredClone(step.patch),
           });
           break;
         }
@@ -167,7 +171,7 @@ export class SessionManager {
           this.emit(conversationId, {
             type: 'provenance.updated',
             entryId: entry.id,
-            provenance: step.provenance,
+            provenance: structuredClone(step.provenance),
           });
           break;
         }
@@ -207,7 +211,14 @@ export class SessionManager {
     const rt = this.runtimes.get(conversationId);
     if (!rt?.abort) return;
     rt.abort.abort();
-    const streaming = rt.order.map((id) => rt.entries.get(id)!).find((e) => e.status === 'streaming');
+    let streaming: Entry | undefined;
+    for (const id of rt.order) {
+      const candidate = rt.entries.get(id);
+      if (candidate?.status === 'streaming') {
+        streaming = candidate;
+        break;
+      }
+    }
     if (streaming) this.settle(conversationId, streaming.id, 'interrupted');
   }
 
@@ -227,7 +238,11 @@ export class SessionManager {
     const stored = this.store.load(conversationId);
     if (!stored) return null;
     const rt = this.runtime(conversationId);
-    const entries = rt.order.length ? rt.order.map((id) => rt.entries.get(id)!) : stored.entries;
-    return { conversation: stored.conversation, entries, seq: rt.seq };
+    const entries: Entry[] = [];
+    for (const id of rt.order) {
+      const entry = rt.entries.get(id);
+      if (entry) entries.push(entry);
+    }
+    return { conversation: stored.conversation, entries: entries.length ? entries : stored.entries, seq: rt.seq };
   }
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ConversationStore } from '@/main/conversation-store';
 import { createEchoAdapter } from '@/main/backend-adapter';
+import type { BackendAdapter } from '@/main/backend-adapter';
 import { SessionManager } from '@/main/session-manager';
 import type { AgentEvent } from '@/shared/agent-contract';
 
@@ -45,8 +46,66 @@ describe('SessionManager', () => {
     mgr.sendMessage({ conversationId: c.id, text: 'hi' });
     await new Promise((r) => setTimeout(r, 0));
     const snap = mgr.snapshot(c.id);
-    expect(snap).not.toBeNull();
-    expect(snap!.seq).toBeGreaterThan(0);
-    expect(snap!.entries.length).toBeGreaterThanOrEqual(2); // user + agent
+    if (!snap) throw new Error('expected a snapshot for a known conversation');
+    expect(snap.seq).toBeGreaterThan(0);
+    expect(snap.entries.length).toBeGreaterThanOrEqual(2); // user + agent
+  });
+
+  test('cancelTurn settles the agent entry exactly once, as interrupted', async () => {
+    const c = store.create('/repo');
+    mgr.sendMessage({ conversationId: c.id, text: 'hi' });
+    mgr.cancelTurn({ conversationId: c.id });
+    await new Promise((r) => setTimeout(r, 0)); // let the echo adapter's promise settle too
+
+    const agentStatusEvents = events.filter(
+      (e): e is Extract<AgentEvent, { type: 'entry.status' }> =>
+        e.type === 'entry.status' && e.conversationId === c.id,
+    );
+    // The echo adapter also resolves after cancellation; settle() must be
+    // idempotent so only the first (cancelTurn's) status event goes out.
+    expect(agentStatusEvents).toHaveLength(1);
+    expect(agentStatusEvents[0].status).toBe('interrupted');
+
+    const reloaded = new ConversationStore(dir).load(c.id);
+    const agentEntries = reloaded?.entries.filter((e) => e.author === 'agent') ?? [];
+    expect(agentEntries).toHaveLength(1);
+    expect(agentEntries[0].status).toBe('interrupted');
+  });
+
+  test('an adapter that throws settles the entry exactly once as error, with the message surfaced', async () => {
+    const failingAdapter: BackendAdapter = {
+      async run() {
+        throw new Error('adapter boom');
+      },
+    };
+    const failEvents: AgentEvent[] = [];
+    const failMgr = new SessionManager({ store, adapter: failingAdapter, emit: (e) => failEvents.push(e) });
+
+    const c = store.create('/repo');
+    failMgr.sendMessage({ conversationId: c.id, text: 'hi' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const agentStatusEvents = failEvents.filter(
+      (e): e is Extract<AgentEvent, { type: 'entry.status' }> =>
+        e.type === 'entry.status' && e.conversationId === c.id,
+    );
+    expect(agentStatusEvents).toHaveLength(1);
+    expect(agentStatusEvents[0].status).toBe('error');
+    expect(agentStatusEvents[0].error?.message).toBe('adapter boom');
+  });
+
+  test('the emitted part.added event is a snapshot, not a live reference mutated by later deltas', async () => {
+    const c = store.create('/repo');
+    mgr.sendMessage({ conversationId: c.id, text: 'hi' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const partAdded = events.find(
+      (e): e is Extract<AgentEvent, { type: 'part.added' }> =>
+        e.type === 'part.added' && e.conversationId === c.id && e.part.kind === 'text',
+    );
+    if (!partAdded) throw new Error('expected a text part.added event');
+    // Must still read as the initial (empty) text, not the accumulated final
+    // text that the runtime kept appending to after this event was emitted.
+    expect(partAdded.part.kind === 'text' && partAdded.part.text).toBe('');
   });
 });
