@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { registerAgentIpc } from '@/main/agent-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -15,6 +16,8 @@ Menu.setApplicationMenu(null);
 // buttons sit on the same colour as the title bar we render underneath them.
 const TITLE_BAR_BACKGROUND = '#0a0a0a';
 const TITLE_BAR_SYMBOL = '#fafafa';
+
+let mainWindowRef: BrowserWindow | null = null;
 
 const createWindow = () => {
   // Create the browser window.
@@ -35,6 +38,8 @@ const createWindow = () => {
     },
   });
 
+  mainWindowRef = mainWindow;
+
   mainWindow.maximize();
 
   // and load the index.html of the app.
@@ -50,7 +55,12 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
+// The IPC handlers are registered exactly once here; createWindow() can run
+// again later (see 'activate' below) and must not re-register them.
+app.on('ready', () => {
+  registerAgentIpc(() => mainWindowRef);
+  createWindow();
+});
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
