@@ -31,10 +31,16 @@ export default function App() {
         only the toggle takes them back.
       */}
       <div
-        className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end px-4"
+        className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end"
         style={{
           top: 'var(--titlebar-height)',
           height: 'var(--app-bar-height)',
+          // Inset from the right by exactly what `items-center` leaves above
+          // and below it, so the toggle sits the same distance from both edges
+          // of its corner. Derived rather than typed as 8px so it tracks
+          // --app-bar-height; 2.5rem is the toggle's own height (2rem items
+          // plus its 0.25rem padding either side, see mode-toggle.tsx).
+          paddingRight: 'calc((var(--app-bar-height) - 2.5rem) / 2)',
         }}
       >
         <div className="pointer-events-auto">
