@@ -10,7 +10,7 @@ if (started) {
 
 // The app draws its own title bar, so the native File/Edit/View menu is removed.
 // That also drops the accelerators the menu provided (Ctrl+R reload, Ctrl+Shift+I
-// devtools) — `bindDevToolsShortcut` below hands the devtools one back.
+// devtools) — `bindWindowShortcuts` below hands the devtools one back.
 Menu.setApplicationMenu(null);
 
 // Matches --background in src/index.css (neutral-950) so the OS-drawn window
@@ -19,32 +19,93 @@ const TITLE_BAR_BACKGROUND = '#0a0a0a';
 const TITLE_BAR_SYMBOL = '#fafafa';
 
 /**
- * Restores the devtools accelerator that died with the native menu.
+ * Restores the window accelerators that died with the native menu, and adds
+ * fullscreen.
  *
  * Scoped to this window's own key handling rather than `globalShortcut`, which
- * would claim the combination process-wide and steal it from every other app
- * for as long as Fractal is running.
+ * would claim these combinations process-wide and steal them from every other
+ * app for as long as Fractal is running.
  *
  * Matches on `code` rather than `key` because `key` carries the character the
  * modifiers produce — on macOS, Option+I yields a dead key for composing
  * accented characters, not `'i'` — while `code` names the physical key
  * regardless of modifiers or keyboard layout.
  */
-const bindDevToolsShortcut = (window: BrowserWindow) => {
+const bindWindowShortcuts = (window: BrowserWindow) => {
   window.webContents.on('before-input-event', (_event, input) => {
     if (input.type !== 'keyDown') return;
 
+    const isMac = process.platform === 'darwin';
+
     // Ctrl+Shift+I on Windows and Linux, Cmd+Option+I on macOS — the same
     // split Electron's own default menu uses.
-    const chord =
-      input.code === 'KeyI' &&
-      (process.platform === 'darwin'
-        ? input.meta && input.alt
-        : input.control && input.shift);
+    const devTools =
+      input.code === 'F12' ||
+      (input.code === 'KeyI' &&
+        (isMac ? input.meta && input.alt : input.control && input.shift));
 
-    if (input.code === 'F12' || chord) {
+    if (devTools) {
       window.webContents.toggleDevTools();
+      return;
     }
+
+    // F11 everywhere it means fullscreen; macOS binds F11 to Show Desktop and
+    // uses Ctrl+Cmd+F for this instead.
+    const fullScreen = isMac
+      ? input.code === 'KeyF' && input.control && input.meta
+      : input.code === 'F11';
+
+    if (fullScreen) {
+      window.setFullScreen(!window.isFullScreen());
+    }
+  });
+};
+
+/**
+ * Collapses the layout's title-bar offset while the window is fullscreen.
+ *
+ * The window is frameless with a `titleBarOverlay`, and the renderer reserves
+ * `--titlebar-height` for it. That overlay isn't drawn in fullscreen, so the
+ * reserved strip would otherwise sit there empty. Forcing the variable to zero
+ * is correct whether or not Chromium already zeroes `titlebar-area-height` on
+ * its own — which is the point, since that behaviour is not something this
+ * code should have to depend on.
+ *
+ * Injecting a stylesheet from the main process keeps this out of the preload
+ * contract entirely: no new IPC surface, no renderer code.
+ */
+const bindFullScreenChrome = (window: BrowserWindow) => {
+  const FULLSCREEN_CSS = ':root { --titlebar-height: 0px; }';
+  let appliedKey: string | null = null;
+
+  // Serialised: enter/leave can arrive faster than insertCSS resolves, and
+  // interleaving them would strand a key and leave the offset stuck.
+  let queue = Promise.resolve();
+
+  const sync = (fullScreen: boolean) => {
+    queue = queue
+      .then(async () => {
+        if (window.isDestroyed()) return;
+        if (fullScreen && !appliedKey) {
+          appliedKey = await window.webContents.insertCSS(FULLSCREEN_CSS);
+        } else if (!fullScreen && appliedKey) {
+          await window.webContents.removeInsertedCSS(appliedKey);
+          appliedKey = null;
+        }
+      })
+      .catch(() => {
+        // The window went away mid-flight; nothing left to style.
+      });
+  };
+
+  window.on('enter-full-screen', () => sync(true));
+  window.on('leave-full-screen', () => sync(false));
+
+  // Inserted CSS belongs to the loaded document, so a reload — Vite's, or a
+  // manual one — drops it. The old key dies with the old document.
+  window.webContents.on('did-finish-load', () => {
+    appliedKey = null;
+    sync(window.isFullScreen());
   });
 };
 
@@ -71,7 +132,8 @@ const createWindow = () => {
 
   mainWindowRef = mainWindow;
 
-  bindDevToolsShortcut(mainWindow);
+  bindWindowShortcuts(mainWindow);
+  bindFullScreenChrome(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindowRef = null;
