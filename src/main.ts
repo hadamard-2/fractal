@@ -65,17 +65,23 @@ const bindWindowShortcuts = (window: BrowserWindow) => {
  * Collapses the layout's title-bar offset while the window is fullscreen.
  *
  * The window is frameless with a `titleBarOverlay`, and the renderer reserves
- * `--titlebar-height` for it. That overlay isn't drawn in fullscreen, so the
- * reserved strip would otherwise sit there empty. Forcing the variable to zero
- * is correct whether or not Chromium already zeroes `titlebar-area-height` on
- * its own — which is the point, since that behaviour is not something this
- * code should have to depend on.
+ * `--titlebar-height` for it. Measured in the running app: fullscreen does not
+ * zero `env(titlebar-area-height)` — it makes the variable *unavailable*, so
+ * the `2.25rem` fallback in index.css takes over and the app keeps reserving a
+ * 36px strip for chrome that is no longer drawn. That empty bar is ours, not
+ * the OS's, so it is ours to collapse.
  *
- * Injecting a stylesheet from the main process keeps this out of the preload
- * contract entirely: no new IPC surface, no renderer code.
+ * `!important` is load-bearing, also measured: stylesheets inserted this way
+ * lose to the document's own at equal specificity, so a plain `:root` rule here
+ * is silently overridden by the `:root` in index.css and does nothing.
+ *
+ * A media query would be tidier, but Electron reports `display-mode: browser`
+ * in both states, so there is nothing for CSS alone to key off. Injecting from
+ * the main process keeps this out of the preload contract: no new IPC surface,
+ * no renderer code.
  */
 const bindFullScreenChrome = (window: BrowserWindow) => {
-  const FULLSCREEN_CSS = ':root { --titlebar-height: 0px; }';
+  const FULLSCREEN_CSS = ':root { --titlebar-height: 0px !important; }';
   let appliedKey: string | null = null;
 
   // Serialised: enter/leave can arrive faster than insertCSS resolves, and
