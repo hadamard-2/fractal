@@ -9,13 +9,44 @@ if (started) {
 }
 
 // The app draws its own title bar, so the native File/Edit/View menu is removed.
-// This also drops the accelerators it provided (Ctrl+R reload, Ctrl+Shift+I devtools).
+// That also drops the accelerators the menu provided (Ctrl+R reload, Ctrl+Shift+I
+// devtools) — `bindDevToolsShortcut` below hands the devtools one back.
 Menu.setApplicationMenu(null);
 
 // Matches --background in src/index.css (neutral-950) so the OS-drawn window
 // buttons sit on the same colour as the title bar we render underneath them.
 const TITLE_BAR_BACKGROUND = '#0a0a0a';
 const TITLE_BAR_SYMBOL = '#fafafa';
+
+/**
+ * Restores the devtools accelerator that died with the native menu.
+ *
+ * Scoped to this window's own key handling rather than `globalShortcut`, which
+ * would claim the combination process-wide and steal it from every other app
+ * for as long as Fractal is running.
+ *
+ * Matches on `code` rather than `key` because `key` carries the character the
+ * modifiers produce — on macOS, Option+I yields a dead key for composing
+ * accented characters, not `'i'` — while `code` names the physical key
+ * regardless of modifiers or keyboard layout.
+ */
+const bindDevToolsShortcut = (window: BrowserWindow) => {
+  window.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return;
+
+    // Ctrl+Shift+I on Windows and Linux, Cmd+Option+I on macOS — the same
+    // split Electron's own default menu uses.
+    const chord =
+      input.code === 'KeyI' &&
+      (process.platform === 'darwin'
+        ? input.meta && input.alt
+        : input.control && input.shift);
+
+    if (input.code === 'F12' || chord) {
+      window.webContents.toggleDevTools();
+    }
+  });
+};
 
 let mainWindowRef: BrowserWindow | null = null;
 
@@ -39,6 +70,8 @@ const createWindow = () => {
   });
 
   mainWindowRef = mainWindow;
+
+  bindDevToolsShortcut(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindowRef = null;
