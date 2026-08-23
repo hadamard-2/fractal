@@ -133,3 +133,37 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * Minimal scrollbar, for the long scrolling regions (the transcript, the
+ * composer's textarea). The OS default reads as a heavy grey slab against
+ * these surfaces; this is a thin rounded thumb on no track at all.
+ *
+ * Deliberately uses only the ::-webkit-scrollbar pseudo-elements and sets
+ * neither `scrollbar-width` nor `scrollbar-color`: Chromium ignores the
+ * pseudo-elements entirely on any element that specifies either of those, so
+ * setting both would silently discard everything below. Electron is Chromium,
+ * so the pseudo-element path is the one that actually renders here.
+ */
+.scrollbar-minimal::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-track,
+.scrollbar-minimal::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  /* A transparent border clipped to the content box insets the thumb, so a
+     10px-wide track paints a ~4px thumb with breathing room either side. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}

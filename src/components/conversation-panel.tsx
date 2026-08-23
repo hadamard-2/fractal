@@ -17,6 +17,13 @@ import {
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
 import { useConversation } from '@/renderer/use-conversation';
 
+// The reading column. Applied to the transcript and the composer alike so the
+// two stay on the same measure — putting a width on only one of them is what
+// makes a composer look bolted on. Percentage insets rather than a max-width
+// so the column keeps breathing room at the edges instead of pinning to a
+// fixed pixel measure and stranding whitespace on a wide window.
+const COLUMN = 'px-4 lg:px-[8%] xl:px-[14%] 2xl:px-[20%]';
+
 export function ConversationPanel({ conversationId }: { conversationId: string | null }) {
   const { entries, missedEvents, snapshotError, status, send, cancel, reload } = useConversation(conversationId);
   const [input, setInput] = useState('');
@@ -50,8 +57,8 @@ export function ConversationPanel({ conversationId }: { conversationId: string |
           </button>
         </div>
       )}
-      <Conversation>
-        <ConversationContent>
+      <Conversation className="min-h-0">
+        <ConversationContent className={COLUMN} scrollClassName="scrollbar-minimal">
           {entries.length === 0 ? (
             <ConversationEmptyState title="How can I help?" description="Send a message to start." />
           ) : (
@@ -87,10 +94,14 @@ export function ConversationPanel({ conversationId }: { conversationId: string |
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      <div className="shrink-0 p-4">
+      <div className={`shrink-0 pb-4 ${COLUMN}`}>
         <PromptInput onSubmit={handleSubmit}>
           <PromptInputBody>
-            <PromptInputTextarea value={input} onChange={(e) => setInput(e.target.value)} />
+            <PromptInputTextarea
+              className="scrollbar-minimal"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+            />
           </PromptInputBody>
           <PromptInputFooter className="justify-end">
             <PromptInputSubmit disabled={!input.trim() && status === 'ready'} status={status} />

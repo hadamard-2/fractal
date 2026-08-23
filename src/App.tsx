@@ -8,7 +8,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>('execute');
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-screen overflow-hidden bg-background text-foreground">
       <TitleBar />
 
       {/*
@@ -28,7 +28,7 @@ export default function App() {
         sidebar shell; the others get a bare canvas until they grow one.
       */}
       <div
-        className="flex flex-col"
+        className="flex h-full flex-col"
         style={{ paddingTop: 'var(--titlebar-height)' }}
       >
         {mode === 'execute' ? (

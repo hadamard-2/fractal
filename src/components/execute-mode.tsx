@@ -25,14 +25,14 @@ export function ExecuteMode() {
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   return (
-    <SidebarProvider className="min-h-[calc(100svh-var(--titlebar-height))]">
+    <SidebarProvider className="h-full min-h-0 overflow-hidden">
       <AppSidebar
         style={{
           top: 'var(--titlebar-height)',
           height: 'calc(100svh - var(--titlebar-height))',
         }}
       />
-      <SidebarInset>
+      <SidebarInset className="min-h-0 overflow-hidden">
         <header className="flex h-16 shrink-0 items-center gap-2">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
@@ -43,7 +43,7 @@ export function ExecuteMode() {
             <h1 className="text-sm font-medium">Execute</h1>
           </div>
         </header>
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {conversationId ? (
             <ConversationPanel conversationId={conversationId} />
           ) : (
