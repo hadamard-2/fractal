@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { AppSidebar } from '@/components/app-sidebar';
 import { ConversationPanel } from '@/components/conversation-panel';
 import { Separator } from '@/components/ui/separator';
@@ -22,11 +22,9 @@ import {
  * equal-specificity `top` rules whose winner depends on stylesheet order.
  */
 export function ExecuteMode({
-  modeToggle,
   sidebarOpen,
   onSidebarOpenChange,
 }: {
-  modeToggle?: ReactNode;
   // Controlled by App so the open/collapsed state outlives this component,
   // which unmounts entirely whenever another mode is showing.
   sidebarOpen?: boolean;
@@ -48,14 +46,15 @@ export function ExecuteMode({
       />
       <SidebarInset className="min-h-0 overflow-hidden">
         {/*
-          One row, `items-center`: the trigger/title cluster and the mode
-          toggle share a baseline because they are siblings in the same flex
-          line, not because two heights were tuned to agree. The toggle is
-          passed in rather than owned here — App decides where it goes, since
-          the modes without a header still need it positioned somewhere.
+          The row's height comes from `--app-bar-height`, the same token the
+          mode toggle's strip uses. App renders that toggle once and never
+          moves it, so it floats over this row's right-hand side already on
+          this row's baseline — `items-center` on both, one height between
+          them, no offset to keep in sync.
 
-          Height comes from `--app-bar-height` so the strip the other modes
-          position the toggle in stays the same size as this row.
+          That right-hand space is spoken for: anything added here needs to
+          leave room for the toggle, or move it into the flow and accept that
+          it will then remount on every mode change.
         */}
         <header
           className="flex shrink-0 items-center gap-2 px-4"
@@ -67,7 +66,6 @@ export function ExecuteMode({
             className="mr-2 data-[orientation=vertical]:h-4"
           />
           <h1 className="text-sm font-medium">Execute</h1>
-          {modeToggle && <div className="ml-auto">{modeToggle}</div>}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {conversationId ? (

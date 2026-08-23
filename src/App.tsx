@@ -11,15 +11,36 @@ export default function App() {
   // return trip.
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // One element, placed two ways. Execute puts it in its header row so it and
-  // the sidebar trigger share a baseline structurally; the other modes have no
-  // header yet, so they keep the fixed overlay — without it there would be no
-  // way to switch back out of them.
-  const modeToggle = <ModeToggle value={mode} onValueChange={setMode} />;
-
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground">
       <TitleBar />
+
+      {/*
+        Rendered once, outside the mode branch, and never moved. The sliding
+        pill animates a transform, so it needs to survive the mode change to
+        have something to animate from — rendering it per-mode unmounted and
+        remounted it, and a fresh mount starts already at its final offset with
+        no transition.
+
+        The strip matches execute's header row: same height, same `items-center`
+        and `px-4`, so the toggle sits on the same baseline as that row's
+        sidebar trigger and title without either side computing an offset.
+        Fixed rather than in the content flow, so nothing added to a mode's
+        layout can push it around; `z-50` matches the title bar. It ignores
+        pointer events so it doesn't swallow clicks across the full width —
+        only the toggle takes them back.
+      */}
+      <div
+        className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end px-4"
+        style={{
+          top: 'var(--titlebar-height)',
+          height: 'var(--app-bar-height)',
+        }}
+      >
+        <div className="pointer-events-auto">
+          <ModeToggle value={mode} onValueChange={setMode} />
+        </div>
+      </div>
 
       {/*
         Each mode owns its own layout below the title bar. Execute brings the
@@ -31,35 +52,11 @@ export default function App() {
       >
         {mode === 'execute' ? (
           <ExecuteMode
-            modeToggle={modeToggle}
             sidebarOpen={sidebarOpen}
             onSidebarOpenChange={setSidebarOpen}
           />
         ) : (
-          <>
-            {/*
-              An invisible strip the same height as execute's header row, laid
-              out the same way (`items-center`, `px-4`), so the toggle lands on
-              exactly the same pixel in every mode and does not jump when the
-              mode changes. Positioning it by a computed `top` offset instead
-              would be the same drift problem the header row just removed.
-
-              Fixed rather than in the content flow, so anything added to
-              `main` later can't push it out of place; `z-50` matches the title
-              bar. The strip ignores pointer events so it doesn't swallow
-              clicks across the full width — only the toggle takes them back.
-            */}
-            <div
-              className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end px-4"
-              style={{
-                top: 'var(--titlebar-height)',
-                height: 'var(--app-bar-height)',
-              }}
-            >
-              <div className="pointer-events-auto">{modeToggle}</div>
-            </div>
-            <main className="flex flex-1 items-center justify-center" />
-          </>
+          <main className="flex flex-1 items-center justify-center" />
         )}
       </div>
     </div>
