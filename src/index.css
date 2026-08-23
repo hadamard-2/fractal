@@ -11,6 +11,13 @@
    * (the sidebar, which is `position: fixed`) all derive from one value.
    */
   --titlebar-height: env(titlebar-area-height, 2.25rem);
+  /*
+   * The bar directly below the title bar: execute's header row, and the
+   * invisible strip the other modes position the mode toggle inside. Both
+   * read this, so the toggle lands in the same place in every mode instead
+   * of two offsets being tuned to agree.
+   */
+  --app-bar-height: 3.5rem;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

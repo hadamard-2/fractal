@@ -58,7 +58,20 @@ export function ConversationPanel({ conversationId }: { conversationId: string |
         </div>
       )}
       <Conversation className="min-h-0">
-        <ConversationContent className={COLUMN} scrollClassName="scrollbar-minimal">
+        {/*
+          Dissolves messages as they scroll up under the header instead of
+          letting them hit a hard cut-off. It reads because it sits over the
+          transcript: the same gradient over empty space would be background
+          fading into an identical background, i.e. nothing.
+        */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-linear-to-b from-background to-transparent"
+        />
+        <ConversationContent
+          className={`pt-8 ${COLUMN}`}
+          scrollClassName="scrollbar-minimal"
+        >
           {entries.length === 0 ? (
             <ConversationEmptyState title="How can I help?" description="Send a message to start." />
           ) : (
