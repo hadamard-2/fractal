@@ -1,0 +1,24 @@
+<!--
+  Fractal's app icon: the lucide "blocks" mark (the same glyph the sidebar
+  wordmark uses) in the app's foreground white on its background black.
+  Keep icon.png, icon.ico, and icon.icns in sync after editing this source.
+  Electron uses the PNG at runtime; Forge uses the native containers when it
+  packages Windows and macOS builds.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0a0a0a"/>
+  <!-- The 24x24 lucide glyph scaled to 60% of the canvas and centred; stroke
+       width stays 2 in glyph units so it scales with the mark, like lucide
+       renders it at any size. -->
+  <g
+    transform="translate(102.4 102.4) scale(12.8)"
+    fill="none"
+    stroke="#fafafa"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+  >
+    <path d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"/>
+    <rect x="14" y="2" width="8" height="8" rx="1"/>
+  </g>
+</svg>

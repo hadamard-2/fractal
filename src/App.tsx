@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { ExecuteMode } from '@/components/execute-mode';
 import { ModeToggle, type Mode } from '@/components/mode-toggle';
+import { SettingsDialog } from '@/components/settings-dialog';
 import { TitleBar } from '@/components/title-bar';
 
 export default function App() {
@@ -10,6 +11,27 @@ export default function App() {
   // sidebar shell, so state owned down there would reset to open on every
   // return trip.
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Chosen sidebar width in px; null means the 16rem default. Same
+  // outlives-the-mode reasoning as sidebarOpen above.
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  // Settings live at the app level, not in the sidebar: the dialog must be
+  // reachable from every mode (Cmd+, works even where the sidebar — and thus
+  // the footer button — isn't mounted), and stay mounted across mode changes.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Cmd+, (Ctrl+, elsewhere) — the canonical application-settings shortcut.
+  // Matched on `code` like main.ts's window shortcuts, so it survives
+  // keyboard layouts where the comma sits behind a modifier.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Comma' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setSettingsOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground">
@@ -33,7 +55,10 @@ export default function App() {
       <div
         className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end"
         style={{
-          top: 'var(--titlebar-height)',
+          // + the shared app-bar offset so this strip rides along with
+          // execute's header row (which margins itself down by the same
+          // token) and the toggle stays on that row's baseline.
+          top: 'calc(var(--titlebar-height) + var(--app-bar-offset))',
           height: 'var(--app-bar-height)',
           // Inset from the right by exactly what `items-center` leaves above
           // and below it, so the toggle sits the same distance from both edges
@@ -60,11 +85,16 @@ export default function App() {
           <ExecuteMode
             sidebarOpen={sidebarOpen}
             onSidebarOpenChange={setSidebarOpen}
+            sidebarWidth={sidebarWidth}
+            onSidebarWidthChange={setSidebarWidth}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         ) : (
           <main className="flex flex-1 items-center justify-center" />
         )}
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }

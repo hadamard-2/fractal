@@ -1,0 +1,27 @@
+# pnpm 11 reads package-manager settings from this file. It no longer reads
+# the `pnpm` field in package.json (the old home of `onlyBuiltDependencies`)
+# nor its own keys from .npmrc (the old home of `node-linker`) — both settings
+# live here now.
+#
+# `nodeLinker: hoisted` is load-bearing for packaging: Forge crawls
+# node_modules on disk and does not follow pnpm's symlinks, so the default
+# isolated layout silently ships an app missing dependencies (and Forge's
+# start check refuses the isolated layout outright).
+nodeLinker: hoisted
+
+# pnpm 11.23 blocks git-resolved subdependencies by default. This repo has one
+# legitimate one: @electron/node-gyp, pulled in by @electron/rebuild under
+# @electron-forge/cli (Electron's own tooling). It is already in the lockfile;
+# without this exception, ANY `pnpm add` fails, because adding a dependency
+# re-resolves the full tree and trips on it.
+blockExoticSubdeps: false
+
+# `allowBuilds` gates which dependencies may run install scripts. Everything
+# allowed here was either already trusted via the old package.json allowlist
+# (electron, electron-winstaller, esbuild) or flagged by pnpm 11 itself
+# (unrs-resolver, the native resolver behind eslint-import-resolver-typescript).
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  unrs-resolver: true

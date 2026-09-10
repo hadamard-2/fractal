@@ -4,8 +4,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentEvent, FractalAgentApi } from '@/shared/agent-contract';
 import { AGENT_EVENT_CHANNEL, AGENT_INVOKE_CHANNEL } from '@/shared/agent-ipc-channels';
+import {
+  SETTINGS_INVOKE_CHANNEL,
+  type FractalSettingsApi,
+  type SettingsInvokeRequest,
+} from '@/shared/settings-contract';
 
 const invoke = (req: unknown) => ipcRenderer.invoke(AGENT_INVOKE_CHANNEL, req);
+
+const invokeSettings = (req: SettingsInvokeRequest) => ipcRenderer.invoke(SETTINGS_INVOKE_CHANNEL, req);
 
 const agent: FractalAgentApi = {
   listConversations: () => invoke({ method: 'listConversations' }),
@@ -21,4 +28,10 @@ const agent: FractalAgentApi = {
   },
 };
 
-contextBridge.exposeInMainWorld('fractal', { agent });
+const settings: FractalSettingsApi = {
+  get: () => invokeSettings({ method: 'get' }),
+  set: (patch) => invokeSettings({ method: 'set', patch }),
+  openDataFolder: () => invokeSettings({ method: 'openDataFolder' }),
+};
+
+contextBridge.exposeInMainWorld('fractal', { agent, settings });

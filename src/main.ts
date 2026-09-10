@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { registerAgentIpc } from '@/main/agent-ipc';
+import { registerSettingsIpc } from '@/main/settings-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -118,10 +119,25 @@ const bindFullScreenChrome = (window: BrowserWindow) => {
 let mainWindowRef: BrowserWindow | null = null;
 
 const createWindow = () => {
-  // Create the browser window.
+  /*
+    Window and taskbar icon (the dock on Linux/Windows dev runs).
+
+    A plain on-disk path, deliberately not a Vite asset import: this plugin
+    version has no `?asset` support, so the import compiled to an inline
+    base64 data URI — and `icon` treats its string as a file path, silently
+    failing and leaving the stock icon. Development loads the source asset;
+    Forge's `extraResource` copies the packaged PNG beside app.asar.
+
+    Installer and desktop-entry icons are separate, per-platform concerns —
+    assets/icon.svg is the source of the mark.
+  */
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '../../assets/icon.png');
   const mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
+    icon: iconPath,
     // Hide the native title bar but keep the real window controls as an overlay;
     // the renderer draws the bar itself and inset via the titlebar-area-* env vars.
     titleBarStyle: 'hidden',
@@ -163,6 +179,9 @@ const createWindow = () => {
 // The IPC handlers are registered exactly once here; createWindow() can run
 // again later (see 'activate' below) and must not re-register them.
 app.on('ready', () => {
+  // First, so the stored theme is applied to `nativeTheme.themeSource` before
+  // the window loads and the first frame already has the right scheme.
+  registerSettingsIpc();
   registerAgentIpc(() => mainWindowRef);
   createWindow();
 });

@@ -10,13 +10,28 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // Electron Packager selects icon.ico on Windows and icon.icns on macOS.
+    icon: 'assets/icon',
+    // The Vite plugin packages only its build output. Ship the runtime PNG
+    // beside app.asar so BrowserWindow can load it in packaged Linux builds.
+    extraResource: ['assets/icon.png'],
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      setupIcon: 'assets/icon.ico',
+    }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({
+      options: {
+        icon: 'assets/icon.png',
+      },
+    }),
+    new MakerDeb({
+      options: {
+        icon: 'assets/icon.png',
+      },
+    }),
   ],
   plugins: [
     new VitePlugin({

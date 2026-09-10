@@ -8,7 +8,12 @@
 
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { initThemeSync } from './renderer/theme';
 import './index.css';
+
+// Before the first render: puts the `dark` class on <html> from the
+// prefers-color-scheme query so first paint is already in the right theme.
+initThemeSync();
 
 const container = document.getElementById('root');
 
