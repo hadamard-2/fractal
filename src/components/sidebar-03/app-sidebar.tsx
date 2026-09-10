@@ -134,26 +134,31 @@ function SidebarResizeHandle({
   onCollapse?: () => void;
   onResizingChange?: (resizing: boolean) => void;
 }) {
-  const { state, isMobile } = useSidebar();
+  const { state, isMobile, setOpen } = useSidebar();
   // Set on pointerdown, read on move/up; also the "is a drag active" marker.
   const dragOrigin = useRef<{ x: number; width: number } | null>(null);
 
-  // No resize affordance on the mobile sheet or the collapsed icon rail.
-  if (isMobile || state === 'collapsed') return null;
+  // The mobile sidebar is a sheet, so its edge is not a meaningful resize
+  // target. The collapsed desktop rail keeps the handle: starting a resize
+  // from it expands the rail before applying the drag delta below.
+  if (isMobile) return null;
 
   const currentWidth = width ?? SIDEBAR_DEFAULT_WIDTH;
+  const isCollapsed = state === 'collapsed';
 
   return (
     <div
       aria-label="Resize sidebar"
       aria-orientation="vertical"
-      className="absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize touch-none select-none transition-colors hover:bg-sidebar-border/60"
+      className="absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize touch-none select-none"
       onKeyDown={(event) => {
         if (event.key === 'ArrowLeft') {
           event.preventDefault();
+          if (isCollapsed) setOpen(true);
           onWidthChange?.(clampSidebarWidth(currentWidth - 16));
         } else if (event.key === 'ArrowRight') {
           event.preventDefault();
+          if (isCollapsed) setOpen(true);
           onWidthChange?.(clampSidebarWidth(currentWidth + 16));
         }
       }}
@@ -162,11 +167,17 @@ function SidebarResizeHandle({
         const container = event.currentTarget.closest(
           '[data-slot="sidebar-container"]'
         );
+        // The icon rail's bounding box is intentionally narrow. Its stored
+        // expanded width, rather than that box, is the stable baseline for a
+        // drag that begins from the collapsed state.
+        const originWidth = isCollapsed
+          ? currentWidth
+          : (container?.getBoundingClientRect().width ?? SIDEBAR_DEFAULT_WIDTH);
         dragOrigin.current = {
           x: event.clientX,
-          width:
-            container?.getBoundingClientRect().width ?? SIDEBAR_DEFAULT_WIDTH,
+          width: originWidth,
         };
+        if (isCollapsed) setOpen(true);
         // Keep move/up events flowing to this element even when the cursor
         // leaves the strip.
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -211,6 +222,7 @@ export function DashboardSidebar({
   onWidthChange,
   onResizingChange,
   onCollapse,
+  className,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   // The one Fractal-specific wiring: the footer's entry point into the global
@@ -236,7 +248,15 @@ export function DashboardSidebar({
   const isCollapsed = state === 'collapsed';
 
   return (
-    <Sidebar collapsible="icon" variant="floating" {...props}>
+    <Sidebar
+      className={cn(
+        '[&_[data-slot=sidebar-inner]]:transition-colors hover:[&_[data-slot=sidebar-inner]]:border-r-sidebar-foreground/20',
+        className
+      )}
+      collapsible="icon"
+      variant="floating"
+      {...props}
+    >
       <SidebarHeader
         className={cn(
           'flex md:pt-3.5',

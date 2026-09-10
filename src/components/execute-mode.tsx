@@ -110,35 +110,38 @@ export function ExecuteMode({
             marginTop: 'var(--app-bar-offset)',
           }}
         >
-          <SidebarTrigger className="-ml-1" />
-          <Separator
-            orientation="vertical"
-            className="mr-2 data-[orientation=vertical]:h-4"
-          />
           {/*
             The picked chat as a breadcrumb: its project as the muted
             ancestor, the chat itself as the current page. Projects are pure
             folders (never selectable), so a selection always arrives with a
             section — but standalone leaves without one render fine too,
-            just pageless of an ancestor. Nothing selected, nothing shown;
-            the row keeps its height from --app-bar-height.
+            just pageless of an ancestor. The sidebar trigger belongs to this
+            navigation context, so it appears with the breadcrumb rather than
+            alone in an otherwise empty app bar.
           */}
           {selectedItem && (
-            <Breadcrumb>
-              <BreadcrumbList>
-                {selectedItem.section && (
-                  <>
-                    <BreadcrumbItem>{selectedItem.section}</BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                  </>
-                )}
-                <BreadcrumbItem>
-                  <BreadcrumbPage className="font-medium">
-                    {selectedItem.title}
-                  </BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
+            <>
+              <SidebarTrigger className="-ml-1" />
+              <Separator
+                orientation="vertical"
+                className="mr-2 data-[orientation=vertical]:h-4"
+              />
+              <Breadcrumb>
+                <BreadcrumbList>
+                  {selectedItem.section && (
+                    <>
+                      <BreadcrumbItem>{selectedItem.section}</BreadcrumbItem>
+                      <BreadcrumbSeparator />
+                    </>
+                  )}
+                  <BreadcrumbItem>
+                    <BreadcrumbPage className="font-medium">
+                      {selectedItem.title}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
+            </>
           )}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
