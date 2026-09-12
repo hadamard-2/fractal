@@ -100,8 +100,9 @@ describe('normalizeClaudeRecord', () => {
     }, 2, context);
 
     expect(user.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported', 'unsupported']);
-    expect(result.map((event) => event.payload.kind)).toEqual(['action-updated', 'unsupported']);
-    expect(result[0].payload).toMatchObject({ output: 'first\nsecond' });
+    expect(result.map((event) => event.payload.kind)).toEqual(['action-updated', 'unsupported', 'action-updated']);
+    expect(result.map((event) => event.nativeType)).toEqual(['tool_result', 'image', 'tool_result']);
+    expect(result.at(-1)?.payload).toMatchObject({ output: 'first\nsecond' });
     expect(JSON.stringify([...user, ...result])).not.toContain('never expose');
   });
 
@@ -114,5 +115,28 @@ describe('normalizeClaudeRecord', () => {
       nativeType: 'result',
       payload: { kind: 'unsupported', captureCompleteness: 'partial' },
     });
+  });
+
+  test('keeps assistant and tool-result block events in source order and quarantines malformed text blocks', () => {
+    const context = createClaudeNormalizationContext();
+    const assistant = normalizeClaudeRecord({
+      type: 'assistant', uuid: 'ordered-assistant', message: { role: 'assistant', content: [
+        { type: 'text', text: 'first' }, { type: 'image', source: 'hidden' }, { type: 'text', text: 'second' },
+      ] },
+    }, 1, context);
+    const result = normalizeClaudeRecord({
+      type: 'user', uuid: 'ordered-result', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tool-order', content: [{ type: 'text', text: 'first' }, { type: 'image', source: 'hidden' }, { type: 'text', text: 'second' }] },
+      ] },
+    }, 2, context);
+    const malformedUser = normalizeClaudeRecord({
+      type: 'user', uuid: 'bad-user', message: { role: 'user', content: [{ type: 'text', text: 123 }] },
+    }, 3, context);
+
+    expect(assistant.map((event) => event.nativeType)).toEqual(['text', 'image', 'text']);
+    expect(result.map((event) => event.nativeType)).toEqual(['tool_result', 'image', 'tool_result']);
+    expect(result.map((event) => event.payload.kind)).toEqual(['action-updated', 'unsupported', 'action-updated']);
+    expect(malformedUser.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported']);
+    expect(malformedUser[1]?.payload).toMatchObject({ captureCompleteness: 'partial' });
   });
 });

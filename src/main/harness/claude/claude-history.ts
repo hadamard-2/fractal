@@ -119,7 +119,12 @@ export async function watchClaudeConversation(
         const events = line.ok
           ? normalizeClaudeRecord(line.value, currentOrdinal, context)
           : [unsupportedClaudeRecord(currentOrdinal)];
-        if (emit && !closed) events.forEach(sink);
+        if (emit) {
+          for (const event of events) {
+            if (closed) break;
+            sink(event);
+          }
+        }
       }
       cursor += bounded.byteLength;
       offset = cursor;
@@ -155,7 +160,13 @@ export async function watchClaudeConversation(
 
   const watcher: FSWatcher = watchFile(path.dirname(filePath), { persistent: false }, onChange);
   work = consume(0, initialStat.size - 1, false);
-  await work;
+  try {
+    await work;
+  } catch (error) {
+    closed = true;
+    watcher.close();
+    throw error;
+  }
   return () => {
     closed = true;
     watcher.close();
@@ -192,9 +203,9 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
     const createdAt = timestampAt(firstRecord) ?? fileStat.birthtimeMs;
     const updatedAt = timestampAt(lastRecord) ?? fileStat.mtimeMs;
     const title = titleFrom(first.records) ?? 'Claude conversation';
-    const captureCompleteness: CaptureCompleteness = first.incomplete || last.incomplete || first.malformed || last.malformed
+    const captureCompleteness: CaptureCompleteness = first.incomplete || last.incomplete || first.malformed || last.malformed || first.unsupported || last.unsupported
       ? 'partial'
-      : 'complete';
+      : fileStat.size > SUMMARY_SCAN_BYTES * 2 ? 'unknown' : 'complete';
     const ref: ConversationRef = { provider: 'claude', nativeSessionId: sessionId, projectPath };
     return {
       ref,
@@ -212,19 +223,25 @@ async function readSlice(handle: Awaited<ReturnType<typeof fs.open>>, position: 
   return buffer.subarray(0, bytesRead);
 }
 
-function scanRecords(bytes: Uint8Array, startsAtBoundary: boolean, reachesEnd: boolean): { records: ClaudeHistoryRecord[]; incomplete: boolean; malformed: boolean } {
+function scanRecords(bytes: Uint8Array, startsAtBoundary: boolean, reachesEnd: boolean): { records: ClaudeHistoryRecord[]; incomplete: boolean; malformed: boolean; unsupported: boolean } {
   const text = Buffer.from(bytes).toString('utf8');
   const bounded = startsAtBoundary ? text : text.slice((text.indexOf('\n') + 1) || text.length);
   const decoder = new NdjsonDecoder<unknown>();
   const lines = decoder.push(bounded);
+  const records = lines
+    .filter((line): line is Extract<typeof line, { ok: true }> => line.ok)
+    .map((line) => objectValue(line.value))
+    .filter((record): record is ClaudeHistoryRecord => record !== undefined);
   return {
-    records: lines
-      .filter((line): line is Extract<typeof line, { ok: true }> => line.ok)
-      .map((line) => objectValue(line.value))
-      .filter((record): record is ClaudeHistoryRecord => record !== undefined),
+    records,
     malformed: lines.some((line) => !line.ok || (line.ok && objectValue(line.value) === undefined)),
     incomplete: reachesEnd && decoder.finish().kind === 'incomplete',
+    unsupported: records.some((record) => !isRecognizedRecordType(record.type)),
   };
+}
+
+function isRecognizedRecordType(value: unknown): boolean {
+  return value === 'assistant' || value === 'user' || value === 'question' || value === 'permission' || value === 'permission_request' || value === 'result';
 }
 
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {

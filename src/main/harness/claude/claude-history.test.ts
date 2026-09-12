@@ -197,7 +197,7 @@ describe('Claude native history', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  test('marks a healthy bounded large scan complete rather than incomplete because it was clipped', async () => {
+  test('marks a bounded large scan unknown rather than complete because its middle was not sampled', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-large-'));
     const filePath = path.join(directory, 'large.jsonl');
     const first = '{"type":"user","uuid":"large","sessionId":"large-session","cwd":"/work/large","timestamp":"2026-09-12T01:00:00.000Z","message":{"role":"user","content":"Large title"}}\n';
@@ -205,7 +205,55 @@ describe('Claude native history', () => {
     const last = '{"type":"assistant","uuid":"large-last","sessionId":"large-session","cwd":"/work/large","timestamp":"2026-09-12T01:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}\n';
     await writeFile(filePath, first + filler.repeat(140) + last);
 
-    expect((await discoverClaudeConversations(directory))[0]?.summary.captureCompleteness).toBe('complete');
+    expect((await discoverClaudeConversations(directory))[0]?.summary.captureCompleteness).toBe('unknown');
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('lowers discovery completeness for well-formed unknown sampled records', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-summary-unknown-'));
+    await writeFile(path.join(directory, 'unknown.jsonl'), '{"type":"user","uuid":"unknown-user","sessionId":"unknown-session","cwd":"/work/unknown","message":{"role":"user","content":"Known title"}}\n{"type":"future_event","uuid":"future"}\n');
+
+    expect((await discoverClaudeConversations(directory))[0]?.summary.captureCompleteness).toBe('partial');
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('stops mid-record delivery immediately when the sink disposes the watcher', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-dispose-mid-record-'));
+    const filePath = path.join(directory, 'session.jsonl');
+    const events: NativeEvent[] = [];
+    let trigger: (() => void) | undefined;
+    await writeFile(filePath, '');
+    const unsubscribe = await watchClaudeConversation(filePath, (event) => {
+      events.push(event);
+      unsubscribe();
+    }, {
+      watch: ((_path, _options, listener) => {
+        trigger = () => (listener as unknown as (eventType: 'change', filename: string) => void)('change', 'session.jsonl');
+        return { close: (): void => undefined } as unknown as FSWatcher;
+      }) as typeof import('node:fs').watch,
+    });
+
+    await writeFile(filePath, '{"type":"assistant","uuid":"two-events","message":{"role":"assistant","content":[{"type":"text","text":"First"},{"type":"image","source":"hidden"}]}}\n');
+    if (!trigger) throw new Error('watcher callback was not registered');
+    trigger();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await rm(directory, { recursive: true, force: true });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload.kind).toBe('assistant-text');
+  });
+
+  test('closes the directory watcher when bootstrap reading fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-bootstrap-failure-'));
+    const filePath = path.join(directory, 'session.jsonl');
+    let closed = false;
+    await writeFile(filePath, 'x');
+
+    await expect(watchClaudeConversation(filePath, () => undefined, {
+      createReadStream: (() => Readable.from((async function* () { yield await Promise.reject(new Error('bootstrap failed')); })())) as unknown as typeof import('node:fs').createReadStream,
+      watch: (() => ({ close: (): void => { closed = true; } }) as unknown as FSWatcher) as typeof import('node:fs').watch,
+    })).rejects.toThrow('bootstrap failed');
+    expect(closed).toBe(true);
     await rm(directory, { recursive: true, force: true });
   });
 });

@@ -151,14 +151,7 @@ function normalizeContent(
     }
     if (blockType === 'tool_result') {
       const actionId = stringValue(block?.tool_use_id) ?? `${uuid}:unknown-tool:${index}`;
-      events.push(event(`${uuid}:${actionId}:${index}`, blockType, observedAt, {
-        kind: 'action-updated',
-        turnId,
-        actionId,
-        status: block?.is_error === true ? 'failed' : 'completed',
-        ...resultDetails(block),
-      }));
-      events.push(...unsupportedToolResultContent(block?.content, uuid, index, turnId, observedAt));
+      events.push(...toolResultEvents(block, uuid, index, actionId, turnId, observedAt));
       continue;
     }
     events.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, block ?? {}, turnId));
@@ -292,6 +285,54 @@ function resultDetails(block: Record<string, unknown> | undefined): Pick<Extract
   return {};
 }
 
+function toolResultEvents(
+  block: Record<string, unknown> | undefined,
+  uuid: string,
+  parentIndex: number,
+  actionId: string,
+  turnId: string,
+  observedAt: number,
+): NativeEvent[] {
+  const content = arrayValue(block?.content);
+  const baseId = `${uuid}:${actionId}:${parentIndex}`;
+  if (!content) {
+    return [event(baseId, 'tool_result', observedAt, {
+      kind: 'action-updated', turnId, actionId, status: block?.is_error === true ? 'failed' : 'completed', ...resultDetails(block),
+    })];
+  }
+
+  const validTextCount = content.filter((part) => {
+    const value = objectValue(part);
+    return value?.type === 'text' && typeof value.text === 'string';
+  }).length;
+  const result: NativeEvent[] = [];
+  const text: string[] = [];
+  let textCount = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    const value = objectValue(content[index]);
+    if (value?.type === 'text' && typeof value.text === 'string') {
+      text.push(value.text);
+      textCount += 1;
+      result.push(event(textCount === 1 ? baseId : `${baseId}:text:${index}`, 'tool_result', observedAt, {
+        kind: 'action-updated',
+        turnId,
+        actionId,
+        status: textCount === validTextCount ? (block?.is_error === true ? 'failed' : 'completed') : 'running',
+        output: text.join('\n'),
+      }));
+    } else {
+      const nativeType = stringValue(value?.type) ?? 'unknown-content';
+      result.push(unsupported(`${uuid}:tool-result:${parentIndex}:${nativeType}:${index}`, nativeType, observedAt, value ?? {}, turnId));
+    }
+  }
+  if (validTextCount === 0) {
+    result.push(event(baseId, 'tool_result', observedAt, {
+      kind: 'action-updated', turnId, actionId, status: block?.is_error === true ? 'failed' : 'completed',
+    }));
+  }
+  return result;
+}
+
 function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' | undefined {
   if (subtype === 'success') return 'completed';
   if (subtype === 'error') return 'failed';
@@ -304,22 +345,12 @@ function unsupportedUserContent(content: unknown, uuid: string, turnId: string, 
   if (!blocks) return [];
   return blocks.flatMap((block, index) => {
     const value = objectValue(block);
-    return stringValue(value?.type) === 'text'
+    return stringValue(value?.type) === 'text' && typeof value?.text === 'string'
       ? []
       : [unsupported(`${uuid}:${stringValue(value?.type) ?? 'unknown-content'}:${index}`, stringValue(value?.type) ?? 'unknown-content', observedAt, value ?? {}, turnId)];
   });
 }
 
-function unsupportedToolResultContent(content: unknown, uuid: string, parentIndex: number, turnId: string, observedAt: number): NativeEvent[] {
-  const blocks = arrayValue(content);
-  if (!blocks) return [];
-  return blocks.flatMap((block, index) => {
-    const value = objectValue(block);
-    return stringValue(value?.type) === 'text'
-      ? []
-      : [unsupported(`${uuid}:tool-result:${parentIndex}:${stringValue(value?.type) ?? 'unknown-content'}:${index}`, stringValue(value?.type) ?? 'unknown-content', observedAt, value ?? {}, turnId)];
-  });
-}
 
 function permissionDecision(value: unknown): UserDecision | undefined {
   if (value === 'allow-once') return { kind: 'allow-once' };
