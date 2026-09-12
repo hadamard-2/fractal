@@ -7,6 +7,7 @@ import type { CaptureCompleteness, ConversationRef, ConversationSummary } from '
 import type { NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import {
   createClaudeNormalizationContext,
+  classifyClaudeRecord,
   normalizeClaudeRecord,
   unsupportedClaudeRecord,
   type ClaudeHistoryRecord,
@@ -236,12 +237,8 @@ function scanRecords(bytes: Uint8Array, startsAtBoundary: boolean, reachesEnd: b
     records,
     malformed: lines.some((line) => !line.ok || (line.ok && objectValue(line.value) === undefined)),
     incomplete: reachesEnd && decoder.finish().kind === 'incomplete',
-    unsupported: records.some((record) => !isRecognizedRecordType(record.type)),
+    unsupported: records.some((record) => classifyClaudeRecord(record) === 'unsupported'),
   };
-}
-
-function isRecognizedRecordType(value: unknown): boolean {
-  return value === 'assistant' || value === 'user' || value === 'question' || value === 'permission' || value === 'permission_request' || value === 'result';
 }
 
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {

@@ -64,14 +64,7 @@ export function normalizeClaudeRecord(
   const turnId = context.recordTurn(record, uuid) ?? stringValue(record.parentUuid) ?? uuid;
 
   if (nativeType === 'user' && isUserMessage(message) && !hasToolResult(message.content)) {
-    const text = textContent(message.content);
-    return [event(uuid, nativeType, observedAt, {
-      kind: 'turn-started',
-      turnId,
-      userMessageId: stringValue(message.id) ?? uuid,
-      text,
-      ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
-    }), ...unsupportedUserContent(message.content, uuid, turnId, observedAt)];
+    return normalizeUserContent(message, uuid, nativeType, turnId, observedAt);
   }
 
   if ((nativeType === 'assistant' || nativeType === 'user') && message) {
@@ -228,6 +221,14 @@ export function unsupportedClaudeRecord(ordinal: number, nativeType = 'malformed
   });
 }
 
+/** Classifies records with the same validation and content semantics as normalization. */
+export function classifyClaudeRecord(record: unknown): 'recognized' | 'unsupported' {
+  return normalizeClaudeRecord(record, 0, createClaudeNormalizationContext())
+    .some((event) => event.payload.kind === 'unsupported')
+    ? 'unsupported'
+    : 'recognized';
+}
+
 function unsupported(nativeId: string, nativeType: string, observedAt: number, source: Record<string, unknown>, turnId?: string): NativeEvent {
   const fields = Object.keys(source).sort().join(', ');
   return event(nativeId, nativeType, observedAt, {
@@ -246,13 +247,43 @@ function hasToolResult(content: unknown): boolean {
   return arrayValue(content)?.some((block) => stringValue(objectValue(block)?.type) === 'tool_result') ?? false;
 }
 
-function textContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  return arrayValue(content)
-    ?.map((block) => objectValue(block))
-    .filter((block): block is Record<string, unknown> => block !== undefined && stringValue(block.type) === 'text')
-    .map((block) => stringValue(block.text) ?? '')
-    .join('') ?? '';
+function normalizeUserContent(
+  message: Record<string, unknown> & { content: unknown },
+  uuid: string,
+  nativeType: string,
+  turnId: string,
+  observedAt: number,
+): NativeEvent[] {
+  const content = message.content;
+  if (!Array.isArray(content)) {
+    return [event(uuid, nativeType, observedAt, {
+      kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: typeof content === 'string' ? content : '',
+      ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
+    })];
+  }
+
+  const firstTextIndex = content.findIndex((block) => {
+    const value = objectValue(block);
+    return value?.type === 'text' && typeof value.text === 'string';
+  });
+  const firstText = firstTextIndex === -1 ? '' : stringValue(objectValue(content[firstTextIndex])?.text) ?? '';
+  const events: NativeEvent[] = [event(uuid, nativeType, observedAt, {
+    kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: firstText,
+    ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
+  })];
+  for (let index = 0; index < content.length; index += 1) {
+    if (index === firstTextIndex) continue;
+    const value = objectValue(content[index]);
+    if (value?.type === 'text' && typeof value.text === 'string') {
+      events.push(event(`${uuid}:text:${index}`, 'text', observedAt, {
+        kind: 'assistant-text', turnId, blockId: `${uuid}:text:${index}`, text: value.text, final: true,
+      }));
+      continue;
+    }
+    const blockType = stringValue(value?.type) ?? 'unknown-content';
+    events.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, value ?? {}, turnId));
+  }
+  return events;
 }
 
 function actionKindFor(name: string, isSidechain: boolean): Extract<NativeEventPayload, { kind: 'action-requested' }>['actionKind'] {
@@ -338,17 +369,6 @@ function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' 
   if (subtype === 'error') return 'failed';
   if (subtype === 'interrupted') return 'interrupted';
   return undefined;
-}
-
-function unsupportedUserContent(content: unknown, uuid: string, turnId: string, observedAt: number): NativeEvent[] {
-  const blocks = arrayValue(content);
-  if (!blocks) return [];
-  return blocks.flatMap((block, index) => {
-    const value = objectValue(block);
-    return stringValue(value?.type) === 'text' && typeof value?.text === 'string'
-      ? []
-      : [unsupported(`${uuid}:${stringValue(value?.type) ?? 'unknown-content'}:${index}`, stringValue(value?.type) ?? 'unknown-content', observedAt, value ?? {}, turnId)];
-  });
 }
 
 

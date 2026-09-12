@@ -139,4 +139,16 @@ describe('normalizeClaudeRecord', () => {
     expect(malformedUser.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported']);
     expect(malformedUser[1]?.payload).toMatchObject({ captureCompleteness: 'partial' });
   });
+
+  test('keeps unsupported user content between its first and later text observations', () => {
+    const events = normalizeClaudeRecord({
+      type: 'user', uuid: 'ordered-user', message: { role: 'user', content: [
+        { type: 'text', text: 'first' }, { type: 'image', source: 'hidden' }, { type: 'text', text: 'second' },
+      ] },
+    }, 1, createClaudeNormalizationContext());
+
+    expect(events.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported', 'assistant-text']);
+    expect(events[0]?.payload).toMatchObject({ text: 'first', turnId: 'ordered-user' });
+    expect(events[2]?.payload).toMatchObject({ text: 'second', turnId: 'ordered-user' });
+  });
 });

@@ -217,6 +217,16 @@ describe('Claude native history', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  test('lowers discovery completeness for sampled recognized records with nested unsupported activity', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-summary-nested-'));
+    const user = '{"type":"user","uuid":"nested-user","sessionId":"nested-session","cwd":"/work/nested","message":{"role":"user","content":"Known title"}}\n';
+    await writeFile(path.join(directory, 'assistant.jsonl'), `${user}{"type":"assistant","uuid":"nested-assistant","message":{"role":"assistant","content":[{"type":"future_block","secret":"hidden"}]}}\n`);
+    await writeFile(path.join(directory, 'result.jsonl'), `${user}{"type":"result","uuid":"nested-result","subtype":"future_result"}\n`);
+
+    expect((await discoverClaudeConversations(directory)).map((item) => item.summary.captureCompleteness)).toEqual(['partial', 'partial']);
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('stops mid-record delivery immediately when the sink disposes the watcher', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-dispose-mid-record-'));
     const filePath = path.join(directory, 'session.jsonl');
