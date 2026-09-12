@@ -50,10 +50,15 @@ export class TurnProjector {
   private actionById = new Map<string, AgentAction>();
   private pendingActionResults = new Map<string, PendingActionResult>();
   private requestById = new Map<string, Extract<TurnBlock, { kind: 'approval' | 'question' }>>();
+  private unanchoredUnsupported: Extract<TurnBlock, { kind: 'unsupported' }>[] = [];
+  private unanchoredCompleteness: CaptureCompleteness = 'complete';
   private finishEmitted = false;
 
   push(event: NativeEvent): TurnProjectionUpdate[] {
     if (event.payload.kind === 'turn-started') return this.startTurn(event);
+    if (event.payload.kind === 'unsupported' && !event.payload.turnId) {
+      return this.projectUnanchoredUnsupported(event);
+    }
 
     const turnId = event.payload.turnId;
     if (!turnId) return [];
@@ -118,7 +123,7 @@ export class TurnProjector {
   private startTurn(event: NativeEvent): TurnProjectionUpdate[] {
     if (event.payload.kind !== 'turn-started') return [];
     const updates: TurnProjectionUpdate[] = [];
-    if (this.current && !this.finishEmitted) {
+    if (this.current?.status === 'active') {
       this.finalizeCurrent('completed', event.observedAt);
       updates.push({ turn: snapshot(this.current), finalized: true });
     }
@@ -132,14 +137,16 @@ export class TurnProjector {
         text: payload.text,
         ...(payload.createdAt === undefined ? {} : { createdAt: payload.createdAt }),
       },
-      blocks: [],
+      blocks: this.unanchoredUnsupported,
       status: 'active',
-      captureCompleteness: 'complete',
+      captureCompleteness: this.unanchoredCompleteness,
     };
     this.proseById = new Map();
     this.actionById = new Map();
     this.pendingActionResults = new Map();
     this.requestById = new Map();
+    this.unanchoredUnsupported = [];
+    this.unanchoredCompleteness = 'complete';
     this.finishEmitted = false;
     updates.push({ turn: snapshot(this.current), finalized: false });
     return updates;
@@ -149,7 +156,7 @@ export class TurnProjector {
     if (this.current?.id === turnId) return [];
 
     const updates: TurnProjectionUpdate[] = [];
-    if (this.current && !this.finishEmitted) {
+    if (this.current?.status === 'active') {
       this.finalizeCurrent('completed', event.observedAt);
       updates.push({ turn: snapshot(this.current), finalized: true });
     }
@@ -210,24 +217,20 @@ export class TurnProjector {
       const parent = this.actionById.get(event.payload.parentActionId);
       if (parent?.kind === 'subagent') {
         parent.actions.push(action);
+        this.refreshPacketStates();
         return;
       }
       this.current.captureCompleteness = lowerCompleteness(this.current.captureCompleteness, 'partial');
     }
     this.currentPacket(event).actions.push(action);
+    this.refreshPacketStates();
   }
 
   private projectActionUpdated(event: NativeEvent): void {
     if (!this.current || event.payload.kind !== 'action-updated') return;
     let action = this.actionById.get(event.payload.actionId);
+    const result = this.resultFromEvent(event);
     if (!action) {
-      const pending: PendingActionResult = {
-        status: event.payload.status,
-        ...(event.payload.output === undefined ? {} : { output: event.payload.output }),
-        ...(event.payload.exitCode === undefined ? {} : { exitCode: event.payload.exitCode }),
-        ...(event.payload.patch === undefined ? {} : { patch: event.payload.patch }),
-        observedAt: event.observedAt,
-      };
       action = {
         id: event.payload.actionId,
         nativeId: event.nativeId,
@@ -240,19 +243,40 @@ export class TurnProjector {
         captureCompleteness: 'partial',
       };
       this.actionById.set(action.id, action);
-      this.pendingActionResults.set(action.id, pending);
+      this.pendingActionResults.set(action.id, result);
       this.currentPacket(event).actions.push(action);
       this.current.captureCompleteness = lowerCompleteness(this.current.captureCompleteness, 'partial');
+    } else {
+      const pending = this.pendingActionResults.get(action.id);
+      if (pending) this.pendingActionResults.set(action.id, this.mergePendingResult(pending, result));
     }
 
-    this.applyActionResult(action, {
+    this.applyActionResult(action, result);
+    this.refreshPacketStates();
+  }
+
+  private resultFromEvent(event: NativeEvent): PendingActionResult {
+    if (event.payload.kind !== 'action-updated') throw new Error('Expected action update');
+    return {
       status: event.payload.status,
       ...(event.payload.output === undefined ? {} : { output: event.payload.output }),
       ...(event.payload.exitCode === undefined ? {} : { exitCode: event.payload.exitCode }),
       ...(event.payload.patch === undefined ? {} : { patch: event.payload.patch }),
       observedAt: event.observedAt,
-    });
-    this.refreshPacketStates();
+    };
+  }
+
+  private mergePendingResult(
+    previous: PendingActionResult,
+    incoming: PendingActionResult,
+  ): PendingActionResult {
+    return {
+      ...previous,
+      ...incoming,
+      ...(incoming.output === undefined && previous.output !== undefined ? { output: previous.output } : {}),
+      ...(incoming.exitCode === undefined && previous.exitCode !== undefined ? { exitCode: previous.exitCode } : {}),
+      ...(incoming.patch === undefined && previous.patch !== undefined ? { patch: previous.patch } : {}),
+    };
   }
 
   private applyActionResult(action: AgentAction, result: PendingActionResult): void {
@@ -332,12 +356,53 @@ export class TurnProjector {
   private replaceAction(existing: AgentAction, replacement: AgentAction): void {
     const preserved = {
       status: existing.status,
-      completedAt: existing.completedAt,
+      startedAt: existing.startedAt ?? replacement.startedAt,
+      ...(existing.completedAt === undefined ? {} : { completedAt: existing.completedAt }),
       captureCompleteness: lowerCompleteness(existing.captureCompleteness, replacement.captureCompleteness),
-    };
+    } as Record<string, unknown>;
+    const merged = { ...replacement, ...preserved } as unknown as Record<string, unknown>;
+    if (replacement.kind === 'command' && existing.kind === 'command') {
+      if (existing.output !== undefined) merged.output = existing.output;
+      if (existing.exitCode !== undefined) merged.exitCode = existing.exitCode;
+    } else if (replacement.kind === 'file-edit' && existing.kind === 'file-edit' && existing.patch !== undefined) {
+      merged.patch = existing.patch;
+    } else if (replacement.kind === 'search' && existing.kind === 'search' && existing.resultSummary !== undefined) {
+      merged.resultSummary = existing.resultSummary;
+    } else if (replacement.kind === 'tool' && existing.kind === 'tool' && existing.outputSummary !== undefined) {
+      merged.outputSummary = existing.outputSummary;
+    } else if (replacement.kind === 'subagent' && existing.kind === 'subagent') {
+      merged.actions = existing.actions;
+    }
     const mutableExisting = existing as unknown as Record<string, unknown>;
     Object.keys(mutableExisting).forEach((key) => delete mutableExisting[key]);
-    Object.assign(existing, replacement, preserved);
+    Object.assign(existing, merged);
+  }
+
+  private projectUnanchoredUnsupported(event: NativeEvent): TurnProjectionUpdate[] {
+    if (event.payload.kind !== 'unsupported') return [];
+    const block: Extract<TurnBlock, { kind: 'unsupported' }> = {
+      id: event.nativeId,
+      kind: 'unsupported',
+      provider: event.provider,
+      nativeType: event.nativeType,
+      summary: event.payload.summary,
+      captureCompleteness: event.payload.captureCompleteness,
+    };
+    if (!this.current || this.current.status !== 'active') {
+      this.unanchoredUnsupported.push(block);
+      this.unanchoredCompleteness = lowerCompleteness(
+        this.unanchoredCompleteness,
+        event.payload.captureCompleteness,
+      );
+      return [];
+    }
+    this.current.blocks.push(block);
+    this.current.captureCompleteness = lowerCompleteness(
+      this.current.captureCompleteness,
+      event.payload.captureCompleteness,
+    );
+    if (this.current.status === 'active') this.finishEmitted = false;
+    return [{ turn: snapshot(this.current), finalized: false }];
   }
 
   private currentPacket(event: NativeEvent): Extract<TurnBlock, { kind: 'work-packet' }> {
@@ -382,10 +447,10 @@ export class TurnProjector {
     this.current.blocks.forEach((block) => {
       if (block.kind !== 'work-packet') return;
       const statuses = this.flattenActions(block.actions).map((action) => action.status);
-      block.status = statuses.some((status) => failedActionStatuses.has(status))
-        ? 'failed'
-        : statuses.some((status) => activeActionStatuses.has(status))
-          ? 'active'
+      block.status = statuses.some((status) => activeActionStatuses.has(status))
+        ? 'active'
+        : statuses.some((status) => failedActionStatuses.has(status))
+          ? 'failed'
           : 'completed';
       if (block.status !== 'active') block.completedAt = completedAt ?? block.completedAt;
     });
