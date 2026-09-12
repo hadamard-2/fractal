@@ -20,14 +20,14 @@ export interface ClaudeHistoryRecord {
 }
 
 export interface ClaudeNormalizationContext {
-  recordTurn(record: ClaudeHistoryRecord): string | undefined;
+  recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined;
 }
 
 class NormalizationContext implements ClaudeNormalizationContext {
   private readonly turnByNativeId = new Map<string, string>();
 
-  recordTurn(record: ClaudeHistoryRecord): string | undefined {
-    const uuid = stringValue(record.uuid);
+  recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined {
+    const uuid = nativeId;
     const parentUuid = stringValue(record.parentUuid);
     const type = stringValue(record.type);
     const message = objectValue(record.message);
@@ -51,15 +51,17 @@ export function createClaudeNormalizationContext(): ClaudeNormalizationContext {
 }
 
 export function normalizeClaudeRecord(
-  record: ClaudeHistoryRecord,
+  input: unknown,
   ordinal: number,
   context: ClaudeNormalizationContext = defaultContext,
 ): NativeEvent[] {
+  const record = objectValue(input);
+  if (!record) return [unsupportedClaudeRecord(ordinal, 'invalid-record')];
   const nativeType = stringValue(record.type) ?? 'unknown';
-  const uuid = stringValue(record.uuid) ?? `record:${ordinal}`;
-  const observedAt = timestampValue(record.timestamp, ordinal);
-  const turnId = context.recordTurn(record) ?? stringValue(record.parentUuid) ?? uuid;
   const message = objectValue(record.message);
+  const uuid = stringValue(record.uuid) ?? stringValue(message?.id) ?? `record:${ordinal}`;
+  const observedAt = timestampValue(record.timestamp, ordinal);
+  const turnId = context.recordTurn(record, uuid) ?? stringValue(record.parentUuid) ?? uuid;
 
   if (nativeType === 'user' && isUserMessage(message) && !hasToolResult(message.content)) {
     const text = textContent(message.content);
@@ -69,7 +71,7 @@ export function normalizeClaudeRecord(
       userMessageId: stringValue(message.id) ?? uuid,
       text,
       ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
-    })];
+    }), ...unsupportedUserContent(message.content, uuid, turnId, observedAt)];
   }
 
   if ((nativeType === 'assistant' || nativeType === 'user') && message) {
@@ -87,7 +89,9 @@ export function normalizeClaudeRecord(
 
   if (nativeType === 'result') {
     const status = resultStatus(record.subtype);
-    return [event(uuid, nativeType, observedAt, { kind: 'turn-finished', turnId, status })];
+    return status
+      ? [event(uuid, nativeType, observedAt, { kind: 'turn-finished', turnId, status })]
+      : [unsupported(uuid, nativeType, observedAt, record, turnId)];
   }
 
   return [unsupported(uuid, nativeType, observedAt, record)];
@@ -154,6 +158,7 @@ function normalizeContent(
         status: block?.is_error === true ? 'failed' : 'completed',
         ...resultDetails(block),
       }));
+      events.push(...unsupportedToolResultContent(block?.content, uuid, index, turnId, observedAt));
       continue;
     }
     events.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, block ?? {}, turnId));
@@ -277,13 +282,43 @@ function detailForAction(input: Record<string, unknown> | undefined): string | u
 function resultDetails(block: Record<string, unknown> | undefined): Pick<Extract<NativeEventPayload, { kind: 'action-updated' }>, 'output'> {
   const content = block?.content;
   if (typeof content === 'string') return { output: content };
+  const text = arrayValue(content)
+    ?.map((part) => objectValue(part))
+    .filter((part): part is Record<string, unknown> => part !== undefined && stringValue(part.type) === 'text')
+    .map((part) => stringValue(part.text) ?? '')
+    .filter((part) => part !== '')
+    .join('\n');
+  if (text) return { output: text };
   return {};
 }
 
-function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' {
+function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' | undefined {
+  if (subtype === 'success') return 'completed';
   if (subtype === 'error') return 'failed';
   if (subtype === 'interrupted') return 'interrupted';
-  return 'completed';
+  return undefined;
+}
+
+function unsupportedUserContent(content: unknown, uuid: string, turnId: string, observedAt: number): NativeEvent[] {
+  const blocks = arrayValue(content);
+  if (!blocks) return [];
+  return blocks.flatMap((block, index) => {
+    const value = objectValue(block);
+    return stringValue(value?.type) === 'text'
+      ? []
+      : [unsupported(`${uuid}:${stringValue(value?.type) ?? 'unknown-content'}:${index}`, stringValue(value?.type) ?? 'unknown-content', observedAt, value ?? {}, turnId)];
+  });
+}
+
+function unsupportedToolResultContent(content: unknown, uuid: string, parentIndex: number, turnId: string, observedAt: number): NativeEvent[] {
+  const blocks = arrayValue(content);
+  if (!blocks) return [];
+  return blocks.flatMap((block, index) => {
+    const value = objectValue(block);
+    return stringValue(value?.type) === 'text'
+      ? []
+      : [unsupported(`${uuid}:tool-result:${parentIndex}:${stringValue(value?.type) ?? 'unknown-content'}:${index}`, stringValue(value?.type) ?? 'unknown-content', observedAt, value ?? {}, turnId)];
+  });
 }
 
 function permissionDecision(value: unknown): UserDecision | undefined {

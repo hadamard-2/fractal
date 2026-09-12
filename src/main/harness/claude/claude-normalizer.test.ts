@@ -83,4 +83,36 @@ describe('normalizeClaudeRecord', () => {
     expect(image[0]).toMatchObject({ nativeType: 'image', payload: { kind: 'unsupported', captureCompleteness: 'partial' } });
     expect(JSON.stringify(image[0])).not.toContain('never expose');
   });
+
+  test('preserves user and tool-result array activity in order', () => {
+    const context = createClaudeNormalizationContext();
+    const user = normalizeClaudeRecord({
+      type: 'user', uuid: 'array-user', message: { id: 'array-user-message', role: 'user', content: [
+        { type: 'text', text: 'Show ' },
+        { type: 'image', source: 'never expose' },
+        { type: 'future_block', secret: 'never expose' },
+      ] },
+    }, 1, context);
+    const result = normalizeClaudeRecord({
+      type: 'user', uuid: 'array-result', parentUuid: 'array-user', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tool-1', content: [{ type: 'text', text: 'first' }, { type: 'image', source: 'never expose' }, { type: 'text', text: 'second' }] },
+      ] },
+    }, 2, context);
+
+    expect(user.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported', 'unsupported']);
+    expect(result.map((event) => event.payload.kind)).toEqual(['action-updated', 'unsupported']);
+    expect(result[0].payload).toMatchObject({ output: 'first\nsecond' });
+    expect(JSON.stringify([...user, ...result])).not.toContain('never expose');
+  });
+
+  test('uses message IDs before ordinal fallbacks and refuses unknown terminal states', () => {
+    const record = { type: 'assistant', message: { id: 'message-only', role: 'assistant', content: [{ type: 'text', text: 'Stable' }] } };
+
+    expect(normalizeClaudeRecord(record, 3)[0]?.nativeId).toBe('message-only:text:0');
+    expect(normalizeClaudeRecord(record, 99)[0]?.nativeId).toBe('message-only:text:0');
+    expect(normalizeClaudeRecord({ type: 'result', uuid: 'unknown-result', subtype: 'future-state' }, 4)[0]).toMatchObject({
+      nativeType: 'result',
+      payload: { kind: 'unsupported', captureCompleteness: 'partial' },
+    });
+  });
 });
