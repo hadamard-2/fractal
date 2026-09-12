@@ -102,6 +102,10 @@ function normalizeContent(
   for (let index = 0; index < content.length; index += 1) {
     const block = objectValue(content[index]);
     const blockType = stringValue(block?.type) ?? 'unknown-content';
+    if (nativeType === 'user' && (blockType === 'text' || blockType === 'thinking')) {
+      events.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, block ?? {}, turnId));
+      continue;
+    }
     if (blockType === 'text') {
       const text = stringValue(block?.text);
       if (text !== undefined) {
@@ -262,28 +266,22 @@ function normalizeUserContent(
     })];
   }
 
-  const firstTextIndex = content.findIndex((block) => {
-    const value = objectValue(block);
-    return value?.type === 'text' && typeof value.text === 'string';
-  });
-  const firstText = firstTextIndex === -1 ? '' : stringValue(objectValue(content[firstTextIndex])?.text) ?? '';
-  const events: NativeEvent[] = [event(uuid, nativeType, observedAt, {
-    kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: firstText,
-    ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
-  })];
+  const text: string[] = [];
+  const unsupportedEvents: NativeEvent[] = [];
   for (let index = 0; index < content.length; index += 1) {
-    if (index === firstTextIndex) continue;
     const value = objectValue(content[index]);
     if (value?.type === 'text' && typeof value.text === 'string') {
-      events.push(event(`${uuid}:text:${index}`, 'text', observedAt, {
-        kind: 'assistant-text', turnId, blockId: `${uuid}:text:${index}`, text: value.text, final: true,
-      }));
+      text.push(value.text);
       continue;
     }
     const blockType = stringValue(value?.type) ?? 'unknown-content';
-    events.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, value ?? {}, turnId));
+    unsupportedEvents.push(unsupported(`${uuid}:${blockType}:${index}`, blockType, observedAt, value ?? {}, turnId));
   }
-  return events;
+  // The atomic user anchor cannot express interleaving with unsupported blocks.
+  return [event(uuid, nativeType, observedAt, {
+    kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: text.join('\n'),
+    ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
+  }), ...unsupportedEvents];
 }
 
 function actionKindFor(name: string, isSidechain: boolean): Extract<NativeEventPayload, { kind: 'action-requested' }>['actionKind'] {

@@ -140,15 +140,84 @@ describe('normalizeClaudeRecord', () => {
     expect(malformedUser[1]?.payload).toMatchObject({ captureCompleteness: 'partial' });
   });
 
-  test('keeps unsupported user content between its first and later text observations', () => {
-    const events = normalizeClaudeRecord({
-      type: 'user', uuid: 'ordered-user', message: { role: 'user', content: [
-        { type: 'text', text: 'first' }, { type: 'image', source: 'hidden' }, { type: 'text', text: 'second' },
-      ] },
-    }, 1, createClaudeNormalizationContext());
+  test.each([
+    {
+      name: 'text separated by an image',
+      content: [{ type: 'text', text: 'first' }, { type: 'image', source: 'hidden' }, { type: 'text', text: 'second' }],
+      text: 'first\nsecond',
+      unsupportedIds: ['ordered-user:image:1'],
+      unsupportedTypes: ['image'],
+    },
+    {
+      name: 'an image before the first text',
+      content: [{ type: 'image', source: 'hidden' }, { type: 'text', text: 'after' }],
+      text: 'after',
+      unsupportedIds: ['ordered-user:image:0'],
+      unsupportedTypes: ['image'],
+    },
+    {
+      name: 'multiple unsupported blocks around text',
+      content: [
+        { type: 'future_block', secret: 'hidden' }, { type: 'text', text: 'first' },
+        { type: 'image', source: 'hidden' }, { type: 'text', text: '' },
+        { type: 'text', text: 123 }, null, { type: 'text', text: ' last ' },
+      ],
+      text: 'first\n\n last ',
+      unsupportedIds: ['ordered-user:future_block:0', 'ordered-user:image:2', 'ordered-user:text:4', 'ordered-user:unknown-content:5'],
+      unsupportedTypes: ['future_block', 'image', 'text', 'unknown-content'],
+    },
+    {
+      name: 'no valid text',
+      content: [{ type: 'image', source: 'hidden' }, { type: 'text', text: 123 }, null, { type: 'future_block', secret: 'hidden' }],
+      text: '',
+      unsupportedIds: ['ordered-user:image:0', 'ordered-user:text:1', 'ordered-user:unknown-content:2', 'ordered-user:future_block:3'],
+      unsupportedTypes: ['image', 'text', 'unknown-content', 'future_block'],
+    },
+  ])('keeps user authorship and an atomic anchor with $name', ({ content, text, unsupportedIds, unsupportedTypes }) => {
+    const record = {
+      type: 'user', uuid: 'ordered-user', timestamp: '2026-09-12T00:00:00Z',
+      message: { id: 'user-message', role: 'user', content },
+    };
+    const events = normalizeClaudeRecord(record, 1, createClaudeNormalizationContext());
 
-    expect(events.map((event) => event.payload.kind)).toEqual(['turn-started', 'unsupported', 'assistant-text']);
-    expect(events[0]?.payload).toMatchObject({ text: 'first', turnId: 'ordered-user' });
-    expect(events[2]?.payload).toMatchObject({ text: 'second', turnId: 'ordered-user' });
+    expect(events.some((event) => event.payload.kind === 'assistant-text')).toBe(false);
+    expect(events.filter((event) => event.payload.kind === 'turn-started')).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      provider: 'claude', nativeId: 'ordered-user', nativeType: 'user',
+      payload: { kind: 'turn-started', userMessageId: 'user-message', text, turnId: 'ordered-user' },
+    });
+    expect(events.slice(1).map((event) => event.nativeId)).toEqual(unsupportedIds);
+    expect(events.slice(1).map((event) => event.nativeType)).toEqual(unsupportedTypes);
+    for (const event of events.slice(1)) {
+      expect(event).toMatchObject({
+        provider: 'claude',
+        payload: { kind: 'unsupported', turnId: 'ordered-user', captureCompleteness: 'partial' },
+      });
+      expect(event.payload).toHaveProperty('summary', expect.stringContaining(event.nativeType));
+    }
+    expect(JSON.stringify(events)).not.toContain('hidden');
+    expect(normalizeClaudeRecord(record, 99, createClaudeNormalizationContext())).toEqual(events);
+  });
+
+  test('quarantines user-authored carrier siblings without changing tool-result updates', () => {
+    const record = {
+      type: 'user', uuid: 'carrier', parentUuid: 'user-turn', message: { role: 'user', content: [
+        { type: 'text', text: 'hidden user text' },
+        { type: 'tool_result', tool_use_id: 'tool-1', content: 'Tool output' },
+        { type: 'thinking', thinking: 'hidden user thinking' },
+        { type: 'image', source: 'hidden image' },
+      ] },
+    };
+    const events = normalizeClaudeRecord(record, 1, createClaudeNormalizationContext());
+
+    expect(events.some((event) => event.payload.kind === 'assistant-text')).toBe(false);
+    expect(events.map((event) => event.payload.kind)).toEqual(['unsupported', 'action-updated', 'unsupported', 'unsupported']);
+    expect(events.map((event) => event.nativeId)).toEqual(['carrier:text:0', 'carrier:tool-1:1', 'carrier:thinking:2', 'carrier:image:3']);
+    expect(events[1].payload).toMatchObject({ kind: 'action-updated', turnId: 'user-turn', actionId: 'tool-1', output: 'Tool output', status: 'completed' });
+    for (const event of [events[0], events[2], events[3]]) {
+      expect(event).toMatchObject({ provider: 'claude', payload: { kind: 'unsupported', turnId: 'user-turn', captureCompleteness: 'partial' } });
+    }
+    expect(JSON.stringify(events)).not.toContain('hidden');
+    expect(normalizeClaudeRecord(record, 99, createClaudeNormalizationContext()).map((event) => event.nativeId)).toEqual(events.map((event) => event.nativeId));
   });
 });
