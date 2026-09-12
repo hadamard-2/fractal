@@ -237,6 +237,20 @@ describe('projectTurns', () => {
     expect(updates[1]).toMatchObject({ finalized: false, turn: { id: 't2', blocks: [] } });
   });
 
+  test('finalizes an EOF synthetic provenance turn when watch activity starts a real turn', () => {
+    const projector = new TurnProjector();
+
+    projector.push(event('future', 1, { kind: 'unsupported', summary: 'Future provider record', captureCompleteness: 'unknown' }));
+    const history = projector.finish();
+    const watchStart = projector.push(event('u1', 2, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'Continue' }));
+    const watchFinish = projector.push(event('t1:done', 3, { kind: 'turn-finished', turnId: 't1', status: 'completed' }));
+
+    expect(history).toMatchObject([{ finalized: true, turn: { id: 'unanchored:future', status: 'active', captureCompleteness: 'unknown' } }]);
+    expect(watchStart[0]).toMatchObject({ finalized: true, turn: { id: 'unanchored:future', status: 'completed' } });
+    expect(watchStart[1]).toMatchObject({ finalized: false, turn: { id: 't1', status: 'active' } });
+    expect(watchFinish).toMatchObject([{ finalized: true, turn: { id: 't1', status: 'completed' } }]);
+  });
+
   test('upserts repeated requests without erasing result fields, timing, or subagent children', () => {
     const [turn] = projectTurns([
       event('u1', 1, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'Inspect it' }),

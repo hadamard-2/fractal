@@ -123,16 +123,22 @@ export class TurnProjector {
     if (this.unanchoredUnsupported.length > 0) {
       const { blocks, captureCompleteness } = this.takeUnanchoredUnsupported();
       const first = blocks[0];
+      this.current = {
+        id: `unanchored:${first.id}`,
+        nativeId: first.id,
+        userMessage: { id: `missing-user-message:unanchored:${first.id}`, text: '' },
+        blocks,
+        status: 'active',
+        captureCompleteness,
+      };
+      this.proseById = new Map();
+      this.actionById = new Map();
+      this.pendingActionResults = new Map();
+      this.requestById = new Map();
+      this.finishEmitted = true;
       updates.push({
         finalized: true,
-        turn: {
-          id: `unanchored:${first.id}`,
-          nativeId: first.id,
-          userMessage: { id: `missing-user-message:unanchored:${first.id}`, text: '' },
-          blocks,
-          status: 'active',
-          captureCompleteness,
-        },
+        turn: snapshot(this.current),
       });
     }
     return updates;
