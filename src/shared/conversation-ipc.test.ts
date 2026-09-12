@@ -104,4 +104,24 @@ describe('native conversation event validation', () => {
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.resolved', requestId: 'request-1', decision: { kind: 'answer', answers: { field: 'ok' } } })).not.toThrow();
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.resolved', requestId: 'request-1', decision: { kind: 'answer', answers: { field: 'x'.repeat(100_001) } } })).toThrow('Invalid conversation stream event');
   });
+
+  test('rejects sparse history chunk turns', () => {
+    const sparseTurns = new Array(1);
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'history.chunk', chunkIndex: 0, turns: sparseTurns })).toThrow('Invalid conversation stream event');
+  });
+
+  test('rejects sparse turn blocks', () => {
+    const sparseBlocks = new Array(1);
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: { ...turn, blocks: sparseBlocks } })).toThrow('Invalid conversation stream event');
+  });
+
+  test('rejects sparse subagent actions', () => {
+    const sparseActions = new Array(1);
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: { ...turn, blocks: [{ ...turn.blocks[1], actions: sparseActions }] } })).toThrow('Invalid conversation stream event');
+  });
+
+  test('rejects sparse question choices', () => {
+    const sparseChoices = new Array(1);
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'codex', prompt: 'Choose', fieldId: 'choice', choices: sparseChoices, allowFreeText: false, status: 'open' } })).toThrow('Invalid conversation stream event');
+  });
 });

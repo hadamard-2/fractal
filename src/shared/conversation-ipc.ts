@@ -51,6 +51,23 @@ function nonnegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function denseArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!(index in value)) return false;
+  }
+  return true;
+}
+
+function mapDense<T>(value: unknown, parser: (item: unknown) => T): T[] {
+  if (!denseArray(value)) invalidEvent();
+  const result: T[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    result.push(parser(value[index]));
+  }
+  return result;
+}
+
 function provider(value: unknown): value is ProviderId {
   return typeof value === 'string' && (PROVIDERS as readonly string[]).includes(value);
 }
@@ -161,8 +178,8 @@ function cloneAction(value: unknown): AgentAction {
       if (!text(value.name) || !text(value.inputSummary) || (value.outputSummary !== undefined && !text(value.outputSummary))) invalidEvent();
       return { ...base, kind: 'tool', name: value.name, inputSummary: value.inputSummary, ...(value.outputSummary === undefined ? {} : { outputSummary: value.outputSummary as string }) };
     case 'subagent':
-      if (!text(value.label) || (value.parentNativeId !== undefined && !text(value.parentNativeId)) || !Array.isArray(value.actions)) invalidEvent();
-      return { ...base, kind: 'subagent', label: value.label, ...(value.parentNativeId === undefined ? {} : { parentNativeId: value.parentNativeId as string }), actions: value.actions.map(cloneAction) };
+      if (!text(value.label) || (value.parentNativeId !== undefined && !text(value.parentNativeId)) || !denseArray(value.actions)) invalidEvent();
+      return { ...base, kind: 'subagent', label: value.label, ...(value.parentNativeId === undefined ? {} : { parentNativeId: value.parentNativeId as string }), actions: mapDense(value.actions, cloneAction) };
     default:
       invalidEvent();
   }
@@ -176,8 +193,8 @@ function cloneBlockingRequest(value: unknown): BlockingRequest {
     return { id: value.id, kind: 'approval', provider: value.provider, title: value.title as string, operation: value.operation as string, ...(value.rememberScope === undefined ? {} : { rememberScope: value.rememberScope as string }), status: value.status as 'open' | 'resolved', ...decision };
   }
   if (value.kind === 'question') {
-    if (!text(value.prompt) || !nonblankText(value.fieldId) || typeof value.allowFreeText !== 'boolean' || (value.choices !== undefined && !Array.isArray(value.choices))) invalidEvent();
-    const choices = (value.choices as unknown[] | undefined)?.map((choice) => {
+    if (!text(value.prompt) || !nonblankText(value.fieldId) || typeof value.allowFreeText !== 'boolean' || (value.choices !== undefined && !denseArray(value.choices))) invalidEvent();
+    const choices = value.choices === undefined ? undefined : mapDense(value.choices, (choice) => {
       if (!plainObject(choice) || !nonblankText(choice.value) || !text(choice.label)) invalidEvent();
       return { value: choice.value, label: choice.label };
     });
@@ -193,10 +210,10 @@ function cloneTurnBlock(value: unknown): TurnBlock {
       if (!text(value.text) || !provider(value.provider)) invalidEvent();
       return { id: value.id, kind: 'assistant-prose', text: value.text, provider: value.provider };
     case 'work-packet':
-      if (!['active', 'completed', 'failed'].includes(String(value.status)) || !Array.isArray(value.actions)) invalidEvent();
+      if (!['active', 'completed', 'failed'].includes(String(value.status)) || !denseArray(value.actions)) invalidEvent();
       if (value.startedAt !== undefined && !finiteNumber(value.startedAt)) invalidEvent();
       if (value.completedAt !== undefined && !finiteNumber(value.completedAt)) invalidEvent();
-      return { id: value.id, kind: 'work-packet', status: value.status as 'active' | 'completed' | 'failed', actions: value.actions.map(cloneAction), ...(value.startedAt === undefined ? {} : { startedAt: value.startedAt as number }), ...(value.completedAt === undefined ? {} : { completedAt: value.completedAt as number }) };
+      return { id: value.id, kind: 'work-packet', status: value.status as 'active' | 'completed' | 'failed', actions: mapDense(value.actions, cloneAction), ...(value.startedAt === undefined ? {} : { startedAt: value.startedAt as number }), ...(value.completedAt === undefined ? {} : { completedAt: value.completedAt as number }) };
     case 'approval': {
       const request = cloneBlockingRequest(value.request);
       if (request.kind !== 'approval') invalidEvent();
@@ -219,13 +236,13 @@ function cloneTurnBlock(value: unknown): TurnBlock {
 }
 
 function cloneTurn(value: unknown): ConversationTurn {
-  if (!plainObject(value) || !nonblankText(value.id) || !text(value.nativeId) || !plainObject(value.userMessage) || !nonblankText(value.userMessage.id) || !text(value.userMessage.text) || !Array.isArray(value.blocks) || !['active', 'completed', 'interrupted', 'failed'].includes(String(value.status)) || !completeness(value.captureCompleteness)) invalidEvent();
+  if (!plainObject(value) || !nonblankText(value.id) || !text(value.nativeId) || !plainObject(value.userMessage) || !nonblankText(value.userMessage.id) || !text(value.userMessage.text) || !denseArray(value.blocks) || !['active', 'completed', 'interrupted', 'failed'].includes(String(value.status)) || !completeness(value.captureCompleteness)) invalidEvent();
   if (value.userMessage.createdAt !== undefined && !finiteNumber(value.userMessage.createdAt)) invalidEvent();
   return {
     id: value.id,
     nativeId: value.nativeId,
     userMessage: { id: value.userMessage.id as string, text: value.userMessage.text as string, ...(value.userMessage.createdAt === undefined ? {} : { createdAt: value.userMessage.createdAt as number }) },
-    blocks: value.blocks.map(cloneTurnBlock),
+    blocks: mapDense(value.blocks, cloneTurnBlock),
     status: value.status as 'active' | 'completed' | 'interrupted' | 'failed',
     captureCompleteness: value.captureCompleteness,
   };
@@ -249,8 +266,8 @@ export function parseConversationStreamEvent(value: unknown): ConversationStream
     const envelope = { loadId: parseLoadId(value.loadId), seq: value.seq, ref: parseConversationRef(value.ref) };
     switch (value.type) {
       case 'history.chunk':
-        if (!nonnegativeInteger(value.chunkIndex) || !Array.isArray(value.turns) || value.turns.length > MAX_HISTORY_TURNS) invalidEvent();
-        return { ...envelope, type: 'history.chunk', chunkIndex: value.chunkIndex, turns: value.turns.map(cloneTurn) };
+        if (!nonnegativeInteger(value.chunkIndex) || !denseArray(value.turns) || value.turns.length > MAX_HISTORY_TURNS) invalidEvent();
+        return { ...envelope, type: 'history.chunk', chunkIndex: value.chunkIndex, turns: mapDense(value.turns, cloneTurn) };
       case 'history.complete':
         return { ...envelope, type: 'history.complete' };
       case 'turn.upserted':
