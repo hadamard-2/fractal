@@ -189,6 +189,54 @@ describe('projectTurns', () => {
     });
   });
 
+  test('emits unsupported-only history at EOF with conservative completeness', () => {
+    const turns = projectTurns([
+      event('future', 1, { kind: 'unsupported', summary: 'Future provider record', captureCompleteness: 'unknown' }),
+    ]);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      captureCompleteness: 'unknown',
+      blocks: [{ id: 'future', kind: 'unsupported', provider: 'codex', nativeType: 'unsupported', captureCompleteness: 'unknown' }],
+    });
+  });
+
+  test('emits an unscoped record after a completed turn when EOF follows', () => {
+    const turns = projectTurns([
+      event('u1', 1, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'First' }),
+      event('t1:done', 2, { kind: 'turn-finished', turnId: 't1', status: 'completed' }),
+      event('future', 3, { kind: 'unsupported', summary: 'Future provider record', captureCompleteness: 'unknown' }),
+    ]);
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ id: 't1', status: 'completed', blocks: [], captureCompleteness: 'complete' });
+    expect(turns[1]).toMatchObject({
+      captureCompleteness: 'unknown',
+      blocks: [{ id: 'future', kind: 'unsupported', captureCompleteness: 'unknown' }],
+    });
+  });
+
+  test('binds a buffered unsupported record to an inferred turn before a later explicit anchor', () => {
+    const projector = new TurnProjector();
+
+    projector.push(event('future', 1, { kind: 'unsupported', summary: 'Future provider record', captureCompleteness: 'partial' }));
+    projector.push(event('prose', 2, { kind: 'assistant-text', turnId: 't1', text: 'I will inspect it.', final: true }));
+    const updates = projector.push(event('u2', 3, { kind: 'turn-started', turnId: 't2', userMessageId: 'u2', text: 'Second' }));
+
+    expect(updates[0]).toMatchObject({
+      finalized: true,
+      turn: {
+        id: 't1',
+        captureCompleteness: 'partial',
+        blocks: [
+          { id: 'future', kind: 'unsupported', captureCompleteness: 'partial' },
+          { id: 'prose', kind: 'assistant-prose', text: 'I will inspect it.' },
+        ],
+      },
+    });
+    expect(updates[1]).toMatchObject({ finalized: false, turn: { id: 't2', blocks: [] } });
+  });
+
   test('upserts repeated requests without erasing result fields, timing, or subagent children', () => {
     const [turn] = projectTurns([
       event('u1', 1, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'Inspect it' }),

@@ -115,9 +115,27 @@ export class TurnProjector {
   }
 
   finish(): TurnProjectionUpdate[] {
-    if (!this.current || this.finishEmitted) return [];
-    this.finishEmitted = true;
-    return [{ turn: snapshot(this.current), finalized: true }];
+    const updates: TurnProjectionUpdate[] = [];
+    if (this.current && !this.finishEmitted) {
+      this.finishEmitted = true;
+      updates.push({ turn: snapshot(this.current), finalized: true });
+    }
+    if (this.unanchoredUnsupported.length > 0) {
+      const { blocks, captureCompleteness } = this.takeUnanchoredUnsupported();
+      const first = blocks[0];
+      updates.push({
+        finalized: true,
+        turn: {
+          id: `unanchored:${first.id}`,
+          nativeId: first.id,
+          userMessage: { id: `missing-user-message:unanchored:${first.id}`, text: '' },
+          blocks,
+          status: 'active',
+          captureCompleteness,
+        },
+      });
+    }
+    return updates;
   }
 
   private startTurn(event: NativeEvent): TurnProjectionUpdate[] {
@@ -129,6 +147,7 @@ export class TurnProjector {
     }
 
     const { payload } = event;
+    const unanchored = this.takeUnanchoredUnsupported();
     this.current = {
       id: payload.turnId,
       nativeId: event.nativeId,
@@ -137,16 +156,14 @@ export class TurnProjector {
         text: payload.text,
         ...(payload.createdAt === undefined ? {} : { createdAt: payload.createdAt }),
       },
-      blocks: this.unanchoredUnsupported,
+      blocks: unanchored.blocks,
       status: 'active',
-      captureCompleteness: this.unanchoredCompleteness,
+      captureCompleteness: unanchored.captureCompleteness,
     };
     this.proseById = new Map();
     this.actionById = new Map();
     this.pendingActionResults = new Map();
     this.requestById = new Map();
-    this.unanchoredUnsupported = [];
-    this.unanchoredCompleteness = 'complete';
     this.finishEmitted = false;
     updates.push({ turn: snapshot(this.current), finalized: false });
     return updates;
@@ -161,13 +178,14 @@ export class TurnProjector {
       updates.push({ turn: snapshot(this.current), finalized: true });
     }
 
+    const unanchored = this.takeUnanchoredUnsupported();
     this.current = {
       id: turnId,
       nativeId: event.nativeId,
       userMessage: { id: `missing-user-message:${turnId}`, text: '' },
-      blocks: [],
+      blocks: unanchored.blocks,
       status: 'active',
-      captureCompleteness: 'partial',
+      captureCompleteness: lowerCompleteness('partial', unanchored.captureCompleteness),
     };
     this.proseById = new Map();
     this.actionById = new Map();
@@ -403,6 +421,19 @@ export class TurnProjector {
     );
     if (this.current.status === 'active') this.finishEmitted = false;
     return [{ turn: snapshot(this.current), finalized: false }];
+  }
+
+  private takeUnanchoredUnsupported(): {
+    blocks: Extract<TurnBlock, { kind: 'unsupported' }>[];
+    captureCompleteness: CaptureCompleteness;
+  } {
+    const result = {
+      blocks: this.unanchoredUnsupported,
+      captureCompleteness: this.unanchoredCompleteness,
+    };
+    this.unanchoredUnsupported = [];
+    this.unanchoredCompleteness = 'complete';
+    return result;
   }
 
   private currentPacket(event: NativeEvent): Extract<TurnBlock, { kind: 'work-packet' }> {
