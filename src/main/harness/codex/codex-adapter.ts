@@ -56,8 +56,9 @@ export class CodexAdapter implements HarnessAdapter {
     const receive = (incoming: NativeEvent[]): void => {
       if (!ready) { buffered.push(...incoming); return; }
       const byKey = new Map(known.map((event) => [`${event.provider}:${event.nativeId}`, event]));
-      const next = reconcileNativeEvents(known, incoming);
-      for (const event of incoming) {
+      const accepted = incoming.filter((event) => !preferKnownFinal(byKey.get(`${event.provider}:${event.nativeId}`), event));
+      const next = reconcileNativeEvents(known, accepted);
+      for (const event of accepted) {
         const prior = byKey.get(`${event.provider}:${event.nativeId}`);
         if (!prior || !sameNativeObservation(prior, event)) sink(event);
       }
@@ -73,6 +74,7 @@ export class CodexAdapter implements HarnessAdapter {
     });
     try {
       const thread = await this.readThread(ref);
+      live.seed(thread);
       known = normalizeCodexThread(thread);
       ready = true;
       for (const event of known) sink(event);
@@ -154,6 +156,14 @@ function hasThreadId(value: unknown): value is { params: { threadId: string } } 
 
 function sameNativeObservation(left: NativeEvent, right: NativeEvent): boolean {
   return left.nativeType === right.nativeType && JSON.stringify(left.payload) === JSON.stringify(right.payload);
+}
+
+function preferKnownFinal(known: NativeEvent | undefined, incoming: NativeEvent): boolean {
+  if (!known) return false;
+  if (known.payload.kind === 'assistant-text' && known.payload.final && incoming.payload.kind === 'assistant-text' && !incoming.payload.final) return true;
+  return known.payload.kind === 'action-updated' && incoming.payload.kind === 'action-updated'
+    && ['completed', 'failed', 'denied', 'interrupted'].includes(known.payload.status)
+    && incoming.payload.status === 'running';
 }
 
 async function* asAsyncIterable(events: NativeEvent[]): AsyncGenerator<NativeEvent> { yield* events; }

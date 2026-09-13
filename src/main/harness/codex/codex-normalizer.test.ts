@@ -74,11 +74,10 @@ describe('Codex native normalization', () => {
     };
     const events = normalizeCodexThread(malformed as never);
 
-    expect(events.slice(0, 3)).toMatchObject([
-      { nativeId: 'active-empty:started', payload: { kind: 'turn-started', turnId: 'active-empty' } },
-      { nativeId: 'bad-reasoning', payload: { kind: 'unsupported', turnId: 'mixed', captureCompleteness: 'partial' } },
-      { nativeId: 'good-message', payload: { kind: 'assistant-text', text: 'still here' } },
-    ]);
+    expect(events.find((event) => event.nativeId === 'active-empty:started')).toMatchObject({ payload: { kind: 'turn-started', turnId: 'active-empty' } });
+    expect(events.find((event) => event.nativeId === 'active-empty:missing-user')).toMatchObject({ payload: { kind: 'unsupported', turnId: 'active-empty', captureCompleteness: 'partial' } });
+    expect(events.find((event) => event.nativeId === 'bad-reasoning')).toMatchObject({ payload: { kind: 'unsupported', turnId: 'mixed', captureCompleteness: 'partial' } });
+    expect(events.find((event) => event.nativeId === 'good-message')).toMatchObject({ payload: { kind: 'assistant-text', text: 'still here' } });
   });
 
   test('uses file paths rather than change count or ordering for file action identity', () => {
@@ -90,5 +89,50 @@ describe('Codex native normalization', () => {
 
     const ids = (value: unknown) => normalizeCodexThread(value as never).filter((event) => event.payload.kind === 'action-requested').map((event) => event.nativeId).filter((id) => id.startsWith('patch-1'));
     expect(ids(first).sort()).toEqual(ids(second).sort());
+  });
+
+  test('marks active historical work partial, accumulates from a seeded snapshot, and clears interrupted streams', () => {
+    const context = createCodexLiveNormalizationContext();
+    const active = structuredClone(threadRead.thread) as { turns: Array<{ items: Array<Record<string, unknown>>; [key: string]: unknown }> };
+    const firstTurn = active.turns[0];
+    const commandItem = firstTurn?.items[2];
+    if (!firstTurn || !commandItem) throw new Error('fixture is incomplete');
+    active.turns = [{ ...firstTurn, status: 'inProgress', completedAt: null, items: [{ type: 'agentMessage', id: 'live-message', text: 'Hello', phase: null as unknown, memoryCitation: null as unknown, delivery: null as unknown }, { ...commandItem, id: 'live-command', aggregatedOutput: 'first' }] }];
+    const history = normalizeCodexThread(active as never);
+    context.seed(active as never);
+    const assistant = normalizeCodexNotification({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-message', delta: ' world' } } as never, context);
+    const command = normalizeCodexNotification({ method: 'item/commandExecution/outputDelta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-command', delta: ' second' } } as never, context);
+    normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'interrupted' } } } as never, context);
+    const afterInterrupt = normalizeCodexNotification({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-message', delta: 'new' } } as never, context);
+
+    expect(history.find((event) => event.nativeId === 'live-message')?.payload).toMatchObject({ final: false });
+    expect(assistant[0]?.payload).toMatchObject({ text: 'Hello world' });
+    expect(command[0]?.payload).toMatchObject({ output: 'first second' });
+    expect(afterInterrupt[0]?.payload).toMatchObject({ text: 'new' });
+  });
+
+  test('validates malformed live envelopes and requests without blocking later valid activity', () => {
+    const context = createCodexLiveNormalizationContext();
+    const malformed = normalizeCodexNotification({ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', startedAtMs: 'bad', item: { type: 'agentMessage', id: 'bad', text: 'hidden' } } } as never, context);
+    const request = normalizeCodexServerRequest({ id: 1, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 2, startedAtMs: 'bad' } } as never);
+    const valid = normalizeCodexNotification({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'ok', delta: 'ok' } } as never, context);
+
+    expect(malformed[0]?.payload).toMatchObject({ kind: 'unsupported', captureCompleteness: 'partial' });
+    expect(request[0]?.payload).toMatchObject({ kind: 'unsupported', captureCompleteness: 'partial' });
+    expect(valid[0]?.payload).toMatchObject({ kind: 'assistant-text', text: 'ok' });
+  });
+
+  test('gives ID-less unsupported notices distinct context-local identities and maps interrupted subagents', () => {
+    const context = createCodexLiveNormalizationContext();
+    const first = normalizeCodexNotification({ method: 'future/notice', params: { threadId: 'thread-1' } } as never, context)[0];
+    const second = normalizeCodexNotification({ method: 'future/notice', params: { threadId: 'thread-1' } } as never, context)[0];
+    const item = structuredClone(threadRead.thread) as { turns: Array<{ items: Array<{ kind?: string }> }> };
+    const subagent = item.turns[1]?.items[4];
+    if (!subagent) throw new Error('fixture is incomplete');
+    subagent.kind = 'interrupted';
+    const interrupted = normalizeCodexThread(item as never).find((event) => event.nativeId === 'subagent-1:status');
+
+    expect(first?.nativeId).not.toBe(second?.nativeId);
+    expect(interrupted?.payload).toMatchObject({ kind: 'action-updated', status: 'interrupted' });
   });
 });

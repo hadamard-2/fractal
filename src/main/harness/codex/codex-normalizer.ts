@@ -13,6 +13,7 @@ export interface CodexLiveNormalizationContext {
   replace(key: string, text: string): void;
   clearTurn(threadId: string, turnId: string): void;
   unknownId(method: string): string;
+  seed(thread: Thread): void;
 }
 
 class LiveNormalizationContext implements CodexLiveNormalizationContext {
@@ -22,6 +23,17 @@ class LiveNormalizationContext implements CodexLiveNormalizationContext {
   replace(key: string, text: string): void { this.text.set(key, text); }
   clearTurn(threadId: string, turnId: string): void { for (const key of this.text.keys()) if (key.startsWith(`${threadId}:${turnId}:`)) this.text.delete(key); }
   unknownId(method: string): string { return `notification:${method}:${this.unknown++}`; }
+  seed(thread: Thread): void {
+    if (!isObject(thread) || typeof thread.id !== 'string' || !Array.isArray(thread.turns)) return;
+    for (const turn of thread.turns) {
+      if (!isObject(turn) || typeof turn.id !== 'string' || !Array.isArray(turn.items)) continue;
+      for (const item of turn.items) {
+        if (!isObject(item) || typeof item.id !== 'string') continue;
+        if (item.type === 'agentMessage' && typeof item.text === 'string') this.replace(textKey(thread.id, turn.id, item.id), item.text);
+        if (item.type === 'commandExecution' && typeof item.aggregatedOutput === 'string') this.replace(textKey(thread.id, turn.id, item.id), item.aggregatedOutput);
+      }
+    }
+  }
 }
 
 export function createCodexLiveNormalizationContext(): CodexLiveNormalizationContext { return new LiveNormalizationContext(); }
@@ -38,6 +50,7 @@ export function normalizeCodexNotification(notification: ServerNotification, con
         text: context.append(textKey(notification.params.threadId, notification.params.turnId, notification.params.itemId), notification.params.delta), final: false,
       })];
     case 'item/started':
+      if (!hasStrings(notification.params, 'threadId', 'turnId') || !Number.isFinite(notification.params.startedAtMs) || !isObject(notification.params.item)) return [unsupported(notificationId(notification, context), notification.method, 0)];
       return normalizeItem(notification.params.item, notification.params.turnId, notification.params.startedAtMs, false);
     case 'item/completed':
       if (!hasStrings(notification.params, 'threadId', 'turnId') || !Number.isFinite(notification.params.completedAtMs)) return [unsupported(notificationId(notification, context), notification.method, 0)];
@@ -76,10 +89,12 @@ export function normalizeCodexNotification(notification: ServerNotification, con
 }
 
 export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent[] {
+  if (!isObject(request) || !isObject(request.params) || (typeof request.id !== 'string' && typeof request.id !== 'number') || typeof request.method !== 'string') return [unsupported('request:malformed', 'malformed-request', 0)];
   switch (request.method) {
     case 'item/commandExecution/requestApproval':
     case 'item/fileChange/requestApproval':
     case 'item/permissions/requestApproval': {
+      if (!hasStrings(request.params, 'threadId', 'turnId', 'itemId') || !Number.isFinite(request.params.startedAtMs)) return [unsupported(`request:${String(request.id)}`, request.method, 0)];
       const requestId = 'approvalId' in request.params && request.params.approvalId
         ? request.params.approvalId
         : String(request.id);
@@ -99,8 +114,12 @@ export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent
 function normalizeTurn(turn: unknown, ordinal: number): NativeEvent[] {
   if (!isObject(turn) || typeof turn.id !== 'string' || !Array.isArray(turn.items) || typeof turn.status !== 'string') return [unsupported(`turn:malformed:${ordinal}`, 'turn', 0)];
   const turnId = turn.id;
-  const events = turn.items.flatMap((item, index) => normalizeItem(item, turnId, secondsToMilliseconds(numberOrNull(turn.startedAt)), true, index));
-  if (turn.status === 'inProgress' && !events.some((event) => event.payload.kind === 'turn-started')) events.unshift(event(`${turnId}:started`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.startedAt)), { kind: 'turn-started', turnId, userMessageId: `${turnId}:missing-user`, text: '' }));
+  const final = turn.status !== 'inProgress';
+  const events = turn.items.flatMap((item, index) => normalizeItem(item, turnId, secondsToMilliseconds(numberOrNull(turn.startedAt)), final, index));
+  if (turn.status === 'inProgress' && !events.some((event) => event.payload.kind === 'turn-started')) {
+    events.unshift(unsupported(`${turnId}:missing-user`, 'missing-user-anchor', secondsToMilliseconds(numberOrNull(turn.startedAt)), turnId));
+    events.unshift(event(`${turnId}:started`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.startedAt)), { kind: 'turn-started', turnId, userMessageId: `${turnId}:missing-user`, text: '' }));
+  }
   if (turn.status !== 'inProgress') {
     events.push(event(`${turn.id}:status`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.completedAt)) ?? secondsToMilliseconds(numberOrNull(turn.startedAt)), {
       kind: 'turn-finished', turnId: turn.id, status: turnStatus(turn.status),
@@ -163,10 +182,11 @@ function actionKindForTool(tool: string): 'file-read' | 'search' | 'tool' {
   return 'tool';
 }
 
-function actionStatus(status: string): 'running' | 'completed' | 'failed' | 'denied' {
+function actionStatus(status: string): 'running' | 'completed' | 'failed' | 'denied' | 'interrupted' {
   if (status === 'completed') return 'completed';
   if (status === 'failed') return 'failed';
   if (status === 'declined') return 'denied';
+  if (status === 'interrupted') return 'interrupted';
   return 'running';
 }
 
@@ -193,7 +213,7 @@ function notificationId(notification: { method: string; params: object }, contex
   const threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
   const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
   const itemId = typeof params.itemId === 'string' ? params.itemId : undefined;
-  return [threadId, turnId, itemId, notification.method].filter(Boolean).join(':') || context.unknownId(notification.method);
+  return turnId || itemId ? [threadId, turnId, itemId, notification.method].filter(Boolean).join(':') : context.unknownId(notification.method);
 }
 
 function notificationTurnId(notification: { params: object }): string | undefined {
