@@ -1,0 +1,259 @@
+import { describe, expect, test, vi } from 'vitest';
+import { ConversationRegistry } from '@/main/conversation-registry';
+import { ConversationService } from '@/main/conversation-service';
+import type { HarnessAdapter, NativeEventSink } from '@/main/harness/types';
+import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
+import type { ConversationStreamEvent, ConversationSummary, HarnessCapabilities } from '@/shared/conversation-contract';
+import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
+
+const ref = { provider: 'codex' as const, nativeSessionId: 'session', projectPath: '/repo' };
+const loadId = '00000000-0000-4000-8000-000000000001';
+const nextLoadId = '00000000-0000-4000-8000-000000000002';
+const capabilities: HarnessCapabilities = { create: false, partialStreaming: true, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
+const summary: ConversationSummary = { ref, title: 'Session', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' };
+function event(nativeId: string, payload: NativeEventPayload): NativeEvent {
+  return { provider: 'codex', nativeId, nativeType: payload.kind, observedAt: 1, payload };
+}
+function start(id = 'turn'): NativeEvent { return event(`start:${id}`, { kind: 'turn-started', turnId: id, userMessageId: `user:${id}`, text: 'Question' }); }
+function prose(text: string, final = false, turnId = 'turn'): NativeEvent { return event(`prose:${turnId}`, { kind: 'assistant-text', turnId, blockId: `block:${turnId}`, text, final }); }
+function finish(id = 'turn'): NativeEvent { return event(`finish:${id}`, { kind: 'turn-finished', turnId: id, status: 'completed' }); }
+async function* iterable(events: NativeEvent[]) { yield* events; }
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
+function fixture(history: NativeEvent[] = []) {
+  const sinks: NativeEventSink[] = [];
+  const unsubscribe = vi.fn();
+  const adapter: HarnessAdapter = {
+    provider: 'codex', capabilities: () => capabilities,
+    probe: vi.fn(async () => ({ provider: 'codex' as const, availability: 'available' as const, capabilities })),
+    listConversations: vi.fn(async () => [summary]),
+    loadConversation: vi.fn(async () => ({ summary, events: iterable(history) })),
+    watchConversation: vi.fn(async (_ref, sink) => { sinks.push(sink); return unsubscribe; }),
+    createConversation: vi.fn(), continueConversation: vi.fn(),
+  };
+  const events: ConversationStreamEvent[] = [];
+  const registry = new ConversationRegistry([adapter], async (path) => path);
+  const emit = (value: ConversationStreamEvent) => { events.push(parseConversationStreamEvent(value)); };
+  const service = new ConversationService(registry, emit, { historyChunkSize: 50 });
+  return { adapter, service, events, sinks, unsubscribe, registry };
+}
+
+describe('ConversationService', () => {
+  test('streams 205 finalized turns in bounded ordered chunks after establishing the watcher', async () => {
+    const f = fixture(Array.from({ length: 205 }, (_, index) => [start(String(index)), finish(String(index))]).flat());
+    const response = await f.service.open(ref, loadId);
+    expect(f.events.filter((item) => item.type === 'history.chunk').map((item) => item.turns.length)).toEqual([50, 50, 50, 50, 5]);
+    expect(f.events.at(-1)?.type).toBe('history.complete');
+    expect(f.events.map((item) => item.seq)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(vi.mocked(f.adapter.watchConversation).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(f.adapter.loadConversation).mock.invocationCallOrder[0]);
+    expect(response).toEqual({ summary, capabilities });
+    await f.service.dispose();
+  });
+
+  test('prefers the newer load snapshot over initial watcher data and drains appends before completion', async () => {
+    const f = fixture();
+    vi.mocked(f.adapter.watchConversation).mockImplementation(async (_ref, sink) => {
+      f.sinks.push(sink); [start(), prose('Old')].forEach(sink); return f.unsubscribe;
+    });
+    vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary, events: (async function* () {
+      yield start(); yield prose('New');
+      f.sinks[0](prose('New append'));
+    })() });
+    await f.service.open(ref, loadId);
+    const chunks = f.events.filter((item) => item.type === 'history.chunk');
+    expect(chunks[0].turns[0].blocks[0]).toMatchObject({ text: 'New' });
+    expect(f.events.at(-2)).toMatchObject({ type: 'assistant.delta', delta: ' append' });
+    expect(f.events.at(-1)?.type).toBe('history.complete');
+    f.sinks[0](prose('New append'));
+    expect(f.events.at(-1)?.type).toBe('history.complete');
+    f.sinks[0](prose('Replacement', true));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { userMessage: { text: 'Question' }, blocks: [{ text: 'Replacement' }] } });
+    await f.service.dispose();
+  });
+
+  test('reconciles corrections to older turns without losing their user message or actions', async () => {
+    const f = fixture([start('old'), prose('Draft', false, 'old'), finish('old'), start('new'), finish('new')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Corrected', true, 'old'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { id: 'old', status: 'completed', userMessage: { text: 'Question' }, blocks: [{ text: 'Corrected' }] } });
+    await f.service.dispose();
+  });
+
+  test('uses action updates only for an established packet and emits cumulative text as suffix deltas', async () => {
+    const f = fixture([start(), prose('Hello')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Hello world'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'assistant.delta', delta: ' world', blockId: 'block:turn' });
+    f.sinks[0](event('action', { kind: 'action-requested', turnId: 'turn', actionId: 'a', actionKind: 'command', label: 'pwd' }));
+    expect(f.events.at(-1)?.type).toBe('turn.upserted');
+    f.sinks[0](event('result', { kind: 'action-updated', turnId: 'turn', actionId: 'a', status: 'completed', output: '/repo' }));
+    expect(f.events.at(-2)).toMatchObject({ type: 'action.upserted', action: { id: 'a', status: 'completed', output: '/repo' } });
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { blocks: [expect.anything(), expect.objectContaining({ kind: 'work-packet', status: 'completed' })] } });
+    await f.service.dispose();
+  });
+
+  test('supersedes opens before validation completes and suppresses stale generations', async () => {
+    const f = fixture([start()]);
+    const gate = deferred<ConversationSummary[]>();
+    vi.mocked(f.adapter.listConversations).mockReturnValue(gate.promise);
+    const first = f.service.open(ref, loadId);
+    const second = f.service.open(ref, nextLoadId);
+    gate.resolve([summary]);
+    await Promise.allSettled([first, second]);
+    expect(f.events.every((item) => item.loadId === nextLoadId)).toBe(true);
+    expect(f.events[0].seq).toBe(0);
+    expect(f.sinks).toHaveLength(1);
+    await f.service.dispose();
+  });
+
+  test('closes a pending watcher exactly once and ignores its late callbacks', async () => {
+    const f = fixture([start()]);
+    const ready = deferred<void>();
+    const gate = deferred<() => void>();
+    vi.mocked(f.adapter.watchConversation).mockImplementation(async (_ref, sink) => { f.sinks.push(sink); ready.resolve(); return gate.promise; });
+    const opening = f.service.open(ref, loadId);
+    await ready.promise;
+    await f.service.close(ref);
+    gate.resolve(f.unsubscribe);
+    await Promise.allSettled([opening]);
+    f.sinks[0](start());
+    await f.service.dispose();
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(f.events).toEqual([]);
+    expect(f.adapter.loadConversation).not.toHaveBeenCalled();
+  });
+
+  test('deduplicates the same open and rejects reuse of an active load ID for a different ref', async () => {
+    const f = fixture([start()]);
+    await Promise.all([f.service.open(ref, loadId), f.service.open(ref, loadId)]);
+    expect(f.sinks).toHaveLength(1);
+    await expect(f.service.open({ ...ref, nativeSessionId: 'other' }, loadId)).rejects.toThrow();
+    await f.service.close(ref);
+    f.sinks[0](prose('ignored'));
+    expect(f.events.at(-1)?.type).toBe('history.complete');
+    await f.service.dispose();
+    await expect(f.service.open(ref, nextLoadId)).rejects.toThrow();
+  });
+
+  test('sanitizes load errors, emits only on the affected load and releases its watch', async () => {
+    const f = fixture();
+    vi.mocked(f.adapter.loadConversation).mockRejectedValue(new Error('/private secret transcript'));
+    await expect(f.service.open(ref, loadId)).rejects.toThrow();
+    expect(f.events).toEqual([{ type: 'load.failed', ref, loadId, seq: 0, message: expect.any(String) }]);
+    expect(JSON.stringify(f.events)).not.toContain('secret');
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('validates IDs, refs and chunk bounds before opening native resources', async () => {
+    const f = fixture();
+    await expect(f.service.open(ref, 'invalid')).rejects.toThrow();
+    await expect(f.service.open({ ...ref, projectPath: '/forged' }, loadId)).rejects.toThrow();
+    expect(f.sinks).toHaveLength(0);
+    for (const historyChunkSize of [0, 51, -1, 1.5, NaN]) expect(() => new ConversationService(f.registry, () => undefined, { historyChunkSize })).toThrow();
+  });
+
+  test('keeps runtime mutation unavailable until run ownership is implemented', async () => {
+    const f = fixture();
+    await expect(f.service.create('codex', '/repo')).rejects.toThrow();
+    await expect(f.service.continue(ref, { text: 'Go' })).rejects.toThrow();
+    await expect(f.service.interrupt(ref)).rejects.toThrow();
+    await expect(f.service.resolveRequest('request', { kind: 'deny' })).rejects.toThrow();
+    await f.service.denyRequestsForOwner('renderer', 'closed');
+    expect(f.adapter.continueConversation).not.toHaveBeenCalled();
+    expect(f.adapter.createConversation).not.toHaveBeenCalled();
+  });
+
+  test('does not regress cumulative text when an overlapping buffered update is behind the snapshot', async () => {
+    const f = fixture();
+    vi.mocked(f.adapter.loadConversation).mockImplementation(async () => {
+      f.sinks[0](prose('Hello'));
+      return { summary, events: iterable([start(), prose('Hello world')]) };
+    });
+    await f.service.open(ref, loadId);
+    expect(f.events.map((item) => item.type)).toEqual(['history.chunk', 'history.complete']);
+    await f.service.dispose();
+  });
+
+  test('deduplicates repeated native observations in history', async () => {
+    const f = fixture([start(), prose('Text'), finish(), start(), prose('Text'), finish()]);
+    await f.service.open(ref, loadId);
+    expect(f.events.filter((item) => item.type === 'history.chunk').flatMap((item) => item.turns)).toHaveLength(1);
+    await f.service.dispose();
+  });
+
+  test('retains unanchored provenance when updating the current or an older turn', async () => {
+    const warning = event('warning', { kind: 'unsupported', summary: 'Unknown record', captureCompleteness: 'partial' });
+    const f = fixture([warning, start(), prose('Old')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Old plus'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'assistant.delta', delta: ' plus' });
+    f.sinks[0](start('next'));
+    f.sinks[0](prose('Corrected', true));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { captureCompleteness: 'partial', blocks: [expect.objectContaining({ kind: 'unsupported' }), expect.objectContaining({ text: 'Corrected' })] } });
+    await f.service.dispose();
+  });
+
+  test('a forged project cannot close an existing generation', async () => {
+    const f = fixture([start()]);
+    await f.service.open(ref, loadId);
+    await expect(f.service.open({ ...ref, projectPath: '/forged' }, nextLoadId)).rejects.toThrow();
+    f.sinks[0](prose('Still watching'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', loadId });
+    expect(f.unsubscribe).not.toHaveBeenCalled();
+    await f.service.dispose();
+  });
+
+  test('close returns the open iterator without interrupting native runs', async () => {
+    const f = fixture();
+    const waiting = deferred<void>();
+    const item = deferred<IteratorResult<NativeEvent>>();
+    const returned = vi.fn(async () => ({ done: true as const, value: undefined }));
+    vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary, events: { [Symbol.asyncIterator]: () => ({ next: () => { waiting.resolve(); return item.promise; }, return: returned }) } });
+    const opening = f.service.open(ref, loadId);
+    await waiting.promise;
+    await f.service.close(ref);
+    await Promise.resolve();
+    expect(returned).toHaveBeenCalledTimes(1);
+    item.resolve({ done: false, value: start() });
+    await Promise.allSettled([opening]);
+    expect(f.events).toEqual([]);
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('preserves notices attached to active turns and inferred completion during replay', async () => {
+    const warning = event('warning', { kind: 'unsupported', summary: 'Unknown record', captureCompleteness: 'partial' });
+    const f = fixture([start(), warning, prose('Old'), start('next')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Correction', true));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { id: 'turn', status: 'completed', captureCompleteness: 'partial', blocks: [expect.objectContaining({ kind: 'unsupported' }), expect.objectContaining({ text: 'Correction' })] } });
+    await f.service.dispose();
+  });
+
+  test('releases resources even when delivering the failure event throws', async () => {
+    const f = fixture([start()]);
+    const service = new ConversationService(f.registry, () => { throw new Error('Renderer gone'); });
+    await expect(service.open(ref, loadId)).rejects.toThrow();
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+    await service.dispose();
+  });
+
+  test('yields between chunks so cancellation can stop a large history', async () => {
+    const f = fixture(Array.from({ length: 205 }, (_, index) => [start(String(index)), finish(String(index))]).flat());
+    const emitted: ConversationStreamEvent[] = [];
+    const service = new ConversationService(f.registry, (value) => {
+      emitted.push(value);
+      if (value.type === 'history.chunk') setImmediate(() => { void service.close(ref); });
+    });
+    await expect(service.open(ref, loadId)).rejects.toThrow();
+    expect(emitted.map((item) => item.type)).toEqual(['history.chunk']);
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test('returns only lightweight summary fields from native load metadata', async () => {
+    const f = fixture();
+    const nativeSummary = { ...summary, rawTranscript: ['private native record'], fileLocator: '/private/session.jsonl' };
+    vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary: nativeSummary, events: iterable([]) });
+    const result = await f.service.open(ref, loadId);
+    expect(result).toEqual({ summary, capabilities });
+    await f.service.dispose();
+  });
+});
