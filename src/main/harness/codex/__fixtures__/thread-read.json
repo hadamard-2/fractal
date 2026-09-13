@@ -1,0 +1,61 @@
+{
+  "thread": {
+    "id": "thread-1",
+    "sessionId": "session-1",
+    "forkedFromId": null,
+    "parentThreadId": null,
+    "preview": "Trace the history adapter",
+    "ephemeral": false,
+    "section": null,
+    "sectionEnteredAt": null,
+    "projectId": null,
+    "modelProvider": "openai",
+    "createdAt": 1768000000,
+    "updatedAt": 1768000010,
+    "recencyAt": 1768000010,
+    "status": { "type": "idle" },
+    "path": null,
+    "cwd": "/work/fractal",
+    "cliVersion": "0.1.0",
+    "source": "cli",
+    "threadSource": null,
+    "agentNickname": null,
+    "agentRole": null,
+    "gitInfo": null,
+    "name": "Native history",
+    "turns": [
+      {
+        "id": "turn-1",
+        "itemsView": "full",
+        "status": "completed",
+        "error": null,
+        "startedAt": 1768000001,
+        "completedAt": 1768000009,
+        "durationMs": 8000,
+        "items": [
+          { "type": "userMessage", "id": "user-1", "clientId": null, "content": [{ "type": "text", "text": "Trace the history adapter", "text_elements": [] }] },
+          { "type": "agentMessage", "id": "message-1", "text": "I will inspect it.", "phase": null, "memoryCitation": null, "delivery": null },
+          { "type": "commandExecution", "id": "command-1", "pluginId": null, "scriptPath": null, "command": "pnpm lint", "cwd": "/work/fractal", "processId": null, "source": "agent", "status": "completed", "commandActions": [], "aggregatedOutput": "ok", "exitCode": 0, "durationMs": 4 },
+          { "type": "agentMessage", "id": "message-2", "text": "The adapter is ready.", "phase": null, "memoryCitation": null, "delivery": null }
+        ]
+      },
+      {
+        "id": "turn-2",
+        "itemsView": "full",
+        "status": "inProgress",
+        "error": null,
+        "startedAt": 1768000011,
+        "completedAt": null,
+        "durationMs": null,
+        "items": [
+          { "type": "userMessage", "id": "user-2", "clientId": null, "content": [{ "type": "text", "text": "Use the other item kinds", "text_elements": [] }] },
+          { "type": "fileChange", "id": "file-1", "changes": [{ "path": "src/main.ts", "kind": "update", "diff": "@@ safe patch" }], "status": "completed" },
+          { "type": "mcpToolCall", "id": "tool-1", "server": "docs", "tool": "read_file", "status": "completed", "arguments": { "path": "private" }, "appContext": null, "pluginId": null, "readOnlyHint": true, "result": null, "error": null, "durationMs": 2 },
+          { "type": "webSearch", "id": "search-1", "query": "Codex protocol", "action": { "type": "search", "query": "Codex protocol", "queries": null }, "results": [{ "secret": "not exposed" }] },
+          { "type": "subAgentActivity", "id": "subagent-1", "kind": "started", "agentThreadId": "child-1", "agentPath": "child" },
+          { "type": "futureItem", "id": "future-1", "privatePayload": "never expose" }
+        ]
+      }
+    ]
+  }
+}

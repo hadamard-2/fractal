@@ -1,0 +1,5 @@
+[
+  { "method": "item/agentMessage/delta", "params": { "threadId": "thread-1", "turnId": "turn-1", "itemId": "message-live", "delta": "partial" } },
+  { "method": "item/completed", "params": { "threadId": "thread-1", "turnId": "turn-1", "completedAtMs": 1768000020000, "item": { "type": "agentMessage", "id": "message-live", "text": "partial final", "phase": null, "memoryCitation": null, "delivery": null } } },
+  { "method": "thread/status/changed", "params": { "threadId": "thread-1", "status": { "type": "active", "activeFlags": ["waitingOnApproval"] } } }
+]
