@@ -95,6 +95,7 @@ export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent
     case 'item/fileChange/requestApproval':
     case 'item/permissions/requestApproval': {
       if (!hasStrings(request.params, 'threadId', 'turnId', 'itemId') || !Number.isFinite(request.params.startedAtMs)) return [unsupported(`request:${String(request.id)}`, request.method, 0)];
+      if ('approvalId' in request.params && request.params.approvalId !== null && request.params.approvalId !== undefined && typeof request.params.approvalId !== 'string') return [unsupported(`request:${String(request.id)}`, request.method, 0)];
       const requestId = 'approvalId' in request.params && request.params.approvalId
         ? request.params.approvalId
         : String(request.id);
@@ -172,7 +173,7 @@ function actionEvents(
 ): NativeEvent[] {
   const status = actionStatus(nativeStatus);
   const events: NativeEvent[] = [event(actionId, nativeType, observedAt, { kind: 'action-requested', turnId, actionId, actionKind, label })];
-  if (final || status !== 'running') events.push(event(`${actionId}:status`, nativeType, observedAt, { kind: 'action-updated', turnId, actionId, status, ...update }));
+  if (final || status !== 'running' || Object.keys(update).length > 0) events.push(event(`${actionId}:status`, nativeType, observedAt, { kind: 'action-updated', turnId, actionId, status, ...update }));
   return events;
 }
 

@@ -135,4 +135,15 @@ describe('Codex native normalization', () => {
     expect(first?.nativeId).not.toBe(second?.nativeId);
     expect(interrupted?.payload).toMatchObject({ kind: 'action-updated', status: 'interrupted' });
   });
+
+  test('uses safe title extraction and retains running action snapshots from active turns', () => {
+    const active = structuredClone(threadRead.thread) as any;
+    active.name = ' ';
+    active.preview = ' ';
+    active.turns = [{ ...active.turns[0], status: 'inProgress', items: [{ type: 'userMessage', id: 'broken-user', content: null }, { ...active.turns[0].items[2], status: 'inProgress', aggregatedOutput: 'running output' }, { type: 'fileChange', id: 'running-file', status: 'inProgress', changes: [{ path: 'a.ts', kind: 'update', diff: 'patch' }] }] }];
+    const events = normalizeCodexThread(active);
+
+    expect(events.find((event) => event.nativeId === 'command-1:status')?.payload).toMatchObject({ kind: 'action-updated', status: 'running', output: 'running output' });
+    expect(events.find((event) => event.nativeId === 'running-file:file:a.ts:status')?.payload).toMatchObject({ kind: 'action-updated', status: 'running', patch: 'patch' });
+  });
 });

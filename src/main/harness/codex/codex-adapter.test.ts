@@ -108,4 +108,25 @@ describe('Codex read adapter', () => {
     unsubscribe();
     expect(server.listenerCount()).toBe(0);
   });
+
+  test('seeds a deferred read before normalizing buffered live deltas and cleans subscriptions on failure', async () => {
+    let resolveRead: ((value: unknown) => void) | undefined;
+    const server = createFakeAppServer();
+    server.request.mockImplementation((method: string) => method === 'thread/read'
+      ? new Promise((resolve) => { resolveRead = resolve; })
+      : Promise.resolve({ data: [], nextCursor: null }));
+    const sink = vi.fn();
+    const watching = new CodexAdapter(server as never, { realpath: async (value) => value }).watchConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, sink);
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: ' world' } });
+    const snapshot = clone(threadRead.thread);
+    snapshot.turns[0].status = 'inProgress';
+    snapshot.turns[0].completedAt = null;
+    resolveRead?.({ thread: snapshot });
+    const unsubscribe = await watching;
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: '!' } });
+
+    expect(sink.mock.calls.map(([event]) => event).filter((event) => event.nativeId === 'message-1').at(-1)).toMatchObject({ payload: { text: 'I will inspect it. world!' } });
+    unsubscribe();
+    expect(server.listenerCount()).toBe(0);
+  });
 });

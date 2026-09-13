@@ -51,10 +51,9 @@ export class CodexAdapter implements HarnessAdapter {
   async watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe> {
     const live = createCodexLiveNormalizationContext();
     let known: NativeEvent[] = [];
-    const buffered: NativeEvent[] = [];
+    const buffered: Array<() => NativeEvent[]> = [];
     let ready = false;
     const receive = (incoming: NativeEvent[]): void => {
-      if (!ready) { buffered.push(...incoming); return; }
       const byKey = new Map(known.map((event) => [`${event.provider}:${event.nativeId}`, event]));
       const accepted = incoming.filter((event) => !preferKnownFinal(byKey.get(`${event.provider}:${event.nativeId}`), event));
       const next = reconcileNativeEvents(known, accepted);
@@ -66,10 +65,12 @@ export class CodexAdapter implements HarnessAdapter {
     };
     const notifications = this.server.onNotification((notification) => {
       if (!hasThreadId(notification) || notification.params.threadId !== ref.nativeSessionId) return;
+      if (!ready) { buffered.push(() => normalizeCodexNotification(notification, live)); return; }
       receive(normalizeCodexNotification(notification, live));
     });
     const requests = this.server.onServerRequest?.((request) => {
       if (!hasThreadId(request) || request.params.threadId !== ref.nativeSessionId) return;
+      if (!ready) { buffered.push(() => normalizeCodexServerRequest(request)); return; }
       receive(normalizeCodexServerRequest(request));
     });
     try {
@@ -78,8 +79,7 @@ export class CodexAdapter implements HarnessAdapter {
       known = normalizeCodexThread(thread);
       ready = true;
       for (const event of known) sink(event);
-      const pending = buffered.splice(0);
-      if (pending.length > 0) receive(pending);
+      for (const pending of buffered.splice(0)) receive(pending());
     } catch (error) {
       notifications();
       requests?.();
@@ -133,10 +133,12 @@ function completenessFor(thread: Awaited<CodexRequestMap['thread/read']['result'
 }
 
 function firstUserText(thread: Awaited<CodexRequestMap['thread/read']['result']>['thread']): string | undefined {
+  if (!Array.isArray(thread.turns)) return undefined;
   for (const turn of thread.turns) {
+    if (!turn || !Array.isArray(turn.items)) continue;
     const item = turn.items.find((candidate) => candidate.type === 'userMessage');
-    if (!item || item.type !== 'userMessage') continue;
-    const text = item.content.filter((content) => content.type === 'text').map((content) => content.text).join('\n').trim();
+    if (!item || item.type !== 'userMessage' || !Array.isArray(item.content)) continue;
+    const text = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []).join('\n').trim();
     if (text) return text;
   }
   return undefined;
