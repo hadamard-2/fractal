@@ -1,48 +1,77 @@
 import type { ServerNotification, ServerRequest } from '@/main/harness/codex/generated';
 import type { Thread } from '@/main/harness/codex/generated/v2/Thread';
 import type { ThreadItem } from '@/main/harness/codex/generated/v2/ThreadItem';
-import type { Turn } from '@/main/harness/codex/generated/v2/Turn';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
 
 export function normalizeCodexThread(thread: Thread): NativeEvent[] {
-  return thread.turns.flatMap((turn) => normalizeTurn(turn));
+  if (!isObject(thread) || !Array.isArray(thread.turns)) return [unsupported('thread:malformed', 'thread', 0)];
+  return thread.turns.flatMap((turn, index) => normalizeTurn(turn, index));
 }
 
-export function normalizeCodexNotification(notification: ServerNotification): NativeEvent[] {
+export interface CodexLiveNormalizationContext {
+  append(key: string, delta: string): string;
+  replace(key: string, text: string): void;
+  clearTurn(threadId: string, turnId: string): void;
+  unknownId(method: string): string;
+}
+
+class LiveNormalizationContext implements CodexLiveNormalizationContext {
+  private readonly text = new Map<string, string>();
+  private unknown = 0;
+  append(key: string, delta: string): string { const text = `${this.text.get(key) ?? ''}${delta}`; this.text.set(key, text); return text; }
+  replace(key: string, text: string): void { this.text.set(key, text); }
+  clearTurn(threadId: string, turnId: string): void { for (const key of this.text.keys()) if (key.startsWith(`${threadId}:${turnId}:`)) this.text.delete(key); }
+  unknownId(method: string): string { return `notification:${method}:${this.unknown++}`; }
+}
+
+export function createCodexLiveNormalizationContext(): CodexLiveNormalizationContext { return new LiveNormalizationContext(); }
+
+const defaultLiveContext = createCodexLiveNormalizationContext();
+
+export function normalizeCodexNotification(notification: ServerNotification, context: CodexLiveNormalizationContext = defaultLiveContext): NativeEvent[] {
+  if (!isObject(notification) || typeof notification.method !== 'string' || !isObject(notification.params)) return [unsupported(context.unknownId('malformed'), 'malformed-notification', 0)];
   switch (notification.method) {
     case 'item/agentMessage/delta':
+      if (!hasStrings(notification.params, 'threadId', 'turnId', 'itemId', 'delta')) return [unsupported(notificationId(notification, context), notification.method, 0)];
       return [event(notification.params.itemId, notification.method, 0, {
         kind: 'assistant-text', turnId: notification.params.turnId, blockId: notification.params.itemId,
-        text: notification.params.delta, final: false,
+        text: context.append(textKey(notification.params.threadId, notification.params.turnId, notification.params.itemId), notification.params.delta), final: false,
       })];
     case 'item/started':
       return normalizeItem(notification.params.item, notification.params.turnId, notification.params.startedAtMs, false);
     case 'item/completed':
+      if (!hasStrings(notification.params, 'threadId', 'turnId') || !Number.isFinite(notification.params.completedAtMs)) return [unsupported(notificationId(notification, context), notification.method, 0)];
+      if (isObject(notification.params.item) && notification.params.item.type === 'agentMessage' && typeof notification.params.item.id === 'string' && typeof notification.params.item.text === 'string') context.replace(textKey(notification.params.threadId, notification.params.turnId, notification.params.item.id), notification.params.item.text);
       return normalizeItem(notification.params.item, notification.params.turnId, notification.params.completedAtMs, true);
     case 'turn/started':
-      return normalizeTurn(notification.params.turn);
+      return normalizeTurn(notification.params.turn, 0);
     case 'turn/completed':
+      if (!hasStrings(notification.params, 'threadId') || !isObject(notification.params.turn) || typeof notification.params.turn.id !== 'string' || typeof notification.params.turn.status !== 'string') return [unsupported(notificationId(notification, context), notification.method, 0)];
+      context.clearTurn(notification.params.threadId, notification.params.turn.id);
       return [event(`${notification.params.turn.id}:status`, notification.method, 0, {
         kind: 'turn-finished', turnId: notification.params.turn.id, status: turnStatus(notification.params.turn.status),
       })];
     case 'thread/status/changed':
+      if (!hasStrings(notification.params, 'threadId') || !isObject(notification.params.status) || typeof notification.params.status.type !== 'string') return [unsupported(notificationId(notification, context), notification.method, 0)];
       return [event(`${notification.params.threadId}:status`, notification.method, 0, {
-        kind: 'system-notice', turnId: notification.params.threadId, tone: notification.params.status.type === 'systemError' ? 'error' : 'info',
-        message: threadStatusMessage(notification.params.status.type, notification.params.status.type === 'active' ? notification.params.status.activeFlags : []),
+        kind: 'system-notice', tone: notification.params.status.type === 'systemError' ? 'error' : 'info',
+        message: threadStatusMessage(notification.params.status.type, notification.params.status.type === 'active' && Array.isArray(notification.params.status.activeFlags) ? notification.params.status.activeFlags : []),
       })];
     case 'item/commandExecution/outputDelta':
+      if (!hasStrings(notification.params, 'threadId', 'turnId', 'itemId', 'delta')) return [unsupported(notificationId(notification, context), notification.method, 0)];
       return [event(`${notification.params.itemId}:status`, notification.method, 0, {
-        kind: 'action-updated', turnId: notification.params.turnId, actionId: notification.params.itemId, status: 'running', output: notification.params.delta,
+        kind: 'action-updated', turnId: notification.params.turnId, actionId: notification.params.itemId, status: 'running', output: context.append(textKey(notification.params.threadId, notification.params.turnId, notification.params.itemId), notification.params.delta),
       })];
     case 'item/fileChange/patchUpdated':
-      return notification.params.changes.map((change, index, changes) => {
-        const actionId = changes.length === 1 ? notification.params.itemId : `${notification.params.itemId}:${index}`;
+      if (!hasStrings(notification.params, 'threadId', 'turnId', 'itemId') || !Array.isArray(notification.params.changes) || !notification.params.changes.every(isFileChange)) return [unsupported(notificationId(notification, context), notification.method, 0)];
+      return notification.params.changes.map((change) => {
+        const actionId = fileActionId(notification.params.itemId, change.path);
         return event(`${actionId}:status`, notification.method, 0, {
           kind: 'action-updated', turnId: notification.params.turnId, actionId, status: 'running', patch: change.diff,
         });
       });
     default:
-      return [unsupported(notification.method, notification.method, 0)];
+      return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnId(notification))];
   }
 }
 
@@ -67,17 +96,21 @@ export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent
   }
 }
 
-function normalizeTurn(turn: Turn): NativeEvent[] {
-  const events = turn.items.flatMap((item) => normalizeItem(item, turn.id, secondsToMilliseconds(turn.startedAt), true));
+function normalizeTurn(turn: unknown, ordinal: number): NativeEvent[] {
+  if (!isObject(turn) || typeof turn.id !== 'string' || !Array.isArray(turn.items) || typeof turn.status !== 'string') return [unsupported(`turn:malformed:${ordinal}`, 'turn', 0)];
+  const turnId = turn.id;
+  const events = turn.items.flatMap((item, index) => normalizeItem(item, turnId, secondsToMilliseconds(numberOrNull(turn.startedAt)), true, index));
+  if (turn.status === 'inProgress' && !events.some((event) => event.payload.kind === 'turn-started')) events.unshift(event(`${turnId}:started`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.startedAt)), { kind: 'turn-started', turnId, userMessageId: `${turnId}:missing-user`, text: '' }));
   if (turn.status !== 'inProgress') {
-    events.push(event(`${turn.id}:status`, 'turn-status', secondsToMilliseconds(turn.completedAt) ?? secondsToMilliseconds(turn.startedAt), {
+    events.push(event(`${turn.id}:status`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.completedAt)) ?? secondsToMilliseconds(numberOrNull(turn.startedAt)), {
       kind: 'turn-finished', turnId: turn.id, status: turnStatus(turn.status),
     }));
   }
   return events;
 }
 
-function normalizeItem(item: ThreadItem, turnId: string, observedAt: number, final: boolean): NativeEvent[] {
+function normalizeItem(item: unknown, turnId: string, observedAt: number, final: boolean, ordinal = 0): NativeEvent[] {
+  if (!isThreadItem(item)) return [unsupported(itemId(item, turnId, ordinal), itemType(item), observedAt, turnId)];
   switch (item.type) {
     case 'userMessage': {
       const text = item.content.filter((content) => content.type === 'text').map((content) => content.text).join('\n');
@@ -96,8 +129,8 @@ function normalizeItem(item: ThreadItem, turnId: string, observedAt: number, fin
         ...(item.exitCode !== null ? { exitCode: item.exitCode } : {}),
       });
     case 'fileChange':
-      return item.changes.flatMap((change, index) => {
-        const actionId = item.changes.length === 1 ? item.id : `${item.id}:${index}`;
+      return item.changes.flatMap((change) => {
+        const actionId = fileActionId(item.id, change.path);
         return actionEvents(actionId, item.type, turnId, observedAt, 'file-edit', change.path, item.status, final, { patch: change.diff });
       });
     case 'mcpToolCall':
@@ -148,7 +181,58 @@ function turnStatus(status: string): 'completed' | 'interrupted' | 'failed' {
 function threadStatusMessage(type: string, flags: string[]): string {
   if (type === 'systemError') return 'Codex thread reported a system error';
   if (type === 'active' && flags.length > 0) return 'Codex thread is waiting for user input';
-  return type === 'active' ? 'Codex thread is active' : 'Codex thread is idle';
+  return type === 'active' ? 'Codex thread is active' : type === 'idle' ? 'Codex thread is idle' : 'Codex thread status is unknown';
+}
+
+function fileActionId(itemId: string, filePath: string): string { return `${itemId}:file:${filePath}`; }
+
+function textKey(threadId: string, turnId: string, itemId: string): string { return `${threadId}:${turnId}:${itemId}`; }
+
+function notificationId(notification: { method: string; params: object }, context: CodexLiveNormalizationContext): string {
+  const params = notification.params as Record<string, unknown>;
+  const threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
+  const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+  const itemId = typeof params.itemId === 'string' ? params.itemId : undefined;
+  return [threadId, turnId, itemId, notification.method].filter(Boolean).join(':') || context.unknownId(notification.method);
+}
+
+function notificationTurnId(notification: { params: object }): string | undefined {
+  const turnId = (notification.params as Record<string, unknown>).turnId;
+  return typeof turnId === 'string' ? turnId : undefined;
+}
+
+function hasStrings(value: object, ...keys: string[]): value is Record<string, string> {
+  return keys.every((key) => typeof (value as Record<string, unknown>)[key] === 'string');
+}
+
+function isObject(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null; }
+
+function numberOrNull(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
+
+function itemId(value: unknown, turnId: string, ordinal: number): string {
+  return isObject(value) && typeof value.id === 'string' ? value.id : `${turnId}:item:${ordinal}`;
+}
+
+function itemType(value: unknown): string { return isObject(value) && typeof value.type === 'string' ? value.type : 'malformed-item'; }
+
+function isFileChange(value: unknown): value is { path: string; diff: string } {
+  return isObject(value) && typeof value.path === 'string' && typeof value.diff === 'string';
+}
+
+function isThreadItem(value: unknown): value is ThreadItem {
+  if (!isObject(value) || typeof value.type !== 'string' || typeof value.id !== 'string') return false;
+  switch (value.type) {
+    case 'userMessage': return Array.isArray(value.content) && value.content.every((content) => isObject(content) && typeof content.type === 'string' && (content.type !== 'text' || typeof content.text === 'string'));
+    case 'agentMessage': return typeof value.text === 'string';
+    case 'reasoning': return Array.isArray(value.summary) && value.summary.every((part) => typeof part === 'string') && Array.isArray(value.content) && value.content.every((part) => typeof part === 'string');
+    case 'commandExecution': return typeof value.command === 'string' && typeof value.status === 'string' && Array.isArray(value.commandActions) && (value.aggregatedOutput === null || typeof value.aggregatedOutput === 'string') && (value.exitCode === null || typeof value.exitCode === 'number');
+    case 'fileChange': return typeof value.status === 'string' && Array.isArray(value.changes) && value.changes.every(isFileChange);
+    case 'mcpToolCall': return typeof value.server === 'string' && typeof value.tool === 'string' && typeof value.status === 'string';
+    case 'webSearch': return typeof value.query === 'string';
+    case 'subAgentActivity': return typeof value.kind === 'string' && typeof value.agentThreadId === 'string' && typeof value.agentPath === 'string';
+    case 'collabAgentToolCall': return typeof value.tool === 'string' && typeof value.status === 'string';
+    default: return true;
+  }
 }
 
 function unsupported(nativeId: string, nativeType: string, observedAt: number, turnId?: string): NativeEvent {

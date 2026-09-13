@@ -14,7 +14,7 @@ export type NativeEventPayload =
   | { kind: 'request-opened'; turnId: string; request: BlockingRequest }
   | { kind: 'request-resolved'; turnId: string; requestId: string; decision: UserDecision }
   | { kind: 'turn-finished'; turnId: string; status: 'completed' | 'interrupted' | 'failed' }
-  | { kind: 'system-notice'; turnId: string; message: string; tone: 'info' | 'warning' | 'error' }
+  | { kind: 'system-notice'; turnId?: string; message: string; tone: 'info' | 'warning' | 'error' }
   | { kind: 'unsupported'; turnId?: string; summary: string; captureCompleteness: CaptureCompleteness };
 
 export interface NativeEvent {

@@ -50,12 +50,29 @@ describe('Codex read adapter', () => {
     expect(summaries[0]).toMatchObject({ runtime: 'idle', createdAt: 1768000000000, updatedAt: 1768000030000, captureCompleteness: 'unknown' });
   });
 
+  test('stops a repeated cursor and deduplicates overlapping native pages', async () => {
+    const server = createFakeAppServer([[thread('newer'), thread('older')], [thread('older')]]);
+    const summaries = await new CodexAdapter(server as never, { realpath: async (value) => value }).listConversations();
+
+    expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
+    expect(server.requests).toHaveLength(2);
+  });
+
   test('only loads a discovered Codex thread with matching provider ID and canonical project path', async () => {
     const server = createFakeAppServer();
     const adapter = new CodexAdapter(server as never);
     await expect(adapter.loadConversation({ provider: 'claude', nativeSessionId: 'thread-1', projectPath: '/work/fractal' })).rejects.toThrow('provider');
     await expect(adapter.loadConversation({ provider: 'codex', nativeSessionId: 'other', projectPath: '/work/fractal' })).rejects.toThrow('thread');
     await expect(adapter.loadConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/other' })).rejects.toThrow('project');
+  });
+
+  test('uses injected realpath consistently for summary and symlinked references', async () => {
+    const server = createFakeAppServer([[thread('thread-1', '/links/fractal')], []]);
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value === '/links/fractal' ? '/work/fractal' : value });
+    const [summary] = await adapter.listConversations();
+
+    expect(summary?.ref.projectPath).toBe('/work/fractal');
+    await expect(adapter.loadConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/links/fractal' })).resolves.toBeDefined();
   });
 
   test('maps native active, waiting, error, and fallback titles into summaries', async () => {
@@ -81,6 +98,8 @@ describe('Codex read adapter', () => {
     const unsubscribe = await new CodexAdapter(server as never).watchConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, sink);
 
     expect(server.listenerCount()).toBe(1);
+    expect(sink).toHaveBeenCalled();
+    sink.mockClear();
     server.emit({ method: 'item/completed', params: { threadId: 'other', turnId: 'turn-1', completedAtMs: 1, item: { type: 'agentMessage', id: 'message-1', text: 'wrong', phase: null, memoryCitation: null, delivery: null } } });
     server.emit({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', completedAtMs: 1, item: { type: 'agentMessage', id: 'message-1', text: 'I will inspect it.', phase: null, memoryCitation: null, delivery: null } } });
     expect(sink).not.toHaveBeenCalled();
