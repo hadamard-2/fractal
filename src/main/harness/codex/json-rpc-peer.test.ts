@@ -153,11 +153,12 @@ describe('JsonRpcPeer', () => {
     await expect(pending).resolves.toEqual({ data: [] });
   });
 
-  test('detaches every owned listener when closed', () => {
+  test('detaches every owned listener when closed', async () => {
     const process = new FakeCodexProcess();
     const peer = new JsonRpcPeer(process);
 
     peer.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(process.stdout.listenerCount('data')).toBe(0);
     expect(process.stdout.listenerCount('error')).toBe(0);
@@ -167,5 +168,20 @@ describe('JsonRpcPeer', () => {
     expect(process.stderr.listenerCount('error')).toBe(0);
     expect(process.listenerCount('exit')).toBe(0);
     expect(process.listenerCount('error')).toBe(0);
+  });
+
+  test('keeps stdin failure handling alive until a late outstanding write settles', async () => {
+    const process = new FakeCodexProcess();
+    const peer = new JsonRpcPeer(process);
+    process.failNextWrite();
+    const pending = peer.request('thread/list', {});
+    const rejected = expect(pending).rejects.toThrow('Codex App Server is unavailable');
+
+    peer.close();
+
+    expect(process.stdin.listenerCount('error')).toBe(1);
+    await rejected;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(process.stdin.listenerCount('error')).toBe(0);
   });
 });

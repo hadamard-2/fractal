@@ -10,9 +10,23 @@ class FakeCodexProcess extends EventEmitter implements CodexProcess {
   readonly stderr = new PassThrough();
   readonly written: string[] = [];
   killCalls = 0;
+  private nextWriteError: Error | undefined;
+  private holdNextWrite = false;
+  private heldWrite: ((error?: Error | null) => void) | undefined;
   readonly stdin = new Writable({
     write: (chunk, _encoding, callback) => {
       this.written.push(chunk.toString());
+      const error = this.nextWriteError;
+      this.nextWriteError = undefined;
+      if (error) {
+        queueMicrotask(() => callback(error));
+        return;
+      }
+      if (this.holdNextWrite) {
+        this.holdNextWrite = false;
+        this.heldWrite = callback;
+        return;
+      }
       callback();
     },
   });
@@ -28,6 +42,31 @@ class FakeCodexProcess extends EventEmitter implements CodexProcess {
 
   exit(code: number | null): void {
     this.emit('exit', code);
+  }
+
+  failNextWrite(error = new Error('EPIPE')): void {
+    this.nextWriteError = error;
+  }
+
+  throwOnNextWrite(): void {
+    const stream = this.stdin as NodeJS.WritableStream & { write: (chunk: string) => boolean };
+    stream.write = () => {
+      throw new Error('EPIPE');
+    };
+  }
+
+  failProcess(error: Error): void {
+    this.emit('error', error);
+  }
+
+  holdOneWrite(): void {
+    this.holdNextWrite = true;
+  }
+
+  finishHeldWrite(error?: Error): void {
+    const callback = this.heldWrite;
+    this.heldWrite = undefined;
+    callback?.(error);
   }
 }
 
@@ -127,6 +166,7 @@ describe('CodexAppServer', () => {
     ]);
 
     expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('protocol failure') });
+    expect(process.killCalls).toBe(1);
   });
 
   test('does not forward notifications or server requests from a stale process after restart', async () => {
@@ -174,5 +214,62 @@ describe('CodexAppServer', () => {
     expect(() => process.stdout.write('{"method":"thread/status/changed","params":{}}\n{"id":8,"method":"item/commandExecution/requestApproval","params":{}}\n')).not.toThrow();
     expect(notification).toHaveBeenCalledOnce();
     expect(serverRequest).toHaveBeenCalledOnce();
+  });
+
+  test('keeps initialized synchronous write failure unavailable and terminates the failed child', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    expect(process.written).toHaveLength(1);
+    process.respond(1, { userAgent: 'codex' });
+    process.throwOnNextWrite();
+
+    const server = await starting;
+
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('transport failed') });
+    expect(process.killCalls).toBe(1);
+  });
+
+  test('keeps initialized asynchronous write failure unavailable and terminates the failed child', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    expect(process.written).toHaveLength(1);
+    process.failNextWrite();
+    process.respond(1, { userAgent: 'codex' });
+
+    const server = await starting;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('transport failed') });
+    expect(process.killCalls).toBe(1);
+  });
+
+  test('does not resolve startup as available before initialized write settles', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    expect(process.written).toHaveLength(1);
+    process.holdOneWrite();
+    process.respond(1, { userAgent: 'codex' });
+    let settled = false;
+    void starting.then(() => {
+      settled = true;
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+    process.finishHeldWrite(new Error('EPIPE'));
+    const server = await starting;
+    expect(server.status).toMatchObject({ availability: 'unavailable' });
+  });
+
+  test('classifies an asynchronous ENOENT process error as an unavailable executable', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    process.failProcess(Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' }));
+
+    const server = await starting;
+
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('Codex executable') });
+    expect(process.killCalls).toBe(1);
   });
 });

@@ -117,7 +117,8 @@ export class CodexAppServer {
         this.stop('Codex App Server has been disposed');
         return;
       }
-      peer.notify('initialized');
+      await peer.notify('initialized');
+      if (!peer.isOpen || this.peer !== peer) throw new Error('Codex App Server transport failed');
       this.status = { availability: 'available' };
     } catch (error) {
       this.stop(unavailableMessage(error));
@@ -138,8 +139,11 @@ export class CodexAppServer {
   private markClosed(peer: JsonRpcPeer, error: Error): void {
     if (this.peer !== peer) return;
     this.peer = undefined;
-    this.process = undefined;
-    this.status = { availability: 'unavailable', message: error.message };
+    const process = this.process;
+    const exited = error.message.startsWith('Codex App Server exited');
+    if (process && !exited) process.kill();
+    if (this.process === process) this.process = undefined;
+    this.status = { availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) };
   }
 
   private requirePeer(): JsonRpcPeer {

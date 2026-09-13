@@ -31,13 +31,15 @@ export class JsonRpcPeer {
   private readonly serverRequestListeners = new Set<(request: JsonRpcServerRequest) => void>();
   private readonly closeListeners = new Set<(error: Error) => void>();
   private nextId = 1;
+  private pendingWrites = 0;
+  private pendingStdinErrors = 0;
   private closed = false;
   private readonly onStdoutData = (chunk: Uint8Array): void => this.read(chunk);
-  private readonly onStdoutFailure = (): void => this.failTransport();
-  private readonly onStdinFailure = (): void => this.failTransport();
-  private readonly onStderrFailure = (): void => this.failTransport();
+  private readonly onStdoutFailure = (): void => { this.failTransport(); };
+  private readonly onStdinFailure = (): void => { this.failTransport(); };
+  private readonly onStderrFailure = (): void => { this.failTransport(); };
   private readonly onProcessExit = (code: number | null): void => this.close(new Error(`Codex App Server exited${code === null ? '' : ` (code ${code})`}`));
-  private readonly onProcessFailure = (): void => this.failTransport();
+  private readonly onProcessFailure = (error: Error): void => this.close(error);
 
   constructor(private readonly process: CodexProcess) {
     process.stdout.on('data', this.onStdoutData);
@@ -56,17 +58,19 @@ export class JsonRpcPeer {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (result: unknown) => void, reject });
-      this.write({ id, method, params });
+      void this.write({ id, method, params }).catch((): void => undefined);
     });
   }
 
-  notify(method: string, params?: unknown): void {
+  get isOpen(): boolean { return !this.closed; }
+
+  notify(method: string, params?: unknown): Promise<void> {
     if (this.closed) throw new Error('Codex App Server is unavailable');
-    this.write(params === undefined ? { method } : { method, params });
+    return this.write(params === undefined ? { method } : { method, params });
   }
 
-  respond(id: number | string, result: unknown): void { this.requireOpen(); this.write({ id, result }); }
-  respondError(id: number | string, code: number, message: string): void { this.requireOpen(); this.write({ id, error: { code, message } }); }
+  respond(id: number | string, result: unknown): void { this.requireOpen(); void this.write({ id, result }).catch((): void => undefined); }
+  respondError(id: number | string, code: number, message: string): void { this.requireOpen(); void this.write({ id, error: { code, message } }).catch((): void => undefined); }
 
   onNotification(listener: (notification: JsonRpcNotification) => void): Unsubscribe {
     this.notificationListeners.add(listener);
@@ -134,25 +138,63 @@ export class JsonRpcPeer {
     }
   }
 
-  private write(message: object): void {
-    try {
-      this.process.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
-        if (!error || this.closed) return;
-        const ignoreLateWriteError = (): void => undefined;
-        this.process.stdin.once('error', ignoreLateWriteError);
-        setImmediate(() => this.process.stdin.removeListener('error', ignoreLateWriteError));
-        this.failTransport();
-      });
-    } catch {
-      this.failTransport();
-    }
+  private write(message: object): Promise<void> {
+    this.pendingWrites += 1;
+    return new Promise<void>((resolve, reject) => {
+      try {
+        this.process.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+          if (error) this.holdStdinError();
+          this.settleWrite();
+          if (error) {
+            reject(this.failTransport());
+            return;
+          }
+          resolve();
+        });
+      } catch {
+        this.settleWrite();
+        reject(this.failTransport());
+      }
+    });
+  }
+
+  private settleWrite(): void {
+    this.pendingWrites -= 1;
+    this.maybeDetachStdinFailureHandler();
+  }
+
+  private holdStdinError(): void {
+    this.pendingStdinErrors += 1;
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this.process.stdin.removeListener('error', release);
+      this.pendingStdinErrors -= 1;
+      this.maybeDetachStdinFailureHandler();
+    };
+    this.process.stdin.once('error', release);
+    setImmediate(release);
+  }
+
+  private maybeDetachStdinFailureHandler(): void {
+    if (!this.closed || this.pendingWrites !== 0 || this.pendingStdinErrors !== 0) return;
+    setImmediate(() => {
+      if (this.closed && this.pendingWrites === 0 && this.pendingStdinErrors === 0) {
+        this.process.stdin.removeListener('error', this.onStdinFailure);
+      }
+    });
   }
 
   private requireOpen(): void {
     if (this.closed) throw new Error('Codex App Server is unavailable');
   }
 
-  private failTransport(): void { this.close(new Error('Codex App Server transport failed')); }
+  private failTransport(): Error {
+    const error = new Error('Codex App Server transport failed');
+    this.close(error);
+    return error;
+  }
   private failProtocol(): void { this.close(new Error('Codex App Server protocol failure')); }
 
   private detachListeners(): void {
@@ -160,7 +202,7 @@ export class JsonRpcPeer {
     this.process.stdout.removeListener('error', this.onStdoutFailure);
     this.process.stdout.removeListener('end', this.onStdoutFailure);
     this.process.stdout.removeListener('close', this.onStdoutFailure);
-    this.process.stdin.removeListener('error', this.onStdinFailure);
+    if (this.pendingWrites === 0 && this.pendingStdinErrors === 0) this.maybeDetachStdinFailureHandler();
     this.process.stderr.removeListener('error', this.onStderrFailure);
     this.process.removeListener('exit', this.onProcessExit);
     this.process.removeListener('error', this.onProcessFailure);
