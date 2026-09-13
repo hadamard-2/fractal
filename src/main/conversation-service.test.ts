@@ -19,7 +19,7 @@ function prose(text: string, final = false, turnId = 'turn'): NativeEvent { retu
 function finish(id = 'turn'): NativeEvent { return event(`finish:${id}`, { kind: 'turn-finished', turnId: id, status: 'completed' }); }
 async function* iterable(events: NativeEvent[]) { yield* events; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
-function fixture(history: NativeEvent[] = []) {
+function fixture(history: NativeEvent[] = [], historyChunkSize = 50) {
   const sinks: NativeEventSink[] = [];
   const unsubscribe = vi.fn();
   const adapter: HarnessAdapter = {
@@ -33,7 +33,7 @@ function fixture(history: NativeEvent[] = []) {
   const events: ConversationStreamEvent[] = [];
   const registry = new ConversationRegistry([adapter], async (path) => path);
   const emit = (value: ConversationStreamEvent) => { events.push(parseConversationStreamEvent(value)); };
-  const service = new ConversationService(registry, emit, { historyChunkSize: 50 });
+  const service = new ConversationService(registry, emit, { historyChunkSize });
   return { adapter, service, events, sinks, unsubscribe, registry };
 }
 
@@ -254,6 +254,73 @@ describe('ConversationService', () => {
     vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary: nativeSummary, events: iterable([]) });
     const result = await f.service.open(ref, loadId);
     expect(result).toEqual({ summary, capabilities });
+    await f.service.dispose();
+  });
+
+  test.each([50, 1])('delivers a finalized history correction before completion with chunk size %i', async (chunkSize) => {
+    const f = fixture([start('A'), prose('Old', false, 'A'), finish('A'), prose('Corrected', true, 'A')], chunkSize);
+    await f.service.open(ref, loadId);
+    const delivered = f.events.flatMap((item) => item.type === 'history.chunk' ? item.turns : item.type === 'turn.upserted' ? [item.turn] : []);
+    expect(delivered.at(-1)).toMatchObject({ id: 'A', status: 'completed', blocks: [{ text: 'Corrected' }] });
+    expect(f.events.at(-1)?.type).toBe('history.complete');
+    expect(f.events.map((item) => item.seq)).toEqual(chunkSize === 1 ? [0, 1, 2] : [0, 1]);
+    if (chunkSize === 1) expect(f.events[1].type).toBe('turn.upserted');
+    await f.service.dispose();
+  });
+
+  test('replaces an already delivered finalized turn when live corrected text extends its prefix', async () => {
+    const f = fixture([start('A'), prose('Old', false, 'A'), finish('A')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Old corrected', true, 'A'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { id: 'A', status: 'completed', blocks: [{ text: 'Old corrected' }] } });
+    await f.service.dispose();
+  });
+
+  test('older-turn replay preserves B as the active turn when C starts', async () => {
+    const work = event('work:B', { kind: 'action-requested', turnId: 'B', actionId: 'command:B', actionKind: 'command', label: 'pwd' });
+    const f = fixture([start('A'), prose('Old', false, 'A'), finish('A'), start('B'), prose('Working', false, 'B'), work]);
+    await f.service.open(ref, loadId);
+    const offset = f.events.length;
+    f.sinks[0](prose('Corrected', true, 'A'));
+    f.sinks[0](start('C'));
+    expect(f.events.slice(offset)).toMatchObject([
+      { type: 'turn.upserted', turn: { id: 'A', status: 'completed', blocks: [{ text: 'Corrected' }] } },
+      { type: 'turn.upserted', turn: { id: 'B', status: 'completed', userMessage: { text: 'Question' }, blocks: [{ text: 'Working' }, { kind: 'work-packet', status: 'completed', actions: [{ id: 'command:B', status: 'completed' }] }] } },
+      { type: 'turn.upserted', turn: { id: 'C', status: 'active' } },
+    ]);
+    expect(f.events.slice(offset).map((item) => item.seq)).toEqual([2, 3, 4]);
+    await f.service.dispose();
+  });
+
+  test('unanchored notices after an older correction still attach to active B', async () => {
+    const f = fixture([start('A'), prose('Old', false, 'A'), finish('A'), start('B')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Corrected', true, 'A'));
+    f.sinks[0](event('warning', { kind: 'unsupported', summary: 'Unknown record', captureCompleteness: 'partial' }));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { id: 'B', status: 'active', captureCompleteness: 'partial', blocks: [{ kind: 'unsupported' }] } });
+    f.sinks[0](start('C'));
+    expect(f.events.at(-2)).toMatchObject({ type: 'turn.upserted', turn: { id: 'B', status: 'completed', blocks: [{ kind: 'unsupported' }] } });
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { id: 'C', blocks: [] } });
+    await f.service.dispose();
+  });
+
+  test('history correction to A also preserves active B until C finalizes it', async () => {
+    const f = fixture([start('A'), prose('Old', false, 'A'), finish('A'), start('B'), prose('Corrected', true, 'A'), start('C')]);
+    await f.service.open(ref, loadId);
+    const turns = f.events.flatMap((item) => item.type === 'history.chunk' ? item.turns : []);
+    expect(turns).toMatchObject([
+      { id: 'A', status: 'completed', blocks: [{ text: 'Corrected' }] },
+      { id: 'B', status: 'completed' },
+      { id: 'C', status: 'active' },
+    ]);
+    await f.service.dispose();
+  });
+
+  test('a same-identity live shortening after bootstrap stays observable', async () => {
+    const f = fixture([start(), prose('Draft')]);
+    await f.service.open(ref, loadId);
+    f.sinks[0](prose('Dra'));
+    expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { blocks: [{ text: 'Dra' }] } });
     await f.service.dispose();
   });
 });

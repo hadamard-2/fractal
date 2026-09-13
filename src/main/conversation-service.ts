@@ -1,7 +1,7 @@
 import { setImmediate } from 'node:timers/promises';
 import type { ConversationRegistry } from '@/main/conversation-registry';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
-import { TurnProjector } from '@/main/harness/turn-projector';
+import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { Unsubscribe } from '@/main/harness/types';
 import { conversationKey, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef, parseLoadId } from '@/shared/conversation-ipc';
@@ -117,8 +117,16 @@ export class ConversationService {
       load.iterator = loaded.events[Symbol.asyncIterator]();
       let chunk: ConversationTurn[] = [];
       let chunkIndex = 0;
+      const published = new Set<string>();
+      const acceptHistoryUpdate = (update: TurnProjectionUpdate) => {
+        const index = chunk.findIndex((turn) => turn.id === update.turn.id);
+        if (index >= 0) chunk[index] = update.turn;
+        else if (published.has(update.turn.id)) this.send(load, { type: 'turn.upserted', turn: update.turn });
+        else if (update.finalized) chunk.push(update.turn);
+      };
       const flush = async () => {
         if (!chunk.length) return;
+        for (const turn of chunk) published.add(turn.id);
         this.send(load, { type: 'history.chunk', chunkIndex: chunkIndex++, turns: chunk });
         chunk = [];
         await setImmediate();
@@ -134,12 +142,8 @@ export class ConversationService {
         load.initial.delete(nativeEventKey(event));
         const prior = load.observations.get(nativeEventKey(event));
         if (prior && JSON.stringify(prior.payload) === JSON.stringify(event.payload)) continue;
-        this.record(load, event);
-        for (const update of load.projector.push(event)) {
-          if (update.finalized && update.turn.id !== event.payload.turnId) load.inferredFinishes.set(update.turn.id, event.observedAt);
-          load.turns.set(update.turn.id, update.turn);
-          load.currentTurnId = update.turn.id;
-          if (update.finalized) chunk.push(update.turn);
+        for (const update of this.project(load, event)) {
+          acceptHistoryUpdate(update);
           if (chunk.length === this.chunkSize) await flush();
         }
       }
@@ -148,14 +152,14 @@ export class ConversationService {
       for (const update of load.projector.finish()) {
         load.turns.set(update.turn.id, update.turn);
         load.currentTurnId = update.turn.id;
-        chunk.push(update.turn);
+        acceptHistoryUpdate(update);
         if (chunk.length === this.chunkSize) await flush();
       }
       await flush();
-      for (const event of load.initial.values()) this.deliverLive(load, event);
+      for (const event of load.initial.values()) this.deliverLive(load, event, true);
       load.initial.clear();
       // Keep buffering through complete emission, including synchronous emit callbacks.
-      this.drain(load);
+      this.drain(load, true);
       this.send(load, { type: 'history.complete' });
       this.drain(load);
       load.phase = 'live';
@@ -183,11 +187,11 @@ export class ConversationService {
     }
   }
 
-  private drain(load: Load): void {
+  private drain(load: Load, bootstrapOverlap = false): void {
     while (load.buffered.size && !load.closed) {
       const batch = Array.from(load.buffered.values());
       load.buffered.clear();
-      for (const event of batch) this.deliverLive(load, event);
+      for (const event of batch) this.deliverLive(load, event, bootstrapOverlap);
     }
   }
 
@@ -203,39 +207,56 @@ export class ConversationService {
     }
   }
 
-  private deliverLive(load: Load, event: NativeEvent): void {
+  private deliverLive(load: Load, event: NativeEvent, bootstrapOverlap = false): void {
     if (load.closed) return;
     const prior = load.observations.get(nativeEventKey(event));
-    if (prior && (JSON.stringify(prior.payload) === JSON.stringify(event.payload) || isRegression(prior, event))) return;
+    if (prior && (JSON.stringify(prior.payload) === JSON.stringify(event.payload) || (bootstrapOverlap && isRegression(prior, event)))) return;
     const turnId = event.payload.turnId;
     const before = turnId ? load.turns.get(turnId) : undefined;
-    this.record(load, event);
-    // A replacement may refer to an older turn. Rebuild only that turn, preserving
-    // its original event positions instead of treating it as a new partial turn.
-    if (turnId && (prior || load.currentTurnId !== turnId) && before) {
-      load.projector = new TurnProjector();
-      for (const observation of load.journal.get(turnId) ?? []) {
-        for (const update of load.projector.push(observation)) load.turns.set(update.turn.id, update.turn);
-      }
-      const completedAt = load.inferredFinishes.get(turnId);
-      if (completedAt !== undefined && before.status !== 'active') {
-        for (const update of load.projector.push({ ...event, payload: { kind: 'turn-finished', turnId, status: before.status }, observedAt: completedAt })) load.turns.set(update.turn.id, update.turn);
-      }
-      load.currentTurnId = turnId;
-      const after = load.turns.get(turnId);
-      if (!after) throw new Error('Conversation turn could not be projected');
-      this.sendTurnUpdate(load, event, before, after);
-      return;
-    }
-    for (const update of load.projector.push(event)) {
-      if (update.finalized && update.turn.id !== event.payload.turnId) load.inferredFinishes.set(update.turn.id, event.observedAt);
-      load.turns.set(update.turn.id, update.turn);
-      load.currentTurnId = update.turn.id;
+    for (const update of this.project(load, event)) {
       this.sendTurnUpdate(load, event, update.turn.id === turnId ? before : undefined, update.turn);
     }
   }
 
+  private project(load: Load, event: NativeEvent): TurnProjectionUpdate[] {
+    const prior = load.observations.get(nativeEventKey(event));
+    const turnId = event.payload.turnId;
+    const before = turnId ? load.turns.get(turnId) : undefined;
+    this.record(load, event);
+    // Replaying an older turn must not move the live chronology away from its
+    // latest turn: that projector owns pending notices and the next boundary.
+    if (turnId && (prior || load.currentTurnId !== turnId) && before) {
+      const replay = new TurnProjector();
+      let after: ConversationTurn | undefined;
+      for (const observation of load.journal.get(turnId) ?? []) {
+        for (const update of replay.push(observation)) after = update.turn;
+      }
+      const completedAt = load.inferredFinishes.get(turnId);
+      if (completedAt !== undefined && before.status !== 'active') {
+        for (const update of replay.push({ ...event, payload: { kind: 'turn-finished', turnId, status: before.status }, observedAt: completedAt })) after = update.turn;
+      }
+      if (!after) throw new Error('Conversation turn could not be projected');
+      load.turns.set(turnId, after);
+      if (load.currentTurnId === turnId) {
+        load.projector = replay;
+        for (const pending of load.unanchored) replay.push(pending);
+      }
+      return [{ turn: after, finalized: after.status !== 'active' }];
+    }
+    const updates = load.projector.push(event);
+    for (const update of updates) {
+      if (update.finalized && update.turn.id !== event.payload.turnId) load.inferredFinishes.set(update.turn.id, event.observedAt);
+      load.turns.set(update.turn.id, update.turn);
+      load.currentTurnId = update.turn.id;
+    }
+    return updates;
+  }
+
   private sendTurnUpdate(load: Load, event: NativeEvent, before: ConversationTurn | undefined, after: ConversationTurn): void {
+    if (before && before.status !== 'active') {
+      this.send(load, { type: 'turn.upserted', turn: after });
+      return;
+    }
     if (before && event.payload.kind === 'assistant-text') {
       const id = event.payload.blockId ?? event.nativeId;
       const oldBlock = before.blocks.find((block) => block.id === id);
