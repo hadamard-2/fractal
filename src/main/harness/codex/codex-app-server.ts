@@ -101,10 +101,13 @@ export class CodexAppServer {
       const peer = new JsonRpcPeer(process);
       this.process = process;
       this.peer = peer;
-      process.once('exit', (code) => this.markExited(process, `Codex App Server exited${code === null ? '' : ` (code ${code})`}`));
-      process.once('error', (error) => this.markExited(process, unavailableMessage(error)));
-      peer.onNotification((notification) => this.forwardNotification(notification));
-      peer.onServerRequest((request) => this.forwardServerRequest(request));
+      peer.onClose((error) => this.markClosed(peer, error));
+      peer.onNotification((notification) => {
+        if (this.peer === peer && !this.disposed) this.forwardNotification(notification);
+      });
+      peer.onServerRequest((request) => {
+        if (this.peer === peer && !this.disposed) this.forwardServerRequest(request);
+      });
 
       await peer.request<InitializeResponse>('initialize', {
         clientInfo: { name: 'fractal', title: 'Fractal', version: app.getVersion() },
@@ -123,19 +126,20 @@ export class CodexAppServer {
   }
 
   private stop(message: string): void {
-    this.peer?.close(new Error(message));
-    this.peer = undefined;
+    const peer = this.peer;
     const process = this.process;
+    this.peer = undefined;
     this.process = undefined;
+    peer?.close(new Error(message));
     if (process) process.kill();
     this.status = { availability: 'unavailable', message };
   }
 
-  private markExited(process: CodexProcess, message: string): void {
-    if (this.process !== process) return;
+  private markClosed(peer: JsonRpcPeer, error: Error): void {
+    if (this.peer !== peer) return;
     this.peer = undefined;
     this.process = undefined;
-    this.status = { availability: 'unavailable', message };
+    this.status = { availability: 'unavailable', message: error.message };
   }
 
   private requirePeer(): JsonRpcPeer {
@@ -144,11 +148,23 @@ export class CodexAppServer {
   }
 
   private forwardNotification(notification: JsonRpcNotification): void {
-    for (const listener of this.notificationListeners) listener(notification as ServerNotification);
+    for (const listener of this.notificationListeners) {
+      try {
+        listener(notification as ServerNotification);
+      } catch {
+        // A renderer subscriber must not interrupt native transport routing.
+      }
+    }
   }
 
   private forwardServerRequest(request: JsonRpcServerRequest): void {
-    for (const listener of this.serverRequestListeners) listener(request as ServerRequest);
+    for (const listener of this.serverRequestListeners) {
+      try {
+        listener(request as ServerRequest);
+      } catch {
+        // A renderer subscriber must not interrupt native transport routing.
+      }
+    }
   }
 }
 

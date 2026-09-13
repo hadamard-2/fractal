@@ -103,4 +103,76 @@ describe('CodexAppServer', () => {
     expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('exited') });
     await expect(server.request('thread/list', {})).rejects.toThrow('unavailable');
   });
+
+  test('marks the server unavailable after a stdout stream failure', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    initialize(process);
+    const server = await starting;
+
+    expect(() => process.stdout.emit('error', new Error('broken pipe'))).not.toThrow();
+
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('transport failed') });
+    await expect(server.request('thread/list', {})).rejects.toThrow('unavailable');
+  });
+
+  test('marks initialization unavailable when the server sends invalid JSON', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    process.stdout.write('{not json}\n');
+
+    const server = await Promise.race([
+      starting,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('initialization timed out')), 25)),
+    ]);
+
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('protocol failure') });
+  });
+
+  test('does not forward notifications or server requests from a stale process after restart', async () => {
+    const first = new FakeCodexProcess();
+    const second = new FakeCodexProcess();
+    const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValue(second);
+    const starting = CodexAppServer.start(spawn);
+    initialize(first);
+    const server = await starting;
+    const notification = vi.fn();
+    const serverRequest = vi.fn();
+    server.onNotification(notification);
+    server.onServerRequest(serverRequest);
+
+    const restarting = server.restart();
+    initialize(second);
+    await restarting;
+    expect(first.stdout.listenerCount('data')).toBe(0);
+
+    first.stdout.emit('data', Buffer.from('{"method":"thread/status/changed","params":{}}\n{"id":88,"method":"item/commandExecution/requestApproval","params":{}}\n'));
+    expect(notification).not.toHaveBeenCalled();
+    expect(serverRequest).not.toHaveBeenCalled();
+
+    second.stdout.write('{"method":"thread/status/changed","params":{}}\n{"id":89,"method":"item/commandExecution/requestApproval","params":{}}\n');
+    expect(notification).toHaveBeenCalledOnce();
+    expect(serverRequest).toHaveBeenCalledOnce();
+  });
+
+  test('isolates throwing public subscribers without suppressing later subscribers', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    initialize(process);
+    const server = await starting;
+    const notification = vi.fn();
+    const serverRequest = vi.fn();
+    server.onNotification(() => {
+      throw new Error('listener failed');
+    });
+    server.onNotification(notification);
+    server.onServerRequest(() => {
+      throw new Error('listener failed');
+    });
+    server.onServerRequest(serverRequest);
+
+    expect(() => process.stdout.write('{"method":"thread/status/changed","params":{}}\n{"id":8,"method":"item/commandExecution/requestApproval","params":{}}\n')).not.toThrow();
+    expect(notification).toHaveBeenCalledOnce();
+    expect(serverRequest).toHaveBeenCalledOnce();
+  });
 });
