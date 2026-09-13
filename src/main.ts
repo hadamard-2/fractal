@@ -1,7 +1,14 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import started from 'electron-squirrel-startup';
-import { registerAgentIpc } from '@/main/agent-ipc';
+import { registerConversationIpc, disposeConversationIpc } from '@/main/agent-ipc';
+import { ConversationService } from '@/main/conversation-service';
+import { ConversationRegistry } from '@/main/conversation-registry';
+import { CodexAppServer } from '@/main/harness/codex/codex-app-server';
+import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
+import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { registerSettingsIpc } from '@/main/settings-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -117,6 +124,11 @@ const bindFullScreenChrome = (window: BrowserWindow) => {
 };
 
 let mainWindowRef: BrowserWindow | null = null;
+let conversationService: ConversationService | undefined;
+let codexServer: CodexAppServer | undefined;
+let conversationStartup: Promise<void> = Promise.resolve();
+let quitting = false;
+let shutdown: Promise<void> | undefined;
 
 const createWindow = () => {
   /*
@@ -149,6 +161,8 @@ const createWindow = () => {
     backgroundColor: TITLE_BAR_BACKGROUND,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
     },
   });
 
@@ -162,7 +176,11 @@ const createWindow = () => {
   });
 
   mainWindow.maximize();
+  return mainWindow;
+};
 
+const loadWindow = (mainWindow: BrowserWindow) => {
+  if (quitting || shutdown || mainWindow.isDestroyed()) return;
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -182,8 +200,33 @@ app.on('ready', () => {
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
   registerSettingsIpc();
-  registerAgentIpc(() => mainWindowRef);
-  createWindow();
+  const window = createWindow();
+  conversationStartup = (async () => {
+    codexServer = await CodexAppServer.start();
+    if (shutdown) return;
+    const canonicalPath = async (input: string) => realpath(input).catch(() => input);
+    const registry = new ConversationRegistry([
+      new CodexAdapter(codexServer, { realpath: canonicalPath }),
+      new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), { realpath: canonicalPath }),
+    ], canonicalPath);
+    conversationService = new ConversationService(registry, (event) => registration.emit(event));
+    const registration = registerConversationIpc(conversationService, () => mainWindowRef);
+    loadWindow(window);
+  })();
+  // Startup failures never forward native exception details into the renderer.
+  void conversationStartup.catch(() => app.quit());
+});
+
+app.on('before-quit', (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  if (shutdown) return;
+  shutdown = (async () => {
+    await conversationStartup.catch((): void => undefined);
+    await disposeConversationIpc();
+    await conversationService?.dispose();
+    await codexServer?.dispose();
+  })().finally(() => { quitting = true; app.quit(); });
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -199,7 +242,8 @@ app.on('activate', () => {
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    const window = createWindow();
+    void conversationStartup.then(() => loadWindow(window)).catch((): void => undefined);
   }
 });
 

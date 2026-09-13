@@ -8,3 +8,9 @@ export type AgentInvokeRequest =
   | { method: 'sendMessage'; input: { conversationId: string; text: string } }
   | { method: 'cancelTurn'; input: { conversationId: string } }
   | { method: 'respondToPermission'; input: { requestId: string; decision: import('@/shared/agent-contract').PermissionDecision } };
+export const CONVERSATION_CHANNELS = {
+  list: 'fractal:conversations:list', open: 'fractal:conversations:open',
+  close: 'fractal:conversations:close', create: 'fractal:conversations:create',
+  continue: 'fractal:conversations:continue', interrupt: 'fractal:conversations:interrupt',
+  resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
+} as const;

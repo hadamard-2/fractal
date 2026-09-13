@@ -2,29 +2,33 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentEvent, FractalAgentApi } from '@/shared/agent-contract';
-import { AGENT_EVENT_CHANNEL, AGENT_INVOKE_CHANNEL } from '@/shared/agent-ipc-channels';
+import type { ConversationApi } from '@/shared/conversation-contract';
+import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
+import { CONVERSATION_CHANNELS as CHANNELS } from '@/shared/agent-ipc-channels';
 import {
   SETTINGS_INVOKE_CHANNEL,
   type FractalSettingsApi,
   type SettingsInvokeRequest,
 } from '@/shared/settings-contract';
 
-const invoke = (req: unknown) => ipcRenderer.invoke(AGENT_INVOKE_CHANNEL, req);
-
 const invokeSettings = (req: SettingsInvokeRequest) => ipcRenderer.invoke(SETTINGS_INVOKE_CHANNEL, req);
 
-const agent: FractalAgentApi = {
-  listConversations: () => invoke({ method: 'listConversations' }),
-  getConversation: (id) => invoke({ method: 'getConversation', id }),
-  createConversation: () => invoke({ method: 'createConversation' }),
-  sendMessage: (input) => invoke({ method: 'sendMessage', input }),
-  cancelTurn: (input) => invoke({ method: 'cancelTurn', input }),
-  respondToPermission: (input) => invoke({ method: 'respondToPermission', input }),
-  onAgentEvent: (listener) => {
-    const handler = (_e: unknown, event: AgentEvent) => listener(event);
-    ipcRenderer.on(AGENT_EVENT_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(AGENT_EVENT_CHANNEL, handler);
+const conversations: ConversationApi = {
+  list: () => ipcRenderer.invoke(CHANNELS.list),
+  open: (ref, loadId) => ipcRenderer.invoke(CHANNELS.open, ref, loadId),
+  close: (ref) => ipcRenderer.invoke(CHANNELS.close, ref),
+  create: (input) => ipcRenderer.invoke(CHANNELS.create, input),
+  continue: (ref, prompt) => ipcRenderer.invoke(CHANNELS.continue, ref, prompt),
+  interrupt: (ref) => ipcRenderer.invoke(CHANNELS.interrupt, ref),
+  resolveRequest: (id, decision) => ipcRenderer.invoke(CHANNELS.resolveRequest, id, decision),
+  onEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      let event;
+      try { event = parseConversationStreamEvent(payload); } catch { return; }
+      listener(event);
+    };
+    ipcRenderer.on(CHANNELS.event, handler);
+    return () => { ipcRenderer.removeListener(CHANNELS.event, handler); };
   },
 };
 
@@ -34,4 +38,4 @@ const settings: FractalSettingsApi = {
   openDataFolder: () => invokeSettings({ method: 'openDataFolder' }),
 };
 
-contextBridge.exposeInMainWorld('fractal', { agent, settings });
+contextBridge.exposeInMainWorld('fractal', { conversations, settings });
