@@ -14,8 +14,9 @@ function thread(id: string, cwd = '/work/fractal') {
   return value;
 }
 
-function createFakeAppServer(pages = [[thread('newer')], [thread('older')]]) {
+function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false) {
   const listeners = new Set<(notification: unknown) => void>();
+  const requestListeners = new Set<(request: unknown) => void>();
   const requests: Array<{ method: string; params: unknown }> = [];
   return {
     status: { availability: 'available' as const }, requests,
@@ -23,7 +24,8 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]]) {
       requests.push({ method, params });
       if (method === 'thread/list') {
         const index = params.cursor === 'next' ? 1 : 0;
-        return { data: pages[index] ?? [], nextCursor: index === 0 ? 'next' : null };
+        if (repeatCursor && requests.length > 3) throw new Error('pagination did not terminate');
+        return { data: pages[index] ?? [], nextCursor: index === 0 || repeatCursor ? 'next' : null };
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
       throw new Error(`unexpected ${method}`);
@@ -34,6 +36,11 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]]) {
     }),
     emit(notification: unknown) { listeners.forEach((listener) => listener(notification)); },
     listenerCount() { return listeners.size; },
+    onServerRequest: vi.fn((listener: (request: unknown) => void) => {
+      requestListeners.add(listener);
+      return () => requestListeners.delete(listener);
+    }),
+    requestListenerCount() { return requestListeners.size; },
   };
 }
 
@@ -51,11 +58,31 @@ describe('Codex read adapter', () => {
   });
 
   test('stops a repeated cursor and deduplicates overlapping native pages', async () => {
-    const server = createFakeAppServer([[thread('newer'), thread('older')], [thread('older')]]);
+    const server = createFakeAppServer([[thread('newer'), thread('older')], [thread('older')]], true);
     const summaries = await new CodexAdapter(server as never, { realpath: async (value) => value }).listConversations();
 
     expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
     expect(server.requests).toHaveLength(2);
+    expect(server.requests[1]?.params).toMatchObject({ cursor: 'next' });
+  });
+
+  test.each([
+    { label: 'malformed items', items: [null, 3, false, 'broken', ...threadRead.thread.turns[0].items], title: 'Trace the history adapter' },
+    { label: 'malformed content entries', items: [{ type: 'userMessage', id: 'user-1', content: [null, 3, false, 'broken', { type: 'text', text: {} }, { type: 'text', text: 'Recovered title' }] }], title: 'Recovered title' },
+    { label: 'no usable content', items: [{ type: 'userMessage', id: 'user-1', content: [null, 3, { type: 'text', text: {} }] }], title: 'Codex conversation' },
+  ])('loads a partial conversation with $label without aborting title derivation', async ({ items, title }) => {
+    const server = createFakeAppServer();
+    const snapshot = clone(threadRead.thread);
+    snapshot.name = null;
+    snapshot.preview = '';
+    snapshot.turns = [{ ...snapshot.turns[0], items: items as never }];
+    server.request.mockResolvedValue({ thread: snapshot });
+
+    const loaded = await new CodexAdapter(server as never).loadConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' });
+    const events = [];
+    for await (const event of loaded.events) events.push(event);
+    expect(loaded.summary).toMatchObject({ title, captureCompleteness: 'partial' });
+    expect(events.some((event) => event.payload.kind === 'unsupported')).toBe(true);
   });
 
   test('only loads a discovered Codex thread with matching provider ID and canonical project path', async () => {
@@ -109,7 +136,13 @@ describe('Codex read adapter', () => {
     expect(server.listenerCount()).toBe(0);
   });
 
-  test('seeds a deferred read before normalizing buffered live deltas and cleans subscriptions on failure', async () => {
+  test.each([
+    { label: 'uncovered assistant chunk', method: 'item/agentMessage/delta', itemId: 'message-1', snapshotText: 'Hello', chunks: [' world'], expected: 'Hello world!' },
+    { label: 'covered assistant chunk', method: 'item/agentMessage/delta', itemId: 'message-1', snapshotText: 'Hello world', chunks: [' world'], expected: 'Hello world!' },
+    { label: 'covered assistant sequence', method: 'item/agentMessage/delta', itemId: 'message-1', snapshotText: 'Hello world', chunks: [' wor', 'ld'], expected: 'Hello world!' },
+    { label: 'uncovered command chunk', method: 'item/commandExecution/outputDelta', itemId: 'command-1', snapshotText: 'Hello', chunks: [' world'], expected: 'Hello world!' },
+    { label: 'covered command sequence', method: 'item/commandExecution/outputDelta', itemId: 'command-1', snapshotText: 'Hello world', chunks: [' wor', 'ld'], expected: 'Hello world!' },
+  ])('reconciles a deferred read with $label before later live deltas', async ({ method, itemId, snapshotText, chunks, expected }) => {
     let resolveRead: ((value: unknown) => void) | undefined;
     const server = createFakeAppServer();
     server.request.mockImplementation((method: string) => method === 'thread/read'
@@ -117,16 +150,36 @@ describe('Codex read adapter', () => {
       : Promise.resolve({ data: [], nextCursor: null }));
     const sink = vi.fn();
     const watching = new CodexAdapter(server as never, { realpath: async (value) => value }).watchConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, sink);
-    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: ' world' } });
+    for (const delta of chunks) server.emit({ method, params: { threadId: 'thread-1', turnId: 'turn-1', itemId, delta } });
     const snapshot = clone(threadRead.thread);
     snapshot.turns[0].status = 'inProgress';
     snapshot.turns[0].completedAt = null;
+    const item = snapshot.turns[0].items.find((item) => item.id === itemId);
+    if (!item) throw new Error('fixture is missing the live item');
+    Object.assign(item, method === 'item/agentMessage/delta' ? { text: snapshotText } : { aggregatedOutput: snapshotText, status: 'inProgress' });
     resolveRead?.({ thread: snapshot });
     const unsubscribe = await watching;
-    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: '!' } });
+    server.emit({ method, params: { threadId: 'thread-1', turnId: 'turn-1', itemId, delta: '!' } });
 
-    expect(sink.mock.calls.map(([event]) => event).filter((event) => event.nativeId === 'message-1').at(-1)).toMatchObject({ payload: { text: 'I will inspect it. world!' } });
+    const updates = sink.mock.calls.map(([event]) => event).filter((event) => event.nativeId === (method === 'item/agentMessage/delta' ? itemId : `${itemId}:status`));
+    expect(updates.at(-1)).toMatchObject({ payload: method === 'item/agentMessage/delta' ? { text: expected } : { output: expected } });
+    expect(JSON.stringify(updates)).not.toContain('Hello world world');
     unsubscribe();
     expect(server.listenerCount()).toBe(0);
+  });
+
+  test('removes both subscriptions when the initial thread read rejects', async () => {
+    const server = createFakeAppServer();
+    server.request.mockRejectedValue(new Error('initial read failed'));
+    const sink = vi.fn();
+    const watching = new CodexAdapter(server as never).watchConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, sink);
+    expect(server.listenerCount()).toBe(1);
+    expect(server.requestListenerCount()).toBe(1);
+
+    await expect(watching).rejects.toThrow('initial read failed');
+    expect(server.listenerCount()).toBe(0);
+    expect(server.requestListenerCount()).toBe(0);
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: 'late' } });
+    expect(sink).not.toHaveBeenCalled();
   });
 });

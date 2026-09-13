@@ -7,6 +7,7 @@ import type { ConversationRef, ConversationRuntime, ConversationSummary, Harness
 import type { ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 
 type CodexServer = Pick<CodexAppServer, 'request' | 'onNotification' | 'status'> & Partial<Pick<CodexAppServer, 'onServerRequest'>>;
+type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: string; text: string } };
 
 const READ_ONLY_CAPABILITIES: HarnessCapabilities = {
   create: false, partialStreaming: true, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false,
@@ -51,7 +52,7 @@ export class CodexAdapter implements HarnessAdapter {
   async watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe> {
     const live = createCodexLiveNormalizationContext();
     let known: NativeEvent[] = [];
-    const buffered: Array<() => NativeEvent[]> = [];
+    const buffered: BufferedObservation[] = [];
     let ready = false;
     const receive = (incoming: NativeEvent[]): void => {
       const byKey = new Map(known.map((event) => [`${event.provider}:${event.nativeId}`, event]));
@@ -65,21 +66,24 @@ export class CodexAdapter implements HarnessAdapter {
     };
     const notifications = this.server.onNotification((notification) => {
       if (!hasThreadId(notification) || notification.params.threadId !== ref.nativeSessionId) return;
-      if (!ready) { buffered.push(() => normalizeCodexNotification(notification, live)); return; }
+      if (!ready) { buffered.push({ normalize: () => normalizeCodexNotification(notification, live), delta: bufferedDelta(notification) }); return; }
       receive(normalizeCodexNotification(notification, live));
     });
     const requests = this.server.onServerRequest?.((request) => {
       if (!hasThreadId(request) || request.params.threadId !== ref.nativeSessionId) return;
-      if (!ready) { buffered.push(() => normalizeCodexServerRequest(request)); return; }
+      if (!ready) { buffered.push({ normalize: () => normalizeCodexServerRequest(request) }); return; }
       receive(normalizeCodexServerRequest(request));
     });
     try {
       const thread = await this.readThread(ref);
       live.seed(thread);
       known = normalizeCodexThread(thread);
+      const covered = coveredBufferedDeltas(known, buffered);
       ready = true;
       for (const event of known) sink(event);
-      for (const pending of buffered.splice(0)) receive(pending());
+      for (const pending of buffered.splice(0)) {
+        if (!pending.delta || !covered.has(pending.delta.key)) receive(pending.normalize());
+      }
     } catch (error) {
       notifications();
       requests?.();
@@ -136,9 +140,9 @@ function firstUserText(thread: Awaited<CodexRequestMap['thread/read']['result']>
   if (!Array.isArray(thread.turns)) return undefined;
   for (const turn of thread.turns) {
     if (!turn || !Array.isArray(turn.items)) continue;
-    const item = turn.items.find((candidate) => candidate.type === 'userMessage');
+    const item = turn.items.find((candidate) => isObject(candidate) && candidate.type === 'userMessage');
     if (!item || item.type !== 'userMessage' || !Array.isArray(item.content)) continue;
-    const text = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []).join('\n').trim();
+    const text = item.content.flatMap((content) => isObject(content) && content.type === 'text' && typeof content.text === 'string' ? [content.text] : []).join('\n').trim();
     if (text) return text;
   }
   return undefined;
@@ -154,6 +158,40 @@ function runtimeFor(status: Awaited<CodexRequestMap['thread/read']['result']>['t
 function hasThreadId(value: unknown): value is { params: { threadId: string } } {
   return typeof value === 'object' && value !== null && 'params' in value
     && typeof (value as { params?: { threadId?: unknown } }).params?.threadId === 'string';
+}
+
+function isObject(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null; }
+
+function bufferedDelta(notification: unknown): BufferedObservation['delta'] {
+  if (!isObject(notification) || !isObject(notification.params)) return undefined;
+  const kind = notification.method === 'item/agentMessage/delta' ? 'assistant'
+    : notification.method === 'item/commandExecution/outputDelta' ? 'command' : undefined;
+  const { turnId, itemId, delta } = notification.params;
+  if (!kind || typeof turnId !== 'string' || typeof itemId !== 'string' || typeof delta !== 'string') return undefined;
+  return { key: JSON.stringify([turnId, itemId, kind]), text: delta };
+}
+
+function coveredBufferedDeltas(snapshot: NativeEvent[], buffered: BufferedObservation[]): Set<string> {
+  const sequences = new Map<string, string>();
+  for (const { delta } of buffered) {
+    if (delta) sequences.set(delta.key, `${sequences.get(delta.key) ?? ''}${delta.text}`);
+  }
+  const covered = new Set<string>();
+  for (const { payload } of snapshot) {
+    let key: string;
+    let text: string;
+    if (payload.kind === 'assistant-text' && !payload.final) {
+      key = JSON.stringify([payload.turnId, payload.blockId, 'assistant']);
+      text = payload.text;
+    } else if (payload.kind === 'action-updated' && payload.status === 'running' && typeof payload.output === 'string') {
+      key = JSON.stringify([payload.turnId, payload.actionId, 'command']);
+      text = payload.output;
+    } else continue;
+    const sequence = sequences.get(key);
+    // Only an entire buffered sequence matching this active item's suffix is covered.
+    if (sequence !== undefined && text.endsWith(sequence)) covered.add(key);
+  }
+  return covered;
 }
 
 function sameNativeObservation(left: NativeEvent, right: NativeEvent): boolean {

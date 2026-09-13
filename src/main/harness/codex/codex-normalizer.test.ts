@@ -80,6 +80,16 @@ describe('Codex native normalization', () => {
     expect(events.find((event) => event.nativeId === 'good-message')).toMatchObject({ payload: { kind: 'assistant-text', text: 'still here' } });
   });
 
+  test.each([42, false, { secret: 'private approval identity' }, ['private approval identity']])('quarantines a malformed approvalId: %j', (approvalId) => {
+    const events = normalizeCodexServerRequest({
+      id: 9, method: 'item/commandExecution/requestApproval',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'command-1', startedAtMs: 3, approvalId },
+    } as never);
+
+    expect(events).toMatchObject([{ nativeId: 'request:9', payload: { kind: 'unsupported', captureCompleteness: 'partial' } }]);
+    expect(JSON.stringify(events)).not.toContain('private approval identity');
+  });
+
   test('uses file paths rather than change count or ordering for file action identity', () => {
     const first = structuredClone(threadRead.thread) as { turns: Array<{ items: unknown[] }> };
     const second = structuredClone(threadRead.thread) as { turns: Array<{ items: unknown[] }> };
