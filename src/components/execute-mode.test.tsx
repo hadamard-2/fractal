@@ -1,45 +1,50 @@
 // @vitest-environment jsdom
-
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { ExecuteMode } from './execute-mode';
+import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
 
-vi.mock('@/components/sidebar-03/app-sidebar', () => ({
-  DashboardSidebar({ onItemSelect }: {
-    onItemSelect?: (item: {
-      ref: { provider: 'claude'; nativeSessionId: string; projectPath: string };
-      title: string;
-      section: string;
-    }) => void;
-  }) {
-    const ref = { provider: 'claude' as const, nativeSessionId: 'claude-session-1', projectPath: '/work/fractal' };
-    return <div>
-      <button type="button" onClick={() => onItemSelect?.({ ref, title: 'Fix parser', section: 'Fractal' })}>Select original</button>
-      <button type="button" onClick={() => onItemSelect?.({ ref, title: 'Fix parser again', section: 'Fractal next' })}>Select refreshed</button>
-    </div>;
-  },
-}));
-
-beforeAll(() => {
-  Object.defineProperty(window, 'matchMedia', {
-    configurable: true,
-    value: () => ({ matches: false, media: '', onchange: null as MediaQueryList['onchange'], addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() }),
-  });
+const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-choice', projectPath: '/work/fractal' };
+const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+test('explains no selection and opens native sidebar refs while identifying unavailable providers', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  const api: ConversationApi = {
+    list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Review native history', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }] }], providers: [{ provider: 'claude', availability: 'unavailable', capabilities, message: 'CLI executable not found' }] }),
+    open: vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Native panel title', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities })),
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  expect(screen.getByText('Select a conversation')).toBeTruthy();
+  await screen.findByText(/claude.*unavailable/i);
+  const user = userEvent.setup();
+  await user.click(await screen.findByText('Review native history'));
+  await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
+  expect(await screen.findByText('Native panel title')).toBeTruthy();
 });
 
-afterEach(cleanup);
-
-describe('ExecuteMode', () => {
-  test('refreshes breadcrumb metadata when the same native ref is selected again', async () => {
-    const user = userEvent.setup();
-    render(<ExecuteMode onOpenSettings={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: 'Select original' }));
-    await user.click(screen.getByRole('button', { name: 'Select refreshed' }));
-
-    expect(screen.getByText('Fractal next')).toBeTruthy();
-    expect(screen.getByText('Fix parser again')).toBeTruthy();
-    expect(screen.queryByText('Fix parser')).toBeNull();
-  });
+test('refreshes breadcrumb metadata when the same native ref is selected again', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  const listeners = new Set<(event: ConversationStreamEvent) => void>();
+  let title = 'Fix parser';
+  let project = 'Fractal';
+  const api: ConversationApi = {
+    list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: project, conversations: [{ ref, title, updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }] }], providers: [] }),
+    open: async () => ({ summary: { ref, title: 'Native details', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities }),
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined,
+    onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  const user = userEvent.setup();
+  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  await user.click(await screen.findByText('Fix parser'));
+  title = 'Fix parser again';
+  project = 'Fractal next';
+  act(() => { for (const listener of listeners) listener({ type: 'summary.updated', ref, loadId: 'history-list-refresh', seq: 0, summary: { ref, title, updatedAt: 2, runtime: 'unknown', captureCompleteness: 'partial' } }); });
+  await user.click(await screen.findByText('Fix parser again'));
+  expect(screen.getByText('Fractal next', { selector: '[data-slot="breadcrumb-item"]' })).toBeTruthy();
+  expect(screen.getByText('Fix parser again', { selector: '[data-slot="breadcrumb-page"]' })).toBeTruthy();
+  expect(screen.queryByText('Fix parser')).toBeNull();
 });

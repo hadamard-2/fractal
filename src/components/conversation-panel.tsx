@@ -1,159 +1,102 @@
-import { useState } from 'react';
-import { Blocks } from 'lucide-react';
-import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-} from '@/components/ai-elements/conversation';
-import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message';
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  type PromptInputMessage,
-} from '@/components/ai-elements/prompt-input';
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ConversationEmptyState } from '@/components/ai-elements/conversation';
+import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
+import { BlockingRequest } from '@/components/conversation/blocking-request';
+import { ConversationHeader } from '@/components/conversation/conversation-header';
+import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
 import { useConversation } from '@/renderer/use-conversation';
+import { conversationKey, type ConversationRef, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
-// The reading column. Applied to the transcript and the composer alike so the
-// two stay on the same measure — putting a width on only one of them is what
-// makes a composer look bolted on. Percentage insets rather than a max-width
-// so the column keeps breathing room at the edges instead of pinning to a
-// fixed pixel measure and stranding whitespace on a wide window.
+// The transcript and composer share a reading measure at every panel width.
 const COLUMN = 'px-4 lg:px-[8%] xl:px-[14%] 2xl:px-[20%]';
 
-export function ConversationPanel({ conversationId }: { conversationId: string | null }) {
-  const { entries, missedEvents, snapshotError, status, send, cancel, reload } = useConversation(conversationId);
+function NativeConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
+  const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
   const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const pendingSend = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    pendingSend.current = null;
+    setSending(false);
+    setActionError(null);
+    return () => { pendingSend.current = null; };
+  }, [state.loadId]);
+  const requests = useMemo(() => {
+    const imported = state.turns.flatMap((turn) => turn.blocks.flatMap((block) => block.kind === 'approval' || block.kind === 'question' ? [block.request] : []));
+    return [...new Map([...imported, ...state.requests].map((item) => [item.id, item])).values()];
+  }, [state.turns, state.requests]);
+  const unresolved = requests.filter((request) => request.status === 'open');
+  const request = unresolved.find((item) => item.kind === 'approval') ?? unresolved[0];
+  const eligible = canSend && unresolved.length === 0;
+  const canResolve = state.history === 'complete' && state.sync === 'current'
+    && (state.runtime === 'active-in-fractal' || state.runtime === 'waiting-for-user');
+  const loading = state.history === 'loading' || state.history === 'idle';
 
-  const handleSubmit = (message: PromptInputMessage) => {
-    if (status !== 'ready') {
-      cancel();
-      return;
+  // Request events own the audit state; open controls stay by the composer
+  // so a virtual row cannot hide or duplicate the current decision.
+  const turns = useMemo(() => state.turns.map((turn) => turn.blocks.some((block) => block.kind === 'approval' || block.kind === 'question') ? ({
+    ...turn,
+    blocks: turn.blocks.flatMap((block): TurnBlock[] => {
+      if (block.kind !== 'approval' && block.kind !== 'question') return [block];
+      const latest = state.requests.find((item) => item.id === block.request.id) ?? block.request;
+      return latest.status === 'open' ? [] : [{ ...block, request: latest }];
+    }),
+  }) : turn), [state.turns, state.requests]);
+
+  const handleSubmit = async (message: PromptInputMessage) => {
+    if (!eligible || pendingSend.current || !message.text.trim()) return;
+    const draft = message.text;
+    const dispatched = send(draft.trim());
+    if (!dispatched) return;
+    const attempt = {};
+    pendingSend.current = attempt;
+    setSending(true);
+    setActionError(null);
+    try {
+      await dispatched;
+      if (pendingSend.current === attempt) setInput((current) => current === draft ? '' : current);
+    } catch (cause) {
+      if (pendingSend.current === attempt) setActionError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    } finally {
+      if (pendingSend.current === attempt) {
+        pendingSend.current = null;
+        setSending(false);
+      }
     }
-    const text = message.text.trim();
-    if (!text) return;
-    send(text);
-    setInput('');
   };
-
-  /*
-    The composer, shared by the landing and transcript layouts so the two
-    can't drift apart in behaviour. Only one renders at a time.
-  */
-  const composer = (
-    <PromptInput onSubmit={handleSubmit}>
-      <PromptInputBody>
-        <PromptInputTextarea
-          className="scrollbar-minimal"
-          placeholder="Ask anything"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-      </PromptInputBody>
-      <PromptInputFooter className="justify-end">
-        <PromptInputSubmit disabled={!input.trim() && status === 'ready'} status={status} />
-      </PromptInputFooter>
-    </PromptInput>
-  );
-
-  const isEmpty = entries.length === 0;
+  const resolve = async (id: string, decision: UserDecision) => {
+    if (!canResolve) return;
+    try { await resolveRequest(id, decision); }
+    catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
+  };
+  const stop = async () => {
+    try { await interrupt(); }
+    catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
+  };
 
   return (
     <div className="relative flex size-full flex-col overflow-hidden">
-      {snapshotError && (
-        <div className="shrink-0 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          Failed to load this conversation: {snapshotError}{' '}
-          <button type="button" onClick={reload} className="underline">
-            Reload
-          </button>
-        </div>
-      )}
-      {missedEvents && (
-        <div className="shrink-0 border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
-          Some events were missed — this transcript may be incomplete.{' '}
-          <button type="button" onClick={reload} className="underline">
-            Reload
-          </button>
-        </div>
-      )}
-      {isEmpty ? (
-        /*
-          Landing state, Claude-style: the mark and the greeting on one
-          line, the composer directly beneath, the pair centred in the
-          panel. No transcript chrome yet — nothing to stick to, nothing
-          for the top gradient to dissolve. Sending the first message
-          flips the panel to the transcript layout below.
-        */
-        <div
-          className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-6 ${COLUMN}`}
-        >
-          <div className="flex items-center gap-3">
-            <Blocks className="size-7" />
-            <h2 className="font-medium text-3xl tracking-tight">
-              How can I help?
-            </h2>
-          </div>
-          {composer}
-        </div>
-      ) : (
-        <>
-          <Conversation className="min-h-0">
-            {/*
-              Dissolves messages as they scroll up under the header instead of
-              letting them hit a hard cut-off. It reads because it sits over the
-              transcript: the same gradient over empty space would be background
-              fading into an identical background, i.e. nothing.
-            */}
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-linear-to-b from-background to-transparent"
-            />
-            <ConversationContent
-              className={`pt-8 ${COLUMN}`}
-              scrollClassName="scrollbar-minimal"
-            >
-              {entries.map((entry) => (
-                <Message from={entry.author === 'user' ? 'user' : 'assistant'} key={entry.id}>
-                  <MessageContent>
-                    {entry.parts.map((part) => {
-                      if (part.kind === 'text') {
-                        return <MessageResponse key={part.id}>{part.text}</MessageResponse>;
-                      }
-                      if (part.kind === 'reasoning') {
-                        return (
-                          <Reasoning key={part.id} isStreaming={entry.status === 'streaming'}>
-                            <ReasoningTrigger />
-                            <ReasoningContent>{part.text}</ReasoningContent>
-                          </Reasoning>
-                        );
-                      }
-                      return (
-                        <div key={part.id} className="text-xs text-muted-foreground">
-                          [{part.kind}
-                          {'path' in part ? ` ${part.path}` : ''}] {part.phase}
-                        </div>
-                      );
-                    })}
-                    {entry.status === 'error' && entry.error && (
-                      <div className="text-xs text-destructive">{entry.error.message}</div>
-                    )}
-                  </MessageContent>
-                </Message>
-              ))}
-            </ConversationContent>
-            <ConversationScrollButton />
-          </Conversation>
-          {/*
-            pb-2, not pb-4: the floating sidebar's container insets itself
-            by p-2, so 8px here lines the composer's bottom edge up with the
-            sidebar card's instead of leaving it floating higher.
-          */}
-          <div className={`shrink-0 pb-2 ${COLUMN}`}>{composer}</div>
-        </>
-      )}
+      {state.summary && <ConversationHeader capabilities={state.capabilities} onInterrupt={stop} runtime={state.runtime} summary={state.summary} />}
+      {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
+      {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
+      {loading && <p className="shrink-0 px-4 py-2 text-sm text-muted-foreground" role="status">Loading conversation…</p>}
+      {turns.length ? <VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /> : <div className="min-h-0 flex-1"><ConversationEmptyState title={loading ? 'Loading history' : state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={loading ? 'Messages will appear as native history loads.' : state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} /></div>}
+      <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 ${COLUMN}`}>
+        {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
+        {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
+        {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}
+        {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
+        <PromptInput onSubmit={handleSubmit}>
+          <PromptInputBody><PromptInputTextarea aria-label="Message" className="scrollbar-minimal" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
+          <PromptInputFooter className="justify-end"><PromptInputSubmit disabled={!eligible || sending || !input.trim()} status={sending ? 'submitted' : 'ready'} /></PromptInputFooter>
+        </PromptInput>
+      </div>
     </div>
   );
+}
+
+export function ConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
+  return <NativeConversationPanel conversationRef={conversationRef} key={`${conversationKey(conversationRef)}:${conversationRef.projectPath}`} />;
 }
