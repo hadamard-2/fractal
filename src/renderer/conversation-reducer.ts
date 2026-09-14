@@ -21,6 +21,9 @@ export interface ConversationState {
   history: 'idle' | 'loading' | 'complete' | 'failed';
   sync: 'current' | 'gap';
   error: string | null;
+  nextHistoryChunkIndex: number;
+  streamedRuntime: boolean;
+  streamedSummary: boolean;
 }
 
 export const initialConversationState: ConversationState = {
@@ -36,6 +39,9 @@ export const initialConversationState: ConversationState = {
   history: 'idle',
   sync: 'current',
   error: null,
+  nextHistoryChunkIndex: 0,
+  streamedRuntime: false,
+  streamedSummary: false,
 };
 
 type LocalAction =
@@ -64,18 +70,8 @@ function upsertById<T extends { id: string }>(items: T[], incoming: T): T[] {
   return next;
 }
 
-function mergeTurn(current: ConversationTurn, incoming: ConversationTurn): ConversationTurn {
-  return { ...current, ...incoming, blocks: incoming.blocks.reduce(upsertById, current.blocks) };
-}
-
 function upsertTurns(turns: ConversationTurn[], incoming: ConversationTurn[]): ConversationTurn[] {
-  return incoming.reduce((current, turn) => {
-    const index = current.findIndex((item) => item.id === turn.id);
-    if (index < 0) return [...current, turn];
-    const next = [...current];
-    next[index] = mergeTurn(current[index], turn);
-    return next;
-  }, turns);
+  return incoming.reduce(upsertById, turns);
 }
 
 function updateTurn(turns: ConversationTurn[], turnId: string, update: (turn: ConversationTurn) => ConversationTurn): ConversationTurn[] {
@@ -97,7 +93,11 @@ function updateBlock(blocks: TurnBlock[], blockId: string, update: (block: TurnB
 function applyEvent(state: ConversationState, event: ConversationStreamEvent): ConversationState {
   switch (event.type) {
     case 'history.chunk':
-      return { ...state, turns: upsertTurns(state.turns, event.turns) };
+      return {
+        ...state,
+        turns: upsertTurns(state.turns, event.turns),
+        nextHistoryChunkIndex: state.nextHistoryChunkIndex + 1,
+      };
     case 'history.complete':
       return { ...state, history: 'complete' };
     case 'turn.upserted':
@@ -123,7 +123,7 @@ function applyEvent(state: ConversationState, event: ConversationStreamEvent): C
         })),
       };
     case 'runtime.changed':
-      return { ...state, runtime: event.runtime };
+      return { ...state, runtime: event.runtime, streamedRuntime: true };
     case 'request.opened':
       return { ...state, requests: upsertById(state.requests, event.request) };
     case 'request.resolved':
@@ -134,7 +134,7 @@ function applyEvent(state: ConversationState, event: ConversationStreamEvent): C
           : request),
       };
     case 'summary.updated':
-      return { ...state, summary: event.summary, runtime: event.summary.runtime };
+      return { ...state, summary: event.summary, runtime: event.summary.runtime, streamedRuntime: true, streamedSummary: true };
     case 'load.failed':
       return { ...state, history: 'failed', runtime: 'failed', error: event.message };
   }
@@ -156,7 +156,12 @@ export function conversationReducer(state: ConversationState, action: Conversati
       return initialConversationState;
     case 'open.succeeded':
       return isCurrentLocalAction(state, action)
-        ? { ...state, summary: action.summary, capabilities: action.capabilities, runtime: action.summary.runtime }
+        ? {
+          ...state,
+          capabilities: action.capabilities,
+          summary: state.streamedSummary ? state.summary : action.summary,
+          runtime: state.sync === 'gap' ? 'unknown' : state.streamedRuntime ? state.runtime : action.summary.runtime,
+        }
         : state;
     case 'open.failed':
       return isCurrentLocalAction(state, action)
@@ -165,6 +170,10 @@ export function conversationReducer(state: ConversationState, action: Conversati
     default:
       if (!isCurrentEvent(state, action) || state.sync === 'gap' || action.seq <= state.lastSeq) return state;
       if (action.seq !== state.lastSeq + 1) return { ...state, sync: 'gap', runtime: 'unknown' };
+      if (action.type === 'history.chunk') {
+        if (action.chunkIndex < state.nextHistoryChunkIndex) return { ...state, lastSeq: action.seq };
+        if (action.chunkIndex > state.nextHistoryChunkIndex) return { ...state, sync: 'gap', runtime: 'unknown' };
+      }
       return { ...applyEvent(state, action), lastSeq: action.seq };
   }
 }

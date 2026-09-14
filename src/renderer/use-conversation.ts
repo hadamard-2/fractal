@@ -4,6 +4,8 @@ import { parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 import type { Entry } from '@/shared/agent-contract';
 import type { ConversationRef, UserDecision } from '@/shared/conversation-contract';
 
+type ActiveLoad = { ref: ConversationRef; loadId: string; token: number };
+
 function ignoreRejection(promise: Promise<unknown> | undefined): void {
   void Promise.resolve(promise).catch((): void => undefined);
 }
@@ -16,6 +18,7 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState);
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const generation = useRef(0);
+  const activeLoad = useRef<ActiveLoad | null>(null);
   const recoveredLoad = useRef<string | null>(null);
 
   // This listener is installed before any selection can open. The reducer
@@ -26,12 +29,14 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
   useEffect(() => {
     if (!ref) {
       generation.current += 1;
+      activeLoad.current = null;
       dispatch({ type: 'reset' });
       return;
     }
 
     const token = ++generation.current;
     const loadId = crypto.randomUUID();
+    activeLoad.current = { ref, loadId, token };
     dispatch({ type: 'opened', ref, loadId });
 
     ignoreRejection(window.fractal.conversations.open(ref, loadId).then(
@@ -51,7 +56,10 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
     ));
 
     return () => {
-      if (generation.current === token) generation.current += 1;
+      if (generation.current === token) {
+        generation.current += 1;
+        activeLoad.current = null;
+      }
       ignoreRejection(window.fractal.conversations.close(ref));
     };
   }, [ref?.provider, ref?.nativeSessionId, ref?.projectPath, reloadEpoch]);
@@ -69,29 +77,43 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
     && state.sync === 'current'
     && (state.runtime === 'idle' || (state.runtime === 'active-in-fractal' && state.capabilities?.steerWhileRunning === true));
 
-  const send = useCallback((text: string) => {
-    if (!canSend || !state.ref) return;
+  const isActiveCallback = useCallback((expectedRef: ConversationRef | null, expectedLoadId: string | null): boolean => {
+    const active = activeLoad.current;
+    return expectedRef !== null
+      && expectedLoadId !== null
+      && active !== null
+      && active.token === generation.current
+      && active.loadId === expectedLoadId
+      && active.ref.provider === expectedRef.provider
+      && active.ref.nativeSessionId === expectedRef.nativeSessionId
+      && active.ref.projectPath === expectedRef.projectPath;
+  }, []);
+
+  const send = useCallback((text: string): Promise<void> | undefined => {
+    if (!canSend || !isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
     try {
       const prompt = parsePromptInput({ text });
-      ignoreRejection(window.fractal.conversations.continue(state.ref, prompt));
+      return window.fractal.conversations.continue(state.ref, prompt);
     } catch {
       // The bridge never sees malformed renderer input.
+      return undefined;
     }
-  }, [canSend, state.ref]);
+  }, [canSend, isActiveCallback, state.loadId, state.ref]);
 
-  const interrupt = useCallback(() => {
-    if (!state.ref) return;
-    ignoreRejection(window.fractal.conversations.interrupt(state.ref));
-  }, [state.ref]);
+  const interrupt = useCallback((): Promise<void> | undefined => {
+    if (!isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
+    return window.fractal.conversations.interrupt(state.ref);
+  }, [isActiveCallback, state.loadId, state.ref]);
 
-  const resolveRequest = useCallback((requestId: string, decision: UserDecision) => {
-    if (!state.ref) return;
+  const resolveRequest = useCallback((requestId: string, decision: UserDecision): Promise<void> | undefined => {
+    if (!isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
     try {
-      ignoreRejection(window.fractal.conversations.resolveRequest(requestId, parseUserDecision(decision)));
+      return window.fractal.conversations.resolveRequest(requestId, parseUserDecision(decision));
     } catch {
       // The bridge never sees malformed renderer input.
+      return undefined;
     }
-  }, [state.ref]);
+  }, [isActiveCallback, state.loadId, state.ref]);
 
   const reload = useCallback(() => {
     if (state.ref) setReloadEpoch((epoch) => epoch + 1);

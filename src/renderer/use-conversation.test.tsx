@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { type ReactNode, StrictMode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { useConversation } from '@/renderer/use-conversation';
@@ -83,6 +84,9 @@ describe('useConversation', () => {
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
     expect(close).toHaveBeenCalledTimes(1);
     expect(result.current.state.sync).toBe('current');
+    act(() => listener?.(stream(oldLoadId, 1, { type: 'history.complete' })));
+    expect(result.current.state.loadId).not.toBe(oldLoadId);
+    expect(result.current.state.history).toBe('loading');
     unmount();
   });
 
@@ -98,13 +102,110 @@ describe('useConversation', () => {
     if (!activeLoadId) throw new Error('Conversation did not open');
     act(() => listener?.(stream(activeLoadId, 0, { type: 'history.complete' })));
     act(() => result.current.send('   '));
-    act(() => result.current.send('Continue this'));
-    act(() => result.current.interrupt());
-    act(() => result.current.resolveRequest('request-1', { kind: 'allow-once' }));
+    await act(async () => { await result.current.send('Continue this'); });
+    await act(async () => { await result.current.interrupt(); });
+    await act(async () => { await result.current.resolveRequest('request-1', { kind: 'allow-once' }); });
 
     await waitFor(() => expect(continueConversation).toHaveBeenCalledWith(ref, { text: 'Continue this' }));
     expect(interrupt).toHaveBeenCalledWith(ref);
     expect(resolveRequest).toHaveBeenCalledWith('request-1', { kind: 'allow-once' });
     unmount();
+  });
+
+  test('preserves stream metadata that arrives before a deferred open resolves', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    let resolveOpen: ((value: Awaited<ReturnType<ConversationApi['open']>>) => void) | undefined;
+    install({
+      onEvent: vi.fn((next) => { listener = next; return vi.fn(); }),
+      open: vi.fn<ConversationApi['open']>(() => new Promise((resolve) => { resolveOpen = resolve; })),
+      close: vi.fn(),
+    });
+    const { result, unmount } = renderHook(() => useConversation(ref));
+    const activeLoadId = result.current.state.loadId;
+    if (!activeLoadId || !resolveOpen) throw new Error('Conversation did not open');
+    const streamed = { ...summary, title: 'Stream title', updatedAt: 2, runtime: 'active-externally' as const };
+    act(() => {
+      listener?.(stream(activeLoadId, 0, { type: 'runtime.changed', runtime: 'active-externally' }));
+      listener?.(stream(activeLoadId, 1, { type: 'summary.updated', summary: streamed }));
+    });
+    await act(async () => resolveOpen?.({ summary, capabilities }));
+
+    expect(result.current.state).toMatchObject({ summary: streamed, runtime: 'active-externally', capabilities });
+    unmount();
+  });
+
+  test('returns current action failures and never invokes preload from retained stale callbacks', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    const continueConversation = vi.fn<ConversationApi['continue']>().mockRejectedValue(new Error('Continue failed'));
+    const interrupt = vi.fn<ConversationApi['interrupt']>().mockRejectedValue(new Error('Interrupt failed'));
+    const resolveRequest = vi.fn<ConversationApi['resolveRequest']>().mockRejectedValue(new Error('Resolve failed'));
+    install({ onEvent: vi.fn((next) => { listener = next; return vi.fn(); }), open: vi.fn().mockResolvedValue({ summary, capabilities }), close: vi.fn(), continue: continueConversation, interrupt, resolveRequest });
+    const { result, rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref } });
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
+    const currentLoadId = result.current.state.loadId;
+    if (!currentLoadId) throw new Error('Conversation did not open');
+    act(() => listener?.(stream(currentLoadId, 0, { type: 'history.complete' })));
+    const current = { send: result.current.send, interrupt: result.current.interrupt, resolveRequest: result.current.resolveRequest };
+
+    await expect(current.send('Continue this')).rejects.toThrow('Continue failed');
+    await expect(current.interrupt()).rejects.toThrow('Interrupt failed');
+    await expect(current.resolveRequest('request-1', { kind: 'allow-once' })).rejects.toThrow('Resolve failed');
+    rerender({ selected: otherRef });
+    current.send('stale'); current.interrupt(); current.resolveRequest('request-1', { kind: 'allow-once' });
+    expect(continueConversation).toHaveBeenCalledTimes(1);
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(resolveRequest).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  test('does not reopen equivalent refs and cleans subscriptions and loads under StrictMode', async () => {
+    const unsubscribe = vi.fn();
+    const onEvent = vi.fn<ConversationApi['onEvent']>(() => unsubscribe);
+    const open = vi.fn<ConversationApi['open']>().mockResolvedValue({ summary, capabilities });
+    const close = vi.fn<ConversationApi['close']>().mockResolvedValue();
+    install({ onEvent, open, close });
+    const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
+    const { rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref }, wrapper });
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    rerender({ selected: { ...ref } });
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(0);
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('makes callbacks inert across a same-ref reload, null selection, and unmount', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    let resolveClose: (() => void) | undefined;
+    const continueConversation = vi.fn<ConversationApi['continue']>().mockResolvedValue();
+    const interrupt = vi.fn<ConversationApi['interrupt']>().mockResolvedValue();
+    const resolveRequest = vi.fn<ConversationApi['resolveRequest']>().mockResolvedValue();
+    const open = vi.fn<ConversationApi['open']>().mockResolvedValue({ summary, capabilities });
+    const close = vi.fn<ConversationApi['close']>(() => new Promise<void>((resolve) => { resolveClose = resolve; }));
+    install({ onEvent: vi.fn((next) => { listener = next; return vi.fn(); }), open, close, continue: continueConversation, interrupt, resolveRequest });
+    const { result, rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref } });
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
+    const firstLoadId = result.current.state.loadId;
+    if (!firstLoadId) throw new Error('Conversation did not open');
+    act(() => listener?.(stream(firstLoadId, 0, { type: 'history.complete' })));
+    const beforeReload = { send: result.current.send, interrupt: result.current.interrupt, resolveRequest: result.current.resolveRequest };
+    act(() => result.current.reload());
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    beforeReload.send('stale'); beforeReload.interrupt(); beforeReload.resolveRequest('request-1', { kind: 'allow-once' });
+    expect(continueConversation).not.toHaveBeenCalled();
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(resolveRequest).not.toHaveBeenCalled();
+    const beforeNull = { send: result.current.send, interrupt: result.current.interrupt, resolveRequest: result.current.resolveRequest };
+    rerender({ selected: null });
+    beforeNull.send('stale'); beforeNull.interrupt(); beforeNull.resolveRequest('request-1', { kind: 'allow-once' });
+    expect(continueConversation).not.toHaveBeenCalled();
+    const beforeUnmount = { send: result.current.send, interrupt: result.current.interrupt, resolveRequest: result.current.resolveRequest };
+    unmount();
+    beforeUnmount.send('stale'); beforeUnmount.interrupt(); beforeUnmount.resolveRequest('request-1', { kind: 'allow-once' });
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(resolveRequest).not.toHaveBeenCalled();
+    resolveClose?.();
   });
 });

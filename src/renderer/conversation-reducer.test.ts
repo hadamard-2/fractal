@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { conversationReducer, initialConversationState, type ConversationState } from '@/renderer/conversation-reducer';
-import type { AgentAction, BlockingRequest, ConversationRef, ConversationStreamEvent, ConversationTurn } from '@/shared/conversation-contract';
+import type { AgentAction, BlockingRequest, ConversationRef, ConversationStreamEvent, ConversationSummary, ConversationTurn, HarnessCapabilities } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
 const otherRef: ConversationRef = { ...ref, nativeSessionId: 'thread-2' };
@@ -17,7 +17,15 @@ const command: AgentAction = {
   command: 'pnpm test', exitCode: 0, captureCompleteness: 'complete',
 };
 
-const actionTurn = (): ConversationTurn => ({ ...proseTurn(), blocks: [{ id: 'packet-1', kind: 'work-packet', status: 'active', actions: [] }] });
+const actionTurn = (): ConversationTurn => ({
+  ...proseTurn(),
+  blocks: [
+    { id: 'prose-1', kind: 'assistant-prose', provider: 'codex', text: 'Hello world' },
+    { id: 'packet-1', kind: 'work-packet', status: 'active', actions: [] },
+  ],
+});
+const capabilities: HarnessCapabilities = { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
+const openSummary: ConversationSummary = { ref, title: 'Open result', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' };
 
 const event = <T extends Omit<ConversationStreamEvent, 'loadId' | 'ref' | 'seq'>>(seq: number, payload: T): ConversationStreamEvent =>
   ({ loadId, ref, seq, ...payload } as ConversationStreamEvent);
@@ -56,6 +64,47 @@ describe('conversationReducer', () => {
     expect(state.lastSeq).toBe(4);
   });
 
+  test('does not let late open metadata overwrite ordered stream metadata or a gap', () => {
+    const streamedSummary: ConversationSummary = { ...openSummary, title: 'Stream result', updatedAt: 2, runtime: 'active-externally' };
+    let state = loadedState();
+    state = conversationReducer(state, event(0, { type: 'runtime.changed', runtime: 'active-externally' }));
+    state = conversationReducer(state, event(1, { type: 'summary.updated', summary: streamedSummary }));
+    state = conversationReducer(state, event(3, { type: 'runtime.changed', runtime: 'idle' }));
+    state = conversationReducer(state, { type: 'open.succeeded', ref, loadId, summary: openSummary, capabilities });
+
+    expect(state).toMatchObject({ summary: streamedSummary, runtime: 'unknown', sync: 'gap', capabilities });
+  });
+
+  test('treats turn.upserted as a complete replacement at the existing turn position', () => {
+    const before = { ...proseTurn('before'), id: 'before' };
+    const target = proseTurn('old');
+    const after = { ...proseTurn('after'), id: 'after' };
+    const correction: ConversationTurn = {
+      ...target,
+      status: 'completed',
+      blocks: [
+        { id: 'notice-1', kind: 'system-notice', message: 'Corrected', tone: 'info' },
+        { id: 'prose-1', kind: 'assistant-prose', provider: 'codex', text: 'new' },
+      ],
+    };
+    let state = loadedState({ turns: [before, target, after] });
+    state = conversationReducer(state, event(0, { type: 'turn.upserted', turn: correction }));
+
+    expect(state.turns).toEqual([before, correction, after]);
+  });
+
+  test('uses chunk indexes as a second contiguous history boundary', () => {
+    const first = { ...proseTurn('first'), id: 'first' };
+    const duplicate = { ...proseTurn('duplicate'), id: 'duplicate' };
+    let state = loadedState();
+    state = conversationReducer(state, event(0, { type: 'history.chunk', chunkIndex: 0, turns: [first] }));
+    state = conversationReducer(state, event(1, { type: 'history.chunk', chunkIndex: 0, turns: [duplicate] }));
+    state = conversationReducer(state, event(2, { type: 'history.chunk', chunkIndex: 2, turns: [duplicate] }));
+
+    expect(state.turns).toEqual([first]);
+    expect(state).toMatchObject({ lastSeq: 1, sync: 'gap', runtime: 'unknown' });
+  });
+
   test('merges assistant deltas and action lifecycle updates by stable IDs', () => {
     let state = loadedState({ turns: [proseTurn()] });
     state = conversationReducer(state, event(0, { type: 'assistant.delta', turnId: 'turn-1', blockId: 'prose-1', delta: 'Hello' }));
@@ -77,7 +126,7 @@ describe('conversationReducer', () => {
     state = conversationReducer(state, event(2, { type: 'request.opened', request }));
     state = conversationReducer(state, event(3, { type: 'request.opened', request: { ...request, title: 'Run all tests' } }));
 
-    expect(state.turns.map((turn) => [turn.id, turn.status])).toEqual([['turn-first', 'completed'], ['turn-second', 'active']]);
+    expect(state.turns.map((turn) => [turn.id, turn.status])).toEqual([['turn-first', 'active'], ['turn-second', 'active']]);
     expect(state.requests).toEqual([{ ...request, title: 'Run all tests' }]);
   });
 
