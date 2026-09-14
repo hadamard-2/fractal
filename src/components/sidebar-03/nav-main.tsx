@@ -1,7 +1,7 @@
 'use client';
 
 import { CircleAlert, CircleHelp, CirclePause, Folder, FolderOpen, Radio } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
@@ -56,15 +56,20 @@ export default function NavMain({
   const { state } = useSidebar();
   const [query, setQuery] = useState('');
   const [openProjects, setOpenProjects] = useState<Set<string>>(() => new Set());
+  const seenProjects = useRef(new Set<string>());
   const isCollapsed = state === 'collapsed';
   const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
+    const projectPaths = new Set(groups.map((group) => group.projectPath));
     setOpenProjects((open) => {
-      const next = new Set(open);
-      for (const group of groups) next.add(group.projectPath);
+      const next = new Set([...open].filter((path) => projectPaths.has(path)));
+      for (const path of projectPaths) {
+        if (!seenProjects.current.has(path)) next.add(path);
+      }
       return next;
     });
+    seenProjects.current = projectPaths;
   }, [groups]);
 
   const filteredGroups = useMemo(() => groups.flatMap((group) => {
@@ -93,6 +98,13 @@ export default function NavMain({
           value={query}
         />
       </SidebarMenuItem>
+      {normalizedQuery && filteredGroups.length === 0 && (
+        <SidebarMenuItem>
+          <p className="px-2 py-1 text-muted-foreground text-xs" role="status">
+            No conversations found.
+          </p>
+        </SidebarMenuItem>
+      )}
       {filteredGroups.map((group) => {
         const isOpen = normalizedQuery.length > 0 || openProjects.has(group.projectPath);
         const isSelectedProject = selected?.projectPath === group.projectPath;
@@ -124,6 +136,7 @@ export default function NavMain({
                         <SidebarMenuSubButton asChild isActive={isSelected}>
                           <button
                             className="flex w-full items-center rounded-md px-4 py-1.5 text-left font-normal text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-foreground"
+                            aria-current={isSelected ? 'page' : undefined}
                             onClick={() => onSelect({
                               ref: conversation.ref,
                               title: conversation.title,

@@ -3,9 +3,9 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ProjectConversationGroup } from '@/shared/conversation-contract';
+import type { ConversationRef, ProjectConversationGroup } from '@/shared/conversation-contract';
 import { SidebarProvider } from '@/components/ui/sidebar';
-import NavMain from './nav-main';
+import NavMain, { type NavSelection } from './nav-main';
 
 const fractalGroup: ProjectConversationGroup = {
   projectPath: '/work/fractal',
@@ -36,6 +36,22 @@ const fractalGroup: ProjectConversationGroup = {
   ],
 };
 
+const atlasGroup: ProjectConversationGroup = {
+  projectPath: '/work/atlas',
+  displayName: 'Atlas',
+  conversations: [{
+    ref: {
+      provider: 'codex',
+      nativeSessionId: 'codex-thread-2',
+      projectPath: '/work/atlas',
+    },
+    title: 'Map routes',
+    updatedAt: 0,
+    runtime: 'idle',
+    captureCompleteness: 'complete',
+  }],
+};
+
 beforeAll(() => {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
@@ -54,10 +70,14 @@ beforeAll(() => {
 
 afterEach(cleanup);
 
-function renderNav() {
+function renderNav(
+  groups: ProjectConversationGroup[] = [fractalGroup],
+  selected: ConversationRef | null = null,
+  onSelect: (item: NavSelection) => void = vi.fn()
+) {
   return render(
     <SidebarProvider>
-      <NavMain groups={[fractalGroup]} selected={null} onSelect={vi.fn()} />
+      <NavMain groups={groups} selected={selected} onSelect={onSelect} />
     </SidebarProvider>
   );
 }
@@ -75,8 +95,76 @@ describe('NavMain', () => {
   test('filters by project title, conversation title, provider, and native ID', async () => {
     const user = userEvent.setup();
     renderNav();
-    await user.type(screen.getByRole('searchbox'), 'claude-session-1');
+    const search = screen.getByRole('searchbox');
+    await user.type(search, 'FRACTAL');
+    expect(screen.getByText('Fix parser')).toBeTruthy();
+    expect(screen.getByText('Review IPC')).toBeTruthy();
+    await user.clear(search);
+    await user.type(search, '/WORK/FRACTAL');
+    expect(screen.getByText('Fix parser')).toBeTruthy();
+    await user.clear(search);
+    await user.type(search, 'FIX PARSER');
     expect(screen.getByText('Fix parser')).toBeTruthy();
     expect(screen.queryByText('Review IPC')).toBeNull();
+    await user.clear(search);
+    await user.type(search, 'CLAUDE CODE');
+    expect(screen.getByText('Fix parser')).toBeTruthy();
+    expect(screen.queryByText('Review IPC')).toBeNull();
+    await user.clear(search);
+    await user.type(search, 'CLAUDE-SESSION-1');
+    expect(screen.getByText('Fix parser')).toBeTruthy();
+    expect(screen.queryByText('Review IPC')).toBeNull();
+  });
+
+  test('preserves main ordering and returns the exact native ref on click', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderNav([atlasGroup, fractalGroup], null, onSelect);
+    expect(screen.getAllByTestId('project-group').map((group) => group.textContent)).toEqual([
+      expect.stringContaining('Atlas'),
+      expect.stringContaining('Fractal'),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: /Fix parser/ }));
+    expect(onSelect.mock.calls[0][0].ref).toBe(fractalGroup.conversations[0].ref);
+  });
+
+  test('keeps an explicitly collapsed project closed when its summaries refresh', async () => {
+    const user = userEvent.setup();
+    const view = renderNav();
+    const refreshedGroup = {
+      ...fractalGroup,
+      conversations: [
+        { ...fractalGroup.conversations[0], title: 'Fix parser again' },
+        fractalGroup.conversations[1],
+      ],
+    };
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
+    expect(screen.queryByText('Fix parser')).toBeNull();
+
+    view.rerender(
+      <SidebarProvider>
+        <NavMain
+          groups={[refreshedGroup]}
+          selected={null}
+          onSelect={vi.fn()}
+        />
+      </SidebarProvider>
+    );
+
+    expect(screen.queryByText('Fix parser again')).toBeNull();
+  });
+
+  test('marks only the selected native conversation as current', () => {
+    renderNav([fractalGroup], { ...fractalGroup.conversations[0].ref });
+    expect(screen.getByRole('button', { name: /Fix parser/ }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: /Review IPC/ }).getAttribute('aria-current')).toBeNull();
+  });
+
+  test('announces when a search matches no conversations', async () => {
+    const user = userEvent.setup();
+    renderNav();
+    await user.type(screen.getByRole('searchbox'), 'not-a-conversation');
+    expect(screen.getByRole('status').textContent).toBe('No conversations found.');
   });
 });

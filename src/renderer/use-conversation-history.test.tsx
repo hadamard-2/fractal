@@ -10,6 +10,8 @@ import type {
 } from '@/shared/conversation-contract';
 import { useConversationHistory } from './use-conversation-history';
 
+type History = Awaited<ReturnType<ConversationApi['list']>>;
+
 const projects: ProjectConversationGroup[] = [
   {
     projectPath: '/work/fractal',
@@ -46,9 +48,24 @@ const providers: HarnessStatus[] = [
   },
 ];
 
+const refreshedProjects: ProjectConversationGroup[] = [{
+  ...projects[0],
+  conversations: [{ ...projects[0].conversations[0], title: 'Fix parser again' }],
+}];
+
+function summaryUpdated(): ConversationStreamEvent {
+  return {
+    loadId: '00000000-0000-4000-8000-000000000000',
+    seq: 1,
+    ref: projects[0].conversations[0].ref,
+    type: 'summary.updated',
+    summary: projects[0].conversations[0],
+  };
+}
+
 function installConversations(
   list: ConversationApi['list'],
-  onEvent = vi.fn<ConversationApi['onEvent']>()
+  onEvent = vi.fn<ConversationApi['onEvent']>(() => vi.fn())
 ) {
   Object.defineProperty(window, 'fractal', {
     configurable: true,
@@ -66,38 +83,81 @@ describe('useConversationHistory', () => {
   test('loads the project groups and provider statuses exposed by the native bridge', async () => {
     installConversations(vi.fn().mockResolvedValue({ projects, providers }));
 
-    const { result } = renderHook(() => useConversationHistory());
+    const { result, unmount } = renderHook(() => useConversationHistory());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.projects).toEqual(projects);
     expect(result.current.providers).toEqual(providers);
     expect(result.current.error).toBeNull();
+    unmount();
   });
 
-  test('refreshes on a summary update and retains prior history if that refresh fails', async () => {
+  test('unsubscribes and ignores a list completion after unmount', async () => {
+    let resolveList: ((value: History) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const onEvent = vi.fn<ConversationApi['onEvent']>(() => unsubscribe);
+    installConversations(vi.fn<ConversationApi['list']>(() => new Promise<History>((resolve) => { resolveList = resolve; })), onEvent);
+
+    const { result, unmount } = renderHook(() => useConversationHistory());
+    unmount();
+    if (!resolveList) throw new Error('List request did not start');
+    await act(async () => resolveList({ projects, providers }));
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(result.current.projects).toEqual([]);
+  });
+
+  test('ignores out-of-order successful and failed refreshes', async () => {
     let listener: ((event: ConversationStreamEvent) => void) | undefined;
-    const list = vi
-      .fn<ConversationApi['list']>()
-      .mockResolvedValueOnce({ projects, providers })
-      .mockRejectedValueOnce(new Error('Native history unavailable'));
+    let resolveInitial: ((value: History) => void) | undefined;
+    let rejectSecond: ((reason: Error) => void) | undefined;
+    const list = vi.fn<ConversationApi['list']>()
+      .mockImplementationOnce(() => new Promise<History>((resolve) => { resolveInitial = resolve; }))
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectSecond = reject; }))
+      .mockResolvedValueOnce({ projects: refreshedProjects, providers });
     installConversations(list, vi.fn((nextListener) => {
       listener = nextListener;
       return vi.fn();
     }));
 
-    const { result } = renderHook(() => useConversationHistory());
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    const { result, unmount } = renderHook(() => useConversationHistory());
+    act(() => listener?.(summaryUpdated()));
+    act(() => listener?.(summaryUpdated()));
+    await waitFor(() => expect(result.current.projects).toEqual(refreshedProjects));
 
-    act(() => listener?.({
-      loadId: '00000000-0000-4000-8000-000000000000',
-      seq: 1,
-      ref: projects[0].conversations[0].ref,
-      type: 'summary.updated',
-      summary: projects[0].conversations[0],
+    if (!resolveInitial || !rejectSecond) throw new Error('Refresh requests did not start');
+    await act(async () => resolveInitial({ projects, providers }));
+    await act(async () => rejectSecond(new Error('Stale failure')));
+
+    expect(result.current.projects).toEqual(refreshedProjects);
+    expect(result.current.error).toBeNull();
+    unmount();
+  });
+
+  test('retains the last successful groups through refresh failure and recovers loading and error state', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    const list = vi.fn<ConversationApi['list']>()
+      .mockResolvedValueOnce({ projects, providers })
+      .mockRejectedValueOnce(new Error('Native history unavailable'))
+      .mockResolvedValueOnce({ projects: refreshedProjects, providers });
+    installConversations(list, vi.fn((nextListener) => {
+      listener = nextListener;
+      return vi.fn();
     }));
+
+    const { result, unmount } = renderHook(() => useConversationHistory());
+    await waitFor(() => expect(result.current.projects).toEqual(projects));
+    act(() => listener?.(summaryUpdated()));
+    expect(result.current.loading).toBe(true);
 
     await waitFor(() => expect(result.current.error?.message).toBe('Native history unavailable'));
     expect(result.current.projects).toEqual(projects);
-    expect(list).toHaveBeenCalledTimes(2);
+
+    await act(async () => result.current.refresh());
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.projects).toEqual(refreshedProjects);
+    unmount();
   });
 });

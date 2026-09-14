@@ -91,11 +91,7 @@ export function ExecuteMode({
               ? previous
               : item.ref
           );
-          setSelectedItem((previous) =>
-            previous && conversationKey(previous.ref) === conversationKey(item.ref)
-              ? previous
-              : item
-          );
+          setSelectedItem(item);
         }}
         selected={selectedRef}
         style={{
