@@ -35,21 +35,27 @@ describe('WorkPacket', () => {
     expect(screen.queryByText('pnpm lint')).toBeNull();
   });
 
-  test('a packet keeps an explicit disclosure choice across status changes', async () => {
+  test('a packet keeps explicit open and closed disclosure choices across status changes', async () => {
     const user = userEvent.setup();
     const { rerender } = render(<WorkPacket packet={activePacket} />);
 
     await user.click(screen.getByRole('button', { name: '1 command: 1 running' }));
     expect(screen.queryByText('pnpm lint')).toBeNull();
 
-    rerender(<WorkPacket packet={completedPacket} />);
+    rerender(<WorkPacket packet={{ ...activePacket, actions: [{ ...command('running'), id: 'command-2' }] }} />);
     expect(screen.queryByText('pnpm lint')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: '1 command completed' }));
+    await user.click(screen.getByRole('button', { name: '1 command: 1 running' }));
     expect(screen.getByText('pnpm lint')).toBeTruthy();
 
-    rerender(<WorkPacket packet={activePacket} />);
+    rerender(<WorkPacket packet={completedPacket} />);
     expect(screen.getByText('pnpm lint')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: '1 command completed' }));
+    expect(screen.queryByText('pnpm lint')).toBeNull();
+
+    rerender(<WorkPacket packet={activePacket} />);
+    expect(screen.queryByText('pnpm lint')).toBeNull();
   });
 
   test('summarizes failed, denied, and interrupted activity exactly', () => {

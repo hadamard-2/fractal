@@ -78,7 +78,9 @@ export function AgentAction({ action }: { action: AgentActionData }) {
       <div className="flex items-start gap-2">
         <StatusIcon status={action.status} />
         <div className="min-w-0 flex-1">
-          <p className="break-words font-mono text-sm">{actionLabel(action)}</p>
+          {action.kind === 'command'
+            ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-sm">{action.command}</pre>
+            : <p className="break-words font-mono text-sm">{actionLabel(action)}</p>}
           <p className="text-xs text-muted-foreground">{actionState(action)}</p>
         </div>
       </div>

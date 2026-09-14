@@ -1,5 +1,5 @@
 import { Copy, MoreHorizontal, Square } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { ConversationRuntime, ConversationSummary, HarnessCapabilities } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRuntime, type ConversationSummary, type HarnessCapabilities } from '@/shared/conversation-contract';
 
 function projectName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -31,6 +31,8 @@ function copy(value: string): void {
   }
 }
 
+type InterruptAttempt = { conversationId: string; token: number };
+
 export function ConversationHeader({
   summary,
   capabilities,
@@ -42,19 +44,33 @@ export function ConversationHeader({
   runtime?: ConversationRuntime;
   onInterrupt?: () => void | Promise<void>;
 }) {
-  const [interrupting, setInterrupting] = useState(false);
+  const conversationId = conversationKey(summary.ref);
+  const [interruptAttempt, setInterruptAttempt] = useState<InterruptAttempt | null>(null);
+  const nextInterruptToken = useRef(0);
+  const previousNativeState = useRef({ conversationId, runtime });
   const canInterrupt = capabilities?.interrupt === true && runtime === 'active-in-fractal' && onInterrupt !== undefined;
   const readOnlyReason = composerReadOnlyReason(runtime);
+  const interrupting = interruptAttempt?.conversationId === conversationId;
 
-  useEffect(() => { setInterrupting(false); }, [runtime]);
+  useEffect(() => {
+    const previous = previousNativeState.current;
+    if (previous.conversationId === conversationId && previous.runtime !== runtime) {
+      setInterruptAttempt((current) => current?.conversationId === conversationId ? null : current);
+    }
+    previousNativeState.current = { conversationId, runtime };
+  }, [conversationId, runtime]);
 
   const interrupt = () => {
     if (!onInterrupt || interrupting) return;
-    setInterrupting(true);
+    const attempt = { conversationId, token: ++nextInterruptToken.current };
+    setInterruptAttempt(attempt);
+    const clearRejectedAttempt = () => {
+      setInterruptAttempt((current) => current?.conversationId === attempt.conversationId && current.token === attempt.token ? null : current);
+    };
     try {
-      void Promise.resolve(onInterrupt()).catch(() => { setInterrupting(false); });
+      void Promise.resolve(onInterrupt()).catch(clearRejectedAttempt);
     } catch {
-      setInterrupting(false);
+      clearRejectedAttempt();
     }
   };
 

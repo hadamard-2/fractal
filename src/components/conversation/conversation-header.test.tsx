@@ -18,20 +18,76 @@ const capabilities: HarnessCapabilities = {
   interrupt: true, steerWhileRunning: true, fork: false,
 };
 
+const summaryFor = (nativeSessionId: string): ConversationSummary => ({
+  ...summary,
+  ref: { ...summary.ref, nativeSessionId },
+});
+
 describe('ConversationHeader', () => {
-  test('contains rejected clipboard and interrupt calls, disabling only while interrupt is pending', async () => {
+  test('contains rejected clipboard promises', async () => {
     const user = userEvent.setup();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(() => Promise.reject(new Error('blocked'))) } });
-    let rejectInterrupt: ((reason?: unknown) => void) | undefined;
-    const onInterrupt = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectInterrupt = reject; }));
-    render(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summary} />);
+    render(<ConversationHeader capabilities={capabilities} onInterrupt={vi.fn()} summary={summary} />);
 
     await user.click(screen.getByRole('button', { name: 'Conversation details menu' }));
     await user.click(screen.getByRole('menuitem', { name: 'Copy session ID' }));
+  });
+
+  test('scopes pending interrupts to a native conversation and ignores stale rejection', async () => {
+    const user = userEvent.setup();
+    const rejects: Array<(reason?: unknown) => void> = [];
+    const onInterrupt = vi.fn(() => new Promise<void>((_resolve, reject) => { rejects.push(reject); }));
+    const { rerender } = render(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('A')} />);
+
     await user.click(screen.getByRole('button', { name: 'Interrupt session' }));
     expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(true);
 
-    rejectInterrupt?.(new Error('interruption refused'));
+    rerender(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('B')} />);
+    expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Interrupt session' }));
+    expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(true);
+
+    rejects[0](new Error('stale interruption refused'));
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(true);
+
+    rejects[1](new Error('current interruption refused'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(false));
+  });
+
+  test('keeps a successful current interrupt pending until runtime changes', async () => {
+    const user = userEvent.setup();
+    const settles: Array<{ resolve: () => void; reject: (reason?: unknown) => void }> = [];
+    const onInterrupt = vi.fn(() => new Promise<void>((resolve, reject) => { settles.push({ resolve, reject }); }));
+    const { rerender } = render(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('A')} />);
+
+    await user.click(screen.getByRole('button', { name: 'Interrupt session' }));
+    settles[0].resolve();
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(true);
+
+    rerender(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} runtime="idle" summary={summaryFor('A')} />);
+    expect(screen.queryByRole('button', { name: 'Interrupt session' })).toBeNull();
+    rerender(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('A')} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(false));
+  });
+
+  test('ignores stale same-conversation rejection after a runtime transition and newer attempt', async () => {
+    const user = userEvent.setup();
+    const settles: Array<{ reject: (reason?: unknown) => void }> = [];
+    const onInterrupt = vi.fn(() => new Promise<void>((_resolve, reject) => { settles.push({ reject }); }));
+    const { rerender } = render(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('A')} />);
+
+    await user.click(screen.getByRole('button', { name: 'Interrupt session' }));
+    rerender(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} runtime="idle" summary={summaryFor('A')} />);
+    rerender(<ConversationHeader capabilities={capabilities} onInterrupt={onInterrupt} summary={summaryFor('A')} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(false));
+    await user.click(screen.getByRole('button', { name: 'Interrupt session' }));
+
+    settles[0].reject(new Error('stale interruption refused'));
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(true);
+    settles[1].reject(new Error('current interruption refused'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Interrupt session' }).hasAttribute('disabled')).toBe(false));
   });
 
