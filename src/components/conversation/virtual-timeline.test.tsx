@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 280 : 560; });
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) { return Number.parseFloat((this.firstElementChild as HTMLElement)?.style.height ?? '0') || 560; });
-  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = Math.max(0, options.top ?? 0); queueMicrotask(() => this.dispatchEvent(new Event('scroll'))); } });
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = Math.min(Math.max(0, this.scrollHeight - this.clientHeight), Math.max(0, options.top ?? 0)); queueMicrotask(() => this.dispatchEvent(new Event('scroll'))); } });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -71,6 +71,20 @@ test('waits for a remembered turn to arrive in chunked history before restoring 
   rerender(<VirtualTimeline conversationId="chunk-restore" turns={history.slice(0, 2)} historyComplete={false} onResolve={() => undefined} />);
   rerender(<VirtualTimeline conversationId="chunk-restore" turns={history} historyComplete={true} onResolve={() => undefined} />);
   await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(840));
+});
+
+test('keeps restoration pending when a partial chunk contains the anchor but cannot reach its offset', async () => {
+  const history = turns(100);
+  const { rerender } = render(<VirtualTimeline conversationId="clamped-restore" turns={history} onResolve={() => undefined} />);
+  await screen.findByText('User anchor 99');
+  const viewport = screen.getByRole('log');
+  act(() => { viewport.scrollTop = 840; fireEvent.scroll(viewport); });
+  rerender(<VirtualTimeline conversationId="other-clamped-session" turns={history} onResolve={() => undefined} />);
+  rerender(<VirtualTimeline conversationId="clamped-restore" turns={history.slice(0, 4)} historyComplete={false} onResolve={() => undefined} />);
+  await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(560));
+  rerender(<VirtualTimeline conversationId="clamped-restore" turns={history} historyComplete={true} onResolve={() => undefined} />);
+  await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(840));
+  expect(screen.queryByRole('button', { name: 'New activity' })).toBeNull();
 });
 
 test('preserves a reader through measured resizes above and inside the anchor', async () => {

@@ -107,11 +107,23 @@ test('pins the highest-priority unresolved request and forwards decisions and in
   expect(screen.getByRole('region', { name: 'Question request' })).toBeTruthy();
 });
 
-test('keeps an open historical request visible even without a separate request-opened event', async () => {
+test('resolves an imported historical request into audit history without a separate request-opened event', async () => {
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = options.top ?? 0; } });
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 280 : 560; });
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(560);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
   install('waiting-for-user');
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
   act(() => emit({ ref, loadId, seq: seq++, type: 'history.chunk', chunkIndex: 0, turns: [{ id: 'turn', nativeId: 'turn', userMessage: { id: 'message', text: 'Run tests' }, blocks: [{ id: 'approval-block', kind: 'approval', request: { id: 'historical-approval', kind: 'approval', provider: 'codex', title: 'Run tests?', operation: 'pnpm test', status: 'open' } }], status: 'active', captureCompleteness: 'complete' }] }));
   expect(screen.getByRole('region', { name: 'Approval request' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
+  act(() => {
+    emit({ ref, loadId, seq: seq++, type: 'request.resolved', requestId: 'historical-approval', decision: { kind: 'allow-once' } });
+    emit({ ref, loadId, seq: seq++, type: 'runtime.changed', runtime: 'idle' });
+  });
+  expect(screen.queryByRole('region', { name: 'Approval request' })).toBeNull();
+  expect(await screen.findByRole('region', { name: 'Resolved approval request' })).toBeTruthy();
+  expect(screen.getByText('allow-once')).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
 });

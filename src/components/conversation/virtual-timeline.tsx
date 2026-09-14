@@ -82,10 +82,19 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
     const contentChanged = old !== null && old.turns !== turns;
     if (restoring.current) {
       const offset = restoreAnchor(saved?.anchor ?? null, virtualizer.measurementsCache);
-      if (offset === null && !historyComplete) return;
-      restoring.current = false;
-      if (offset !== null) viewport.current?.scrollTo({ top: offset, behavior: 'auto' });
+      const element = viewport.current;
+      if (!element) return;
+      // The saved turn can arrive before enough following history exists to
+      // put it at the viewport's top. Do not replace the saved anchor with a
+      // browser-clamped position while more chunks can still make it reachable.
+      const maximumOffset = Math.max(0, element.scrollHeight - element.clientHeight);
+      if (!historyComplete && (offset === null || offset > maximumOffset + 0.5)) return;
+      if (offset !== null) {
+        element.scrollTo({ top: offset, behavior: 'auto' });
+        if (!historyComplete && Math.abs(element.scrollTop - offset) > 0.5) return;
+      }
       else followBottom();
+      restoring.current = false;
     } else if (!old) {
       if (!saved?.anchor || restoreAnchor(saved.anchor, initialMeasurements) === null) followBottom();
     } else if (nextScrollAction({ distanceFromBottom: position.current.distanceFromBottom, appended: contentChanged, resizedAboveAnchor: old.size !== size || old.height !== height }) === 'follow-bottom') {

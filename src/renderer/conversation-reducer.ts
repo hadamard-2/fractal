@@ -126,13 +126,21 @@ function applyEvent(state: ConversationState, event: ConversationStreamEvent): C
       return { ...state, runtime: event.runtime, streamedRuntime: true };
     case 'request.opened':
       return { ...state, requests: upsertById(state.requests, event.request) };
-    case 'request.resolved':
+    case 'request.resolved': {
+      // Imported requests may exist only in turn blocks. Keep their native
+      // resolution in the same authoritative overlay as live requests, so
+      // later turn updates cannot resurrect their open controls.
+      const request = state.requests.find((item) => item.id === event.requestId)
+        ?? state.turns.flatMap((turn) => turn.blocks.flatMap((block) =>
+          block.kind === 'approval' || block.kind === 'question' ? [block.request] : []))
+          .find((item) => item.id === event.requestId);
       return {
         ...state,
-        requests: state.requests.map((request) => request.id === event.requestId
-          ? { ...request, status: 'resolved', decision: event.decision } as BlockingRequest
-          : request),
+        requests: request
+          ? upsertById(state.requests, { ...request, status: 'resolved', decision: event.decision })
+          : state.requests,
       };
+    }
     case 'summary.updated':
       return { ...state, summary: event.summary, runtime: event.summary.runtime, streamedRuntime: true, streamedSummary: true };
     case 'load.failed':
