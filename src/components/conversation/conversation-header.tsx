@@ -1,4 +1,5 @@
 import { Copy, MoreHorizontal, Square } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -22,8 +23,12 @@ export function composerReadOnlyReason(runtime: ConversationRuntime): string | n
   }
 }
 
-async function copy(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+function copy(value: string): void {
+  try {
+    void Promise.resolve(navigator.clipboard?.writeText(value)).catch((): void => undefined);
+  } catch {
+    // Clipboard access is optional; a rejected browser permission must stay local to this menu.
+  }
 }
 
 export function ConversationHeader({
@@ -37,8 +42,21 @@ export function ConversationHeader({
   runtime?: ConversationRuntime;
   onInterrupt?: () => void | Promise<void>;
 }) {
+  const [interrupting, setInterrupting] = useState(false);
   const canInterrupt = capabilities?.interrupt === true && runtime === 'active-in-fractal' && onInterrupt !== undefined;
   const readOnlyReason = composerReadOnlyReason(runtime);
+
+  useEffect(() => { setInterrupting(false); }, [runtime]);
+
+  const interrupt = () => {
+    if (!onInterrupt || interrupting) return;
+    setInterrupting(true);
+    try {
+      void Promise.resolve(onInterrupt()).catch(() => { setInterrupting(false); });
+    } catch {
+      setInterrupting(false);
+    }
+  };
 
   return (
     <header className="flex items-center gap-3 border-b px-4 py-2" aria-label="Conversation details">
@@ -48,12 +66,12 @@ export function ConversationHeader({
         <p className="text-xs text-muted-foreground">{summary.ref.provider} · {runtime.replaceAll('-', ' ')} · {summary.captureCompleteness} capture</p>
         {readOnlyReason !== null && <p className="mt-1 text-xs text-muted-foreground">{readOnlyReason}</p>}
       </div>
-      {canInterrupt && <Button aria-label="Interrupt session" onClick={() => { void onInterrupt(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>}
+      {canInterrupt && <Button aria-label="Interrupt session" disabled={interrupting} onClick={interrupt} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>}
       <DropdownMenu>
         <DropdownMenuTrigger asChild><Button aria-label="Conversation details menu" size="icon-sm" type="button" variant="ghost"><MoreHorizontal aria-hidden /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => { void copy(summary.ref.nativeSessionId); }}><Copy aria-hidden />Copy session ID</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => { void copy(summary.ref.projectPath); }}><Copy aria-hidden />Copy project path</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => copy(summary.ref.nativeSessionId)}><Copy aria-hidden />Copy session ID</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => copy(summary.ref.projectPath)}><Copy aria-hidden />Copy project path</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </header>
