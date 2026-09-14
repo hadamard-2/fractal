@@ -58,4 +58,17 @@ describe('main conversation lifecycle', () => {
     expect(state.register).not.toHaveBeenCalled(); expect(state.disposeService).not.toHaveBeenCalled();
     expect(state.disposeServer).toHaveBeenCalledTimes(1); expect(state.windows[0].loadFile).not.toHaveBeenCalled();
   });
+  test('shutdown aborts startup that cannot finish by itself and quits after exactly one cleanup', async () => {
+    const cancel = vi.fn();
+    state.start.mockImplementation((_spawn, signal?: AbortSignal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => { cancel(); reject(new Error('Codex App Server startup cancelled')); }, { once: true });
+    }));
+    await import('@/main'); state.app.emit('ready');
+    state.app.emit('before-quit', { preventDefault: vi.fn() });
+    state.app.emit('before-quit', { preventDefault: vi.fn() });
+    await vi.waitFor(() => expect(state.app.quit).toHaveBeenCalledTimes(1));
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(state.disposeIpc).toHaveBeenCalledTimes(1); expect(state.disposeServer).not.toHaveBeenCalled();
+    expect(state.register).not.toHaveBeenCalled(); expect(state.windows[0].loadFile).not.toHaveBeenCalled();
+  });
 });

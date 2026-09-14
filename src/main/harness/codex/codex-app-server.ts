@@ -32,6 +32,8 @@ export interface CodexAppServerStatus {
   message?: string;
 }
 
+const STARTUP_CANCELLED = 'Codex App Server startup cancelled';
+
 /** Owns one initialized Codex App Server process and its stdio protocol peer. */
 export class CodexAppServer {
   private peer: JsonRpcPeer | undefined;
@@ -44,10 +46,28 @@ export class CodexAppServer {
 
   private constructor(private readonly spawnProcess: () => CodexProcess) {}
 
-  static async start(spawnProcess: () => CodexProcess = spawnCodexProcess): Promise<CodexAppServer> {
+  static async start(spawnProcess: () => CodexProcess = spawnCodexProcess, signal?: AbortSignal): Promise<CodexAppServer> {
+    if (signal?.aborted) throw new Error(STARTUP_CANCELLED);
     const server = new CodexAppServer(spawnProcess);
-    await server.connect();
-    return server;
+    if (!signal) { await server.connect(); return server; }
+    let rejectCancelled!: (error: Error) => void;
+    const cancelled = new Promise<never>((_resolve, reject) => { rejectCancelled = reject; });
+    const abort = () => {
+      server.disposed = true;
+      try { server.stop(STARTUP_CANCELLED); }
+      catch { /* Cancellation never exposes a process-termination error. */ }
+      rejectCancelled(new Error(STARTUP_CANCELLED));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      // Closing the peer rejects initialize, but a held readiness write may
+      // never call back. Cancellation must also settle the public startup.
+      await Promise.race([server.connect(), cancelled]);
+      if (signal.aborted) throw new Error(STARTUP_CANCELLED);
+      return server;
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
   }
 
   request<M extends keyof CodexRequestMap>(method: M, params: CodexRequestMap[M]['params']): Promise<CodexRequestMap[M]['result']> {
@@ -98,8 +118,10 @@ export class CodexAppServer {
     if (this.disposed) return;
     try {
       const process = this.spawnProcess();
-      const peer = new JsonRpcPeer(process);
       this.process = process;
+      // A spawn implementation can trigger cancellation before returning.
+      if (this.disposed) { this.stop(STARTUP_CANCELLED); return; }
+      const peer = new JsonRpcPeer(process);
       this.peer = peer;
       peer.onClose((error) => this.markClosed(peer, error));
       peer.onNotification((notification) => {
@@ -132,7 +154,7 @@ export class CodexAppServer {
     this.peer = undefined;
     this.process = undefined;
     peer?.close(new Error(message));
-    if (process) process.kill();
+    if (process) terminateProcess(process);
     this.status = { availability: 'unavailable', message };
   }
 
@@ -140,9 +162,9 @@ export class CodexAppServer {
     if (this.peer !== peer) return;
     this.peer = undefined;
     const process = this.process;
+    this.process = undefined;
     const exited = error.message.startsWith('Codex App Server exited');
-    if (process && !exited) process.kill();
-    if (this.process === process) this.process = undefined;
+    if (process && !exited) terminateProcess(process);
     this.status = { availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) };
   }
 
@@ -170,6 +192,18 @@ export class CodexAppServer {
       }
     }
   }
+}
+
+function terminateProcess(process: CodexProcess): void {
+  // spawn errors can arrive after cancellation has detached the protocol
+  // peer. Retain a terminal error guard until error/exit finishes the child.
+  const release = () => {
+    process.removeListener('error', release);
+    process.removeListener('exit', release);
+  };
+  process.once('error', release);
+  process.once('exit', release);
+  try { process.kill(); } catch (error) { release(); throw error; }
 }
 
 function spawnCodexProcess(): CodexProcess {

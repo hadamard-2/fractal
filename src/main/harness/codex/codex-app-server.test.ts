@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, getEventListeners } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, test, vi } from 'vitest';
 import { CodexAppServer, type CodexProcess } from '@/main/harness/codex/codex-app-server';
@@ -78,6 +78,113 @@ function initialize(process: FakeCodexProcess): void {
 }
 
 describe('CodexAppServer', () => {
+  test('aborts an unanswered initialize promptly, terminates once, and removes the abort listener', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    controller.abort(new Error('private native details')); controller.abort();
+    expect(process.killCalls).toBe(1);
+    await rejected;
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    expect(process.stdout.listenerCount('data')).toBe(0);
+    expect(process.written).toHaveLength(1);
+  });
+
+  test('rejects an already-aborted start without spawning a child', async () => {
+    const process = new FakeCodexProcess(); const spawn = vi.fn(() => process);
+    const controller = new AbortController(); controller.abort('private reason');
+    const starting = CodexAppServer.start(spawn, controller.signal);
+    expect(spawn).not.toHaveBeenCalled();
+    await expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  test('aborts a held initialized write without waiting for its callback or killing twice', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    process.holdOneWrite(); initialize(process);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    expect(process.killCalls).toBe(1);
+    await rejected;
+    process.finishHeldWrite(new Error('EPIPE'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(process.killCalls).toBe(1);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    expect(process.stdin.listenerCount('error')).toBe(0);
+  });
+
+  test('a successful start relinquishes its abort listener and is disposed by its caller', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal); initialize(process);
+    const server = await starting;
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    controller.abort();
+    expect(server.status.availability).toBe('available'); expect(process.killCalls).toBe(0);
+    await server.dispose(); await server.dispose(); expect(process.killCalls).toBe(1);
+  });
+
+  test('abort wins before initialize completion is published', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    initialize(process); controller.abort();
+    await rejected;
+    expect(process.killCalls).toBe(1); expect(process.written).toHaveLength(1);
+  });
+
+  test('abort during spawning still terminates the returned child exactly once', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => { controller.abort(); return process; }, controller.signal);
+    await expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    expect(process.killCalls).toBe(1); expect(process.written).toHaveLength(0);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  test('abort racing a process error neither double-kills nor exposes native details', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    process.kill = () => { process.killCalls += 1; controller.abort(); return true; };
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    process.failProcess(new Error('private spawn path'));
+    await rejected;
+    expect(process.killCalls).toBe(1);
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
+
+  test('a late spawn error after abort is handled and releases terminal listeners', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    controller.abort();
+    await rejected;
+    expect(() => process.failProcess(new Error('spawn ENOENT'))).not.toThrow();
+    expect(process.killCalls).toBe(1);
+    expect(process.listenerCount('error')).toBe(0); expect(process.listenerCount('exit')).toBe(0);
+  });
+
+  test('a completed process failure releases the startup signal without another kill on later abort', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    process.failProcess(Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' }));
+    const server = await starting;
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: 'Codex executable is unavailable' });
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+    controller.abort(); await server.dispose();
+    expect(process.killCalls).toBe(1);
+  });
+
+  test('cancelled process exit releases its terminal guards without touching unrelated listeners', async () => {
+    const process = new FakeCodexProcess(); const controller = new AbortController();
+    const unrelated = vi.fn(); process.on('exit', unrelated);
+    const starting = CodexAppServer.start(() => process, controller.signal);
+    const rejected = expect(starting).rejects.toThrow(/^Codex App Server startup cancelled$/);
+    controller.abort(); await rejected; process.exit(0);
+    expect(process.listeners('exit')).toEqual([unrelated]);
+    expect(process.listenerCount('error')).toBe(0); expect(process.killCalls).toBe(1);
+  });
+
   test('initializes before notifying readiness and forwards typed traffic', async () => {
     const process = new FakeCodexProcess();
     const starting = CodexAppServer.start(() => process);

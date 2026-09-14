@@ -127,6 +127,7 @@ let mainWindowRef: BrowserWindow | null = null;
 let conversationService: ConversationService | undefined;
 let codexServer: CodexAppServer | undefined;
 let conversationStartup: Promise<void> = Promise.resolve();
+const conversationStartupController = new AbortController();
 let quitting = false;
 let shutdown: Promise<void> | undefined;
 
@@ -202,7 +203,7 @@ app.on('ready', () => {
   registerSettingsIpc();
   const window = createWindow();
   conversationStartup = (async () => {
-    codexServer = await CodexAppServer.start();
+    codexServer = await CodexAppServer.start(undefined, conversationStartupController.signal);
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const registry = new ConversationRegistry([
@@ -214,7 +215,7 @@ app.on('ready', () => {
     loadWindow(window);
   })();
   // Startup failures never forward native exception details into the renderer.
-  void conversationStartup.catch(() => app.quit());
+  void conversationStartup.catch(() => { if (!shutdown) app.quit(); });
 });
 
 app.on('before-quit', (event) => {
@@ -222,6 +223,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (shutdown) return;
   shutdown = (async () => {
+    conversationStartupController.abort();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();
