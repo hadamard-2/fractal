@@ -136,7 +136,7 @@ function applyEvent(state: ConversationState, event: ConversationStreamEvent): C
     case 'summary.updated':
       return { ...state, summary: event.summary, runtime: event.summary.runtime, streamedRuntime: true, streamedSummary: true };
     case 'load.failed':
-      return { ...state, history: 'failed', runtime: 'failed', error: event.message };
+      return { ...state, history: 'failed', runtime: 'failed', error: event.message, streamedRuntime: true };
   }
 }
 

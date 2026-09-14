@@ -75,6 +75,14 @@ describe('conversationReducer', () => {
     expect(state).toMatchObject({ summary: streamedSummary, runtime: 'unknown', sync: 'gap', capabilities });
   });
 
+  test('keeps an ordered load failure terminal when open resolves late', () => {
+    let state = loadedState();
+    state = conversationReducer(state, event(0, { type: 'load.failed', message: 'Native load failed' }));
+    state = conversationReducer(state, { type: 'open.succeeded', ref, loadId, summary: openSummary, capabilities });
+
+    expect(state).toMatchObject({ history: 'failed', runtime: 'failed', error: 'Native load failed', capabilities });
+  });
+
   test('treats turn.upserted as a complete replacement at the existing turn position', () => {
     const before = { ...proseTurn('before'), id: 'before' };
     const target = proseTurn('old');

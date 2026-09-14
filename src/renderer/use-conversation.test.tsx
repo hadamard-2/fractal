@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { type ReactNode, StrictMode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { useConversation } from '@/renderer/use-conversation';
@@ -158,22 +157,21 @@ describe('useConversation', () => {
     unmount();
   });
 
-  test('does not reopen equivalent refs and cleans subscriptions and loads under StrictMode', async () => {
+  test('replays setup and cleanup under Testing Library StrictMode without reopening equivalent refs', async () => {
     const unsubscribe = vi.fn();
     const onEvent = vi.fn<ConversationApi['onEvent']>(() => unsubscribe);
     const open = vi.fn<ConversationApi['open']>().mockResolvedValue({ summary, capabilities });
     const close = vi.fn<ConversationApi['close']>().mockResolvedValue();
     install({ onEvent, open, close });
-    const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
-    const { rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref }, wrapper });
-    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    const { rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref }, reactStrictMode: true });
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
     rerender({ selected: { ...ref } });
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(onEvent).toHaveBeenCalledTimes(1);
-    expect(unsubscribe).toHaveBeenCalledTimes(0);
-    unmount();
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(onEvent).toHaveBeenCalledTimes(2);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(2);
   });
 
   test('makes callbacks inert across a same-ref reload, null selection, and unmount', async () => {
@@ -207,5 +205,73 @@ describe('useConversation', () => {
     expect(interrupt).not.toHaveBeenCalled();
     expect(resolveRequest).not.toHaveBeenCalled();
     resolveClose?.();
+  });
+
+  test('suppresses deferred action rejections after ref change, reload, null selection, and unmount', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    const deferred: Array<{ reject: (cause: Error) => void }> = [];
+    const pending = () => new Promise<void>((_resolve, reject) => { deferred.push({ reject }); });
+    const continueConversation = vi.fn<ConversationApi['continue']>(pending);
+    const interrupt = vi.fn<ConversationApi['interrupt']>(pending);
+    const resolveRequest = vi.fn<ConversationApi['resolveRequest']>(pending);
+    install({ onEvent: vi.fn((next) => { listener = next; return vi.fn(); }), open: vi.fn().mockResolvedValue({ summary, capabilities }), close: vi.fn(), continue: continueConversation, interrupt, resolveRequest });
+    const { result, rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref } });
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
+    const firstLoadId = result.current.state.loadId;
+    if (!firstLoadId) throw new Error('Conversation did not open');
+    act(() => listener?.(stream(firstLoadId, 0, { type: 'history.complete' })));
+
+    const afterRefChange = result.current.send('first');
+    rerender({ selected: otherRef });
+    const refChangeOutcome = expect(afterRefChange).resolves.toBeUndefined();
+    deferred.shift()?.reject(new Error('stale ref'));
+    await refChangeOutcome;
+
+    const afterReload = result.current.interrupt();
+    act(() => result.current.reload());
+    const reloadOutcome = expect(afterReload).resolves.toBeUndefined();
+    deferred.shift()?.reject(new Error('stale reload'));
+    await reloadOutcome;
+
+    const afterNull = result.current.resolveRequest('request-1', { kind: 'allow-once' });
+    rerender({ selected: null });
+    const nullOutcome = expect(afterNull).resolves.toBeUndefined();
+    deferred.shift()?.reject(new Error('stale null'));
+    await nullOutcome;
+
+    rerender({ selected: ref });
+    await waitFor(() => expect(result.current.state.ref).toEqual(ref));
+    const afterUnmount = result.current.interrupt();
+    const unmountOutcome = expect(afterUnmount).resolves.toBeUndefined();
+    unmount();
+    deferred.shift()?.reject(new Error('stale unmount'));
+    await unmountOutcome;
+  });
+
+  test('keeps the replacement load usable after an earlier close settles late', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    let resolveFirstClose: (() => void) | undefined;
+    const close = vi.fn<ConversationApi['close']>(() => new Promise<void>((resolve) => { resolveFirstClose ??= resolve; }));
+    const continueConversation = vi.fn<ConversationApi['continue']>().mockResolvedValue();
+    const open = vi.fn<ConversationApi['open']>().mockResolvedValue({ summary, capabilities });
+    install({ onEvent: vi.fn((next) => { listener = next; return vi.fn(); }), open, close, continue: continueConversation, interrupt: vi.fn(), resolveRequest: vi.fn() });
+    const { result, unmount } = renderHook(() => useConversation(ref));
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
+    const firstLoadId = result.current.state.loadId;
+    if (!firstLoadId) throw new Error('Conversation did not open');
+    act(() => listener?.(stream(firstLoadId, 0, { type: 'history.complete' })));
+    act(() => result.current.reload());
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    const replacementLoadId = result.current.state.loadId;
+    if (!replacementLoadId) throw new Error('Replacement did not open');
+    act(() => listener?.(stream(replacementLoadId, 0, { type: 'history.complete' })));
+    await act(async () => { await result.current.send('before late close'); });
+    await act(async () => resolveFirstClose?.());
+    act(() => listener?.(stream(replacementLoadId, 1, { type: 'runtime.changed', runtime: 'active-in-fractal' })));
+    await act(async () => { await result.current.send('after late close'); });
+
+    expect(result.current.state).toMatchObject({ loadId: replacementLoadId, runtime: 'active-in-fractal' });
+    expect(continueConversation).toHaveBeenCalledTimes(2);
+    unmount();
   });
 });

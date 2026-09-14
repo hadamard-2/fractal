@@ -77,43 +77,52 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
     && state.sync === 'current'
     && (state.runtime === 'idle' || (state.runtime === 'active-in-fractal' && state.capabilities?.steerWhileRunning === true));
 
-  const isActiveCallback = useCallback((expectedRef: ConversationRef | null, expectedLoadId: string | null): boolean => {
+  const currentActiveLoad = useCallback((expectedRef: ConversationRef | null, expectedLoadId: string | null): ActiveLoad | null => {
     const active = activeLoad.current;
-    return expectedRef !== null
+    if (!(expectedRef !== null
       && expectedLoadId !== null
       && active !== null
       && active.token === generation.current
       && active.loadId === expectedLoadId
       && active.ref.provider === expectedRef.provider
       && active.ref.nativeSessionId === expectedRef.nativeSessionId
-      && active.ref.projectPath === expectedRef.projectPath;
+      && active.ref.projectPath === expectedRef.projectPath)) return null;
+    return active;
   }, []);
 
-  const send = useCallback((text: string): Promise<void> | undefined => {
-    if (!canSend || !isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
+  const containActionSettlement = useCallback((promise: Promise<void>, active: ActiveLoad): Promise<void | undefined> =>
+    promise.then(undefined, (cause: unknown) => {
+      if (activeLoad.current === active && generation.current === active.token) throw cause;
+    }), []);
+
+  const send = useCallback((text: string): Promise<void | undefined> | undefined => {
+    const active = currentActiveLoad(state.ref, state.loadId);
+    if (!canSend || !active || !state.ref) return undefined;
     try {
       const prompt = parsePromptInput({ text });
-      return window.fractal.conversations.continue(state.ref, prompt);
+      return containActionSettlement(window.fractal.conversations.continue(state.ref, prompt), active);
     } catch {
       // The bridge never sees malformed renderer input.
       return undefined;
     }
-  }, [canSend, isActiveCallback, state.loadId, state.ref]);
+  }, [canSend, containActionSettlement, currentActiveLoad, state.loadId, state.ref]);
 
-  const interrupt = useCallback((): Promise<void> | undefined => {
-    if (!isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
-    return window.fractal.conversations.interrupt(state.ref);
-  }, [isActiveCallback, state.loadId, state.ref]);
+  const interrupt = useCallback((): Promise<void | undefined> | undefined => {
+    const active = currentActiveLoad(state.ref, state.loadId);
+    if (!active || !state.ref) return undefined;
+    return containActionSettlement(window.fractal.conversations.interrupt(state.ref), active);
+  }, [containActionSettlement, currentActiveLoad, state.loadId, state.ref]);
 
-  const resolveRequest = useCallback((requestId: string, decision: UserDecision): Promise<void> | undefined => {
-    if (!isActiveCallback(state.ref, state.loadId) || !state.ref) return undefined;
+  const resolveRequest = useCallback((requestId: string, decision: UserDecision): Promise<void | undefined> | undefined => {
+    const active = currentActiveLoad(state.ref, state.loadId);
+    if (!active || !state.ref) return undefined;
     try {
-      return window.fractal.conversations.resolveRequest(requestId, parseUserDecision(decision));
+      return containActionSettlement(window.fractal.conversations.resolveRequest(requestId, parseUserDecision(decision)), active);
     } catch {
       // The bridge never sees malformed renderer input.
       return undefined;
     }
-  }, [isActiveCallback, state.loadId, state.ref]);
+  }, [containActionSettlement, currentActiveLoad, state.loadId, state.ref]);
 
   const reload = useCallback(() => {
     if (state.ref) setReloadEpoch((epoch) => epoch + 1);
