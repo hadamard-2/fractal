@@ -19,83 +19,10 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
-import type { NavSelection, Route } from '@/components/sidebar-03/nav-main';
-import DashboardNavigation from '@/components/sidebar-03/nav-main';
-
-const dashboardRoutes: Route[] = [
-  {
-    id: 'web-dashboard',
-    title: 'Web Dashboard',
-    link: '#',
-    subs: [
-      {
-        title: 'Layout refactor',
-        link: '#',
-      },
-      {
-        title: 'Dark mode rollout',
-        link: '#',
-      },
-      {
-        title: 'Performance audit',
-        link: '#',
-      },
-    ],
-  },
-  {
-    id: 'mobile-app',
-    title: 'Mobile App',
-    link: '#',
-    subs: [
-      {
-        title: 'Offline sync',
-        link: '#',
-      },
-      {
-        title: 'Push notifications',
-        link: '#',
-      },
-    ],
-  },
-  {
-    id: 'api-gateway',
-    title: 'API Gateway',
-    link: '#',
-    subs: [
-      {
-        title: 'Rate limiting',
-        link: '#',
-      },
-      {
-        title: 'Auth migration',
-        link: '#',
-      },
-      {
-        title: 'v2 endpoints',
-        link: '#',
-      },
-    ],
-  },
-  {
-    id: 'docs-site',
-    title: 'Docs Site',
-    link: '#',
-    subs: [
-      { title: 'Getting-started rewrite', link: '#' },
-      { title: 'Search indexing', link: '#' },
-    ],
-  },
-  {
-    id: 'infra',
-    title: 'Infra',
-    link: '#',
-    subs: [
-      { title: 'K8s migration', link: '#' },
-      { title: 'Cost review', link: '#' },
-      { title: 'On-call handoff', link: '#' },
-    ],
-  },
-];
+import type { NavSelection } from '@/components/sidebar-03/nav-main';
+import NavMain from '@/components/sidebar-03/nav-main';
+import { useConversationHistory } from '@/renderer/use-conversation-history';
+import type { ConversationRef } from '@/shared/conversation-contract';
 
 /*
  * Widths for the drag-to-resize handle, in px. The sidebar's own geometry is
@@ -130,7 +57,7 @@ function SidebarResizeHandle({
   onResizingChange,
 }: {
   width?: number | null;
-  onWidthChange?: (width: number) => void;
+  onWidthChange?: (width: number | null) => void;
   onCollapse?: () => void;
   onResizingChange?: (resizing: boolean) => void;
 }) {
@@ -215,7 +142,7 @@ function SidebarResizeHandle({
 
 export function DashboardSidebar({
   onOpenSettings,
-  selectedId,
+  selected,
   onItemSelect,
   onNewChat,
   width,
@@ -230,7 +157,7 @@ export function DashboardSidebar({
   onOpenSettings: () => void;
   // Which nav item is currently picked, owned by ExecuteMode so the header
   // can show its title.
-  selectedId?: string;
+  selected?: ConversationRef | null;
   // Not named `onSelect`: that would collide with the native DOM prop the
   // `...props` spread hands to <Sidebar>.
   onItemSelect?: (item: NavSelection) => void;
@@ -245,6 +172,7 @@ export function DashboardSidebar({
   onCollapse?: () => void;
 }) {
   const { state } = useSidebar();
+  const { projects, error } = useConversationHistory();
   const isCollapsed = state === 'collapsed';
 
   return (
@@ -341,11 +269,16 @@ export function DashboardSidebar({
         <SidebarGroup className="px-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
           <SidebarGroupContent>
-            <DashboardNavigation
+            <NavMain
               onSelect={onItemSelect}
-              routes={dashboardRoutes}
-              selectedId={selectedId}
+              groups={projects}
+              selected={selected ?? null}
             />
+            {error && projects.length === 0 && (
+              <p className="px-2 py-1 text-muted-foreground text-xs">
+                Could not load conversation history.
+              </p>
+            )}
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

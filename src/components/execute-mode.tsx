@@ -3,6 +3,7 @@ import { Blocks } from 'lucide-react';
 import { ConversationPanel } from '@/components/conversation-panel';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
 import type { NavSelection } from '@/components/sidebar-03/nav-main';
+import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -47,6 +48,7 @@ export function ExecuteMode({
   onOpenSettings: () => void;
 }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
   // Selection lives here, not in the sidebar: the header below shows the
   // picked item's title, and only this component renders both.
   const [selectedItem, setSelectedItem] = useState<NavSelection | null>(null);
@@ -79,12 +81,23 @@ export function ExecuteMode({
     >
       <DashboardSidebar
         onCollapse={() => onSidebarOpenChange?.(false)}
-        onItemSelect={setSelectedItem}
         onNewChat={startNewChat}
         onOpenSettings={onOpenSettings}
         onResizingChange={setResizing}
         onWidthChange={onSidebarWidthChange}
-        selectedId={selectedItem?.id}
+        onItemSelect={(item) => {
+          setSelectedRef((previous) =>
+            previous && conversationKey(previous) === conversationKey(item.ref)
+              ? previous
+              : item.ref
+          );
+          setSelectedItem((previous) =>
+            previous && conversationKey(previous.ref) === conversationKey(item.ref)
+              ? previous
+              : item
+          );
+        }}
+        selected={selectedRef}
         style={{
           top: 'var(--titlebar-height)',
           height: 'calc(100svh - var(--titlebar-height))',

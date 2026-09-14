@@ -1,16 +1,15 @@
 'use client';
 
-import { EllipsisVertical, Folder, FolderOpen } from 'lucide-react';
-import type React from 'react';
-import { useState } from 'react';
+import { CircleAlert, CircleHelp, CirclePause, Folder, FolderOpen, Radio } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { Input } from '@/components/ui/input';
 import {
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -18,181 +17,133 @@ import {
   SidebarMenuItem as SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { cn } from '@/lib/utils';
-
-export type Route = {
-  id: string;
-  title: string;
-  icon?: React.ReactNode;
-  link: string;
-  subs?: {
-    title: string;
-    link: string;
-    icon?: React.ReactNode;
-  }[];
-};
+import { conversationKey, type ConversationRef, type ConversationRuntime, type ProjectConversationGroup } from '@/shared/conversation-contract';
 
 export type NavSelection = {
-  id: string;
+  ref: ConversationRef;
   title: string;
-  // Title of the project this item lives under; standalone leaves have
-  // none. Feeds the header breadcrumb's ancestor segment.
-  section?: string;
+  section: string;
 };
 
-export default function DashboardNavigation({
-  routes,
-  selectedId,
+const providerName = (provider: ConversationRef['provider']) =>
+  provider === 'claude' ? 'Claude Code' : 'Codex';
+
+function RuntimeMark({ runtime }: { runtime: ConversationRuntime }) {
+  if (runtime === 'active-externally') {
+    return <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><Radio aria-hidden className="size-3" />Working elsewhere</span>;
+  }
+  if (runtime === 'waiting-for-user') {
+    return <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><CirclePause aria-hidden className="size-3" />Waiting for you</span>;
+  }
+  if (runtime === 'unknown') {
+    return <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><CircleHelp aria-hidden className="size-3" />Status unknown</span>;
+  }
+  if (runtime === 'failed') {
+    return <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-destructive"><CircleAlert aria-hidden className="size-3" />Failed</span>;
+  }
+  return null;
+}
+
+export default function NavMain({
+  groups,
+  selected,
   onSelect,
 }: {
-  routes: Route[];
-  selectedId?: string;
-  onSelect?: (item: NavSelection) => void;
+  groups: ProjectConversationGroup[];
+  selected: ConversationRef | null;
+  onSelect: (item: NavSelection) => void;
 }) {
   const { state } = useSidebar();
+  const [query, setQuery] = useState('');
+  const [openProjects, setOpenProjects] = useState<Set<string>>(() => new Set());
   const isCollapsed = state === 'collapsed';
-  // A Set, not a single id: sections are independent, so any number of them
-  // can be expanded at once.
-  const [openSectionIds, setOpenSectionIds] = useState<Set<string>>(
-    () => new Set()
-  );
+  const normalizedQuery = query.trim().toLowerCase();
+
+  useEffect(() => {
+    setOpenProjects((open) => {
+      const next = new Set(open);
+      for (const group of groups) next.add(group.projectPath);
+      return next;
+    });
+  }, [groups]);
+
+  const filteredGroups = useMemo(() => groups.flatMap((group) => {
+    const projectMatches = [group.displayName, group.projectPath]
+      .some((value) => value.toLowerCase().includes(normalizedQuery));
+    const conversations = projectMatches
+      ? group.conversations
+      : group.conversations.filter((conversation) => [
+        conversation.title,
+        providerName(conversation.ref.provider),
+        conversation.ref.nativeSessionId,
+      ].some((value) => value.toLowerCase().includes(normalizedQuery)));
+    return conversations.length ? [{ ...group, conversations }] : [];
+  }), [groups, normalizedQuery]);
+
+  if (isCollapsed) return null;
 
   return (
     <SidebarMenu>
-      {routes.map((route) => {
-        // The rail carries no per-project UI by design ("the icon-only strip
-        // carries no per-item icons"). Rendering the buttons anyway left
-        // empty, invisible squares that still lit up on hover.
-        if (isCollapsed) return null;
-
-        const isOpen = openSectionIds.has(route.id);
-        const hasSubRoutes = !!route.subs?.length;
+      <SidebarMenuItem>
+        <Input
+          aria-label="Search conversations"
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search conversations"
+          type="search"
+          value={query}
+        />
+      </SidebarMenuItem>
+      {filteredGroups.map((group) => {
+        const isOpen = normalizedQuery.length > 0 || openProjects.has(group.projectPath);
+        const isSelectedProject = selected?.projectPath === group.projectPath;
 
         return (
-          <SidebarMenuItem key={route.id}>
-            {hasSubRoutes ? (
-              <>
-                <Collapsible
-                  className="w-full"
-                  onOpenChange={(open) =>
-                    setOpenSectionIds((prev) => {
-                      const next = new Set(prev);
-                      if (open) {
-                        next.add(route.id);
-                      } else {
-                        next.delete(route.id);
-                      }
-                      return next;
-                    })
-                  }
-                  open={isOpen}
-                >
-                  {/*
-                    Adapted from the upstream block: it targets Base UI
-                    (`render={...}` + next/link); these primitives are Radix,
-                    so triggers compose with `asChild` and links are plain
-                    anchors.
-                  */}
-                  {/* No isActive here on purpose: projects are pure folders
-                      — clicking expands/collapses, and only chats carry the
-                      selected look. Expansion itself adds no colour. */}
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton className="flex w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
-                      {/*
-                        Folder idiom: closed section = closed folder, expanded
-                        section = open one. The rail renders no items at all,
-                        so no collapsed handling is needed here.
-                      */}
-                      {isOpen ? (
-                        <FolderOpen className="size-4" />
-                      ) : (
-                        <Folder className="size-4" />
-                      )}
-                      <span className="ml-2 flex-1 truncate font-normal text-sm">
-                        {route.title}
-                      </span>
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
-
-                  <CollapsibleContent>
-                    <SidebarMenuSub className="my-1 ml-3.5">
-                      {route.subs?.map((subRoute) => {
-                        // Same composite the item is keyed by: subs carry no
-                        // id of their own.
-                        const subId = `${route.id}-${subRoute.title}`;
-                        return (
-                          <SidebarMenuSubItem className="h-auto" key={subId}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={selectedId === subId}
-                            >
-                              <a
-                                className="flex items-center rounded-md px-4 py-1.5 font-normal text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-foreground"
-                                href={subRoute.link}
-                                onClick={() =>
-                                  onSelect?.({
-                                    id: subId,
-                                    title: subRoute.title,
-                                    section: route.title,
-                                  })
-                                }
-                              >
-                                {/*
-                                  Span, not bare text: the sub-button
-                                  primitive truncates its last span child,
-                                  which is what gives long names their
-                                  ellipsis.
-                                */}
-                                <span>{subRoute.title}</span>
-                              </a>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        );
-                      })}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                </Collapsible>
-                {/*
-                  Row-level actions chip. A sibling of the trigger rather than
-                  a child — a button inside the trigger button would be
-                  invalid HTML and Radix Slot would mangle it.
-                */}
-                <SidebarMenuAction
-                  aria-label={`Options for ${route.title}`}
-                  // Matches the row's own muted tone; the primitive's
-                  // default foreground reads a step too dark next to it.
-                  className="text-muted-foreground"
-                  onClick={(event) => {
-                    // Placeholder for the project menu; nothing to open yet.
-                    event.stopPropagation();
-                  }}
-                >
-                  <EllipsisVertical />
-                </SidebarMenuAction>
-              </>
-            ) : (
-              <SidebarMenuButton
-                asChild
-                className={cn(
-                  'flex items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground',
-                  isCollapsed && 'justify-center'
-                )}
-                isActive={selectedId === route.id}
-                onClick={() =>
-                  onSelect?.({ id: route.id, title: route.title })
-                }
-                tooltip={route.title}
-              >
-                <a href={route.link}>
-                  {route.icon}
-                  {!isCollapsed && (
-                    <span className="ml-2 truncate font-normal text-sm">
-                      {route.title}
-                    </span>
-                  )}
-                </a>
-              </SidebarMenuButton>
-            )}
+          <SidebarMenuItem data-testid="project-group" key={group.projectPath}>
+            <Collapsible
+              className="w-full"
+              onOpenChange={(open) => setOpenProjects((previous) => {
+                const next = new Set(previous);
+                if (open) next.add(group.projectPath);
+                else next.delete(group.projectPath);
+                return next;
+              })}
+              open={isOpen}
+            >
+              <CollapsibleTrigger asChild>
+                <SidebarMenuButton isActive={isSelectedProject} type="button">
+                  {isOpen ? <FolderOpen /> : <Folder />}
+                  <span>{group.displayName}</span>
+                </SidebarMenuButton>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <SidebarMenuSub className="my-1 ml-3.5">
+                  {group.conversations.map((conversation) => {
+                    const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
+                    return (
+                      <SidebarMenuSubItem className="h-auto" key={conversationKey(conversation.ref)}>
+                        <SidebarMenuSubButton asChild isActive={isSelected}>
+                          <button
+                            className="flex w-full items-center rounded-md px-4 py-1.5 text-left font-normal text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-foreground"
+                            onClick={() => onSelect({
+                              ref: conversation.ref,
+                              title: conversation.title,
+                              section: group.displayName,
+                            })}
+                            type="button"
+                          >
+                            <span aria-label={`${providerName(conversation.ref.provider)} conversation`} className="mr-2 shrink-0 text-xs" role="img">
+                              {conversation.ref.provider === 'claude' ? 'CC' : 'CX'}
+                            </span>
+                            <span className="min-w-0 truncate">{conversation.title}</span>
+                            <RuntimeMark runtime={conversation.runtime} />
+                          </button>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })}
+                </SidebarMenuSub>
+              </CollapsibleContent>
+            </Collapsible>
           </SidebarMenuItem>
         );
       })}
