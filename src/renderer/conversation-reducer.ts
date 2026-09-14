@@ -1,98 +1,170 @@
-import { isWorkPart, type AgentEvent, type Conversation, type Entry, type Part } from '@/shared/agent-contract';
+import type {
+  BlockingRequest,
+  ConversationRef,
+  ConversationRuntime,
+  ConversationStreamEvent,
+  ConversationSummary,
+  ConversationTurn,
+  HarnessCapabilities,
+  TurnBlock,
+} from '@/shared/conversation-contract';
 
 export interface ConversationState {
-  conversation: Conversation | null;
-  entries: Entry[];
-  seq: number;
-  // Distinguishes "seq 0 because we have a real baseline of 0" (a freshly
-  // created conversation with no events emitted yet) from "seq 0 because we
-  // have no baseline at all" (a bare initialState() before any snapshot or
-  // event arrived). A plain `seq: number` conflates the two, which turns
-  // gap detection off for good the moment a new conversation seeds at seq 0.
-  baselineKnown: boolean;
-  missedEvents: boolean;
-  // Set by the hook when the snapshot fetch itself fails (as opposed to a
-  // dropped event mid-stream, which is `missedEvents`). Not touched by
-  // `reduce` — it rides along on the spread in `base` like any other field.
-  snapshotError: string | null;
+  ref: ConversationRef | null;
+  loadId: string | null;
+  lastSeq: number;
+  turns: ConversationTurn[];
+  summary: ConversationSummary | null;
+  capabilities: HarnessCapabilities | null;
+  runtime: ConversationRuntime;
+  requests: BlockingRequest[];
+  history: 'idle' | 'loading' | 'complete' | 'failed';
+  sync: 'current' | 'gap';
+  error: string | null;
 }
 
-export function initialState(snapshot?: {
-  conversation: Conversation;
-  entries: Entry[];
-  seq: number;
-}): ConversationState {
-  return {
-    conversation: snapshot?.conversation ?? null,
-    entries: snapshot?.entries ?? [],
-    seq: snapshot?.seq ?? 0,
-    baselineKnown: snapshot !== undefined,
-    missedEvents: false,
-    snapshotError: null,
-  };
+export const initialConversationState: ConversationState = {
+  ref: null,
+  loadId: null,
+  // The service numbers its first event 0, so -1 makes that event contiguous.
+  lastSeq: -1,
+  turns: [],
+  summary: null,
+  capabilities: null,
+  runtime: 'unknown',
+  requests: [],
+  history: 'idle',
+  sync: 'current',
+  error: null,
+};
+
+type LocalAction =
+  | { type: 'opened'; ref: ConversationRef; loadId: string }
+  | { type: 'reset' }
+  | { type: 'open.succeeded'; ref: ConversationRef; loadId: string; summary: ConversationSummary; capabilities: HarnessCapabilities }
+  | { type: 'open.failed'; ref: ConversationRef; loadId: string; message: string };
+
+export type ConversationAction = ConversationStreamEvent | LocalAction;
+
+function sameRef(left: ConversationRef, right: ConversationRef): boolean {
+  return left.provider === right.provider
+    && left.nativeSessionId === right.nativeSessionId
+    && left.projectPath === right.projectPath;
 }
 
-function mapEntry(entries: Entry[], id: string, fn: (e: Entry) => Entry): Entry[] {
-  return entries.map((e) => (e.id === id ? fn(e) : e));
+function freshState(ref: ConversationRef, loadId: string): ConversationState {
+  return { ...initialConversationState, ref, loadId, turns: [], requests: [], history: 'loading' };
 }
 
-function mapPart(entry: Entry, partId: string, fn: (p: Part) => Part): Entry {
-  return { ...entry, parts: entry.parts.map((p) => (p.id === partId ? fn(p) : p)) };
+function upsertById<T extends { id: string }>(items: T[], incoming: T): T[] {
+  const index = items.findIndex((item) => item.id === incoming.id);
+  if (index < 0) return [...items, incoming];
+  const next = [...items];
+  next[index] = incoming;
+  return next;
 }
 
-export function reduce(state: ConversationState, event: AgentEvent): ConversationState {
-  const gap = state.baselineKnown && event.seq !== state.seq + 1;
-  const base = { ...state, seq: event.seq, baselineKnown: true, missedEvents: state.missedEvents || gap };
+function mergeTurn(current: ConversationTurn, incoming: ConversationTurn): ConversationTurn {
+  return { ...current, ...incoming, blocks: incoming.blocks.reduce(upsertById, current.blocks) };
+}
 
+function upsertTurns(turns: ConversationTurn[], incoming: ConversationTurn[]): ConversationTurn[] {
+  return incoming.reduce((current, turn) => {
+    const index = current.findIndex((item) => item.id === turn.id);
+    if (index < 0) return [...current, turn];
+    const next = [...current];
+    next[index] = mergeTurn(current[index], turn);
+    return next;
+  }, turns);
+}
+
+function updateTurn(turns: ConversationTurn[], turnId: string, update: (turn: ConversationTurn) => ConversationTurn): ConversationTurn[] {
+  const index = turns.findIndex((turn) => turn.id === turnId);
+  if (index < 0) return turns;
+  const next = [...turns];
+  next[index] = update(turns[index]);
+  return next;
+}
+
+function updateBlock(blocks: TurnBlock[], blockId: string, update: (block: TurnBlock) => TurnBlock): TurnBlock[] {
+  const index = blocks.findIndex((block) => block.id === blockId);
+  if (index < 0) return blocks;
+  const next = [...blocks];
+  next[index] = update(blocks[index]);
+  return next;
+}
+
+function applyEvent(state: ConversationState, event: ConversationStreamEvent): ConversationState {
   switch (event.type) {
-    case 'entry.added':
-      return { ...base, entries: [...state.entries, event.entry] };
-    case 'part.added':
+    case 'history.chunk':
+      return { ...state, turns: upsertTurns(state.turns, event.turns) };
+    case 'history.complete':
+      return { ...state, history: 'complete' };
+    case 'turn.upserted':
+      return { ...state, turns: upsertTurns(state.turns, [event.turn]) };
+    case 'assistant.delta':
       return {
-        ...base,
-        entries: mapEntry(state.entries, event.entryId, (e) => {
-          const parts = [...e.parts];
-          parts.splice(event.index, 0, event.part);
-          return { ...e, parts };
-        }),
+        ...state,
+        turns: updateTurn(state.turns, event.turnId, (turn) => ({
+          ...turn,
+          blocks: updateBlock(turn.blocks, event.blockId, (block) =>
+            block.kind === 'assistant-prose' ? { ...block, text: block.text + event.delta } : block),
+        })),
       };
-    case 'text.appended':
+    case 'action.upserted':
       return {
-        ...base,
-        entries: mapEntry(state.entries, event.entryId, (e) =>
-          mapPart(e, event.partId, (p) => (p.kind === 'text' ? { ...p, text: p.text + event.delta } : p)),
-        ),
+        ...state,
+        turns: updateTurn(state.turns, event.turnId, (turn) => ({
+          ...turn,
+          blocks: updateBlock(turn.blocks, event.packetId, (block) =>
+            block.kind === 'work-packet'
+              ? { ...block, actions: upsertById(block.actions, event.action) }
+              : block),
+        })),
       };
-    case 'part.updated':
+    case 'runtime.changed':
+      return { ...state, runtime: event.runtime };
+    case 'request.opened':
+      return { ...state, requests: upsertById(state.requests, event.request) };
+    case 'request.resolved':
       return {
-        ...base,
-        entries: mapEntry(state.entries, event.entryId, (e) =>
-          mapPart(e, event.partId, (p) => (isWorkPart(p) ? ({ ...p, ...event.patch } as Part) : p)),
-        ),
+        ...state,
+        requests: state.requests.map((request) => request.id === event.requestId
+          ? { ...request, status: 'resolved', decision: event.decision } as BlockingRequest
+          : request),
       };
-    case 'entry.status':
-      return {
-        ...base,
-        entries: mapEntry(state.entries, event.entryId, (e) => ({ ...e, status: event.status, error: event.error })),
-      };
-    case 'provenance.updated':
-      return {
-        ...base,
-        entries: mapEntry(state.entries, event.entryId, (e) => ({ ...e, provenance: event.provenance })),
-      };
-    case 'conversation.created':
-      return { ...base, conversation: event.conversation };
-    case 'conversation.updated':
-      return {
-        ...base,
-        conversation: state.conversation
-          ? { ...state.conversation, title: event.title ?? state.conversation.title, updatedAt: event.updatedAt }
-          : state.conversation,
-      };
-    case 'permission.requested':
-    case 'permission.resolved':
-      return base; // permission UI state handled in the hook, not entry state
+    case 'summary.updated':
+      return { ...state, summary: event.summary, runtime: event.summary.runtime };
+    case 'load.failed':
+      return { ...state, history: 'failed', runtime: 'failed', error: event.message };
+  }
+}
+
+function isCurrentEvent(state: ConversationState, event: ConversationStreamEvent): boolean {
+  return state.ref !== null && state.loadId === event.loadId && sameRef(state.ref, event.ref);
+}
+
+function isCurrentLocalAction(state: ConversationState, action: Extract<LocalAction, { ref: ConversationRef; loadId: string }>): boolean {
+  return state.ref !== null && state.loadId === action.loadId && sameRef(state.ref, action.ref);
+}
+
+export function conversationReducer(state: ConversationState, action: ConversationAction): ConversationState {
+  switch (action.type) {
+    case 'opened':
+      return freshState(action.ref, action.loadId);
+    case 'reset':
+      return initialConversationState;
+    case 'open.succeeded':
+      return isCurrentLocalAction(state, action)
+        ? { ...state, summary: action.summary, capabilities: action.capabilities, runtime: action.summary.runtime }
+        : state;
+    case 'open.failed':
+      return isCurrentLocalAction(state, action)
+        ? { ...state, history: 'failed', runtime: 'failed', error: action.message }
+        : state;
     default:
-      return base;
+      if (!isCurrentEvent(state, action) || state.sync === 'gap' || action.seq <= state.lastSeq) return state;
+      if (action.seq !== state.lastSeq + 1) return { ...state, sync: 'gap', runtime: 'unknown' };
+      return { ...applyEvent(state, action), lastSeq: action.seq };
   }
 }
