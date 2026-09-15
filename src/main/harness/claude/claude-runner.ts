@@ -30,7 +30,7 @@ export interface RunClaudeTurnOptions {
   prompt: { text: string };
   executable: string;
   spawnProcess?: SpawnClaudeProcess;
-  permissionBridge: { configPath: string; toolName: string };
+  permissionBridge?: { configPath: string; toolName: string };
   newSession?: boolean;
   rereadNative(): Promise<NativeEvent[] | AsyncIterable<NativeEvent>>;
 }
@@ -39,10 +39,12 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const sessionArguments = options.newSession
     ? ['--session-id', options.ref.nativeSessionId]
     : ['--resume', options.ref.nativeSessionId];
+  const bridgeArguments = options.permissionBridge
+    ? ['--mcp-config', options.permissionBridge.configPath, '--permission-prompt-tool', options.permissionBridge.toolName]
+    : [];
   const args = [
     ...sessionArguments, '--print', options.prompt.text, '--output-format', 'stream-json', '--verbose',
-    '--include-partial-messages', '--mcp-config', options.permissionBridge.configPath,
-    '--permission-prompt-tool', options.permissionBridge.toolName,
+    '--include-partial-messages', ...bridgeArguments,
   ];
   const child = (options.spawnProcess ?? spawnClaude)(options.executable, args, {
     cwd: options.ref.projectPath, shell: false, stdio: ['ignore', 'pipe', 'pipe'],

@@ -9,6 +9,7 @@ import { ConversationRegistry } from '@/main/conversation-registry';
 import { CodexAppServer } from '@/main/harness/codex/codex-app-server';
 import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
+import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { registerSettingsIpc } from '@/main/settings-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -208,7 +209,12 @@ app.on('ready', () => {
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const registry = new ConversationRegistry([
       new CodexAdapter(codexServer, { realpath: canonicalPath }),
-      new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), { realpath: canonicalPath }),
+      new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
+        realpath: canonicalPath,
+        tempDir: app.getPath('temp'),
+        probe: () => probeClaude(defaultClaudeExec),
+        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec: defaultClaudeExec }),
+      }),
     ], canonicalPath);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
     const registration = registerConversationIpc(conversationService, () => mainWindowRef);

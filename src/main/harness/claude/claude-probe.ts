@@ -24,7 +24,7 @@ const NO_CAPABILITIES = {
   interrupt: false, steerWhileRunning: false, fork: false,
 } as const;
 
-export async function probeClaude(exec: ClaudeExec = directExec, executable = 'claude'): Promise<ClaudeProbeStatus> {
+export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executable = 'claude'): Promise<ClaudeProbeStatus> {
   const [version, help, agents] = await Promise.all([
     safeExec(exec, executable, ['--version']),
     safeExec(exec, executable, ['--help']),
@@ -104,7 +104,7 @@ async function safeExec(exec: ClaudeExec, executable: string, args: string[]): P
   catch { return { exitCode: 127, stdout: '', stderr: '' }; }
 }
 
-function directExec(file: string, args: string[], options: { timeoutMs: number }): Promise<ClaudeExecResult> {
+export function defaultClaudeExec(file: string, args: string[], options: { timeoutMs: number }): Promise<ClaudeExecResult> {
   return new Promise((resolve) => {
     execFile(file, args, { timeout: options.timeoutMs, encoding: 'utf8', maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
       const exitCode = typeof (error as NodeJS.ErrnoException & { code?: unknown } | null)?.code === 'number'
