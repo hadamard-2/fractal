@@ -17,9 +17,11 @@ function thread(id: string, cwd = '/work/fractal') {
 function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false) {
   const listeners = new Set<(notification: unknown) => void>();
   const requestListeners = new Set<(request: unknown) => void>();
+  const statusListeners = new Set<(status: { availability: 'available' | 'unavailable'; message?: string }) => void>();
   const requests: Array<{ method: string; params: unknown }> = [];
+  const responses: Array<{ id: string | number; result: unknown }> = [];
   return {
-    status: { availability: 'available' as const }, requests,
+    status: { availability: 'available' as const }, requests, responses,
     request: vi.fn(async (method: string, params: Record<string, unknown>) => {
       requests.push({ method, params });
       if (method === 'thread/list') {
@@ -28,6 +30,10 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
         return { data: pages[index] ?? [], nextCursor: index === 0 || repeatCursor ? 'next' : null };
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
+      if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
+      if (method === 'thread/resume') return { thread: threadRead.thread };
+      if (method === 'turn/start') return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } };
+      if (method === 'turn/interrupt') return {};
       throw new Error(`unexpected ${method}`);
     }),
     onNotification: vi.fn((listener: (notification: unknown) => void) => {
@@ -41,6 +47,15 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       return () => requestListeners.delete(listener);
     }),
     requestListenerCount() { return requestListeners.size; },
+    emitRequest(request: unknown) { requestListeners.forEach((listener) => listener(request)); },
+    respond(id: string | number, result: unknown) { responses.push({ id, result }); },
+    respondError: vi.fn(),
+    onStatus(listener: (status: { availability: 'available' | 'unavailable'; message?: string }) => void) {
+      statusListeners.add(listener); return () => statusListeners.delete(listener);
+    },
+    emitStatus(status: { availability: 'available' | 'unavailable'; message?: string }) {
+      Object.assign(this.status, status); statusListeners.forEach((listener) => listener(status));
+    },
   };
 }
 
@@ -181,5 +196,91 @@ describe('Codex read adapter', () => {
     expect(server.requestListenerCount()).toBe(0);
     server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'message-1', delta: 'late' } });
     expect(sink).not.toHaveBeenCalled();
+  });
+});
+
+describe('Codex native continuation', () => {
+  const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+
+  test('creates and resumes native threads through stable typed operations', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    await expect(adapter.createConversation('/work/fractal')).resolves.toEqual({
+      provider: 'codex', nativeSessionId: 'created-thread', projectPath: '/work/fractal',
+    });
+    const run = await adapter.continueConversation(ref, { text: 'Continue the fix' });
+    expect(server.requests.slice(-2)).toEqual([
+      { method: 'thread/resume', params: { threadId: 'thread-1', cwd: '/work/fractal' } },
+      { method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'text', text: 'Continue the fix', text_elements: [] }] } },
+    ]);
+    await run.dispose();
+  });
+
+  test('routes an approval once, fails closed for unsupported decisions, and interrupts once', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Run it' });
+    server.emitRequest({
+      id: 7, method: 'item/commandExecution/requestApproval',
+      params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'command-1', startedAtMs: 5, approvalId: 'approval-1', environmentId: null, command: 'rm file', cwd: '/work/fractal' },
+    });
+    await run.resolveRequest('approval-1', { kind: 'deny', reason: 'Do not delete it' });
+    expect(server.responses).toEqual([{ id: 7, result: { decision: 'decline' } }]);
+    await expect(run.resolveRequest('approval-1', { kind: 'allow-once' })).rejects.toThrow('no longer available');
+
+    let interrupted = false;
+    const interruptA = run.interrupt().then(() => { interrupted = true; });
+    const interruptB = run.interrupt();
+    await vi.waitFor(() => expect(server.requests.filter(({ method }) => method === 'turn/interrupt')).toHaveLength(1));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(interrupted).toBe(false);
+    expect(server.requests.filter(({ method }) => method === 'turn/interrupt')).toEqual([
+      { method: 'turn/interrupt', params: { threadId: 'thread-1', turnId: 'turn-live' } },
+    ]);
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'interrupted' } } });
+    await Promise.all([interruptA, interruptB]);
+    await run.dispose();
+  });
+
+  test('routes a supported single-field question by its native field ID', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Ask' });
+    server.emitRequest({
+      id: 11, method: 'item/tool/requestUserInput',
+      params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'question-item', isBlocking: true, autoResolutionMs: null,
+        questions: [{ id: 'answer', header: 'Choice', question: 'Which?', isOther: true, isSecret: false, options: [{ label: 'option-b', description: 'Use option B' }] }] },
+    });
+    await run.resolveRequest('11', { kind: 'answer', answers: { answer: 'option-b' } });
+    expect(server.responses).toContainEqual({ id: 11, result: { answers: { answer: { answers: ['option-b'] } } } });
+    await run.dispose();
+  });
+
+  test('scopes native events and requests to the exact resumed thread and started turn', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run it' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'other-turn', itemId: 'wrong-turn', delta: 'wrong' } });
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'other', turnId: 'turn-live', itemId: 'wrong-thread', delta: 'wrong' } });
+    server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'right', delta: 'right' } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'right', payload: { text: 'right' } } });
+    await run.dispose();
+  });
+
+  test('fails pending requests closed and rereads native IDs before proving an idle reconnect', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run it' });
+    server.emitRequest({
+      id: 7, method: 'item/fileChange/requestApproval',
+      params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'change-1', startedAtMs: 5, reason: null, grantRoot: null },
+    });
+    server.emitStatus({ availability: 'unavailable', message: 'exited' });
+    await expect(run.resolveRequest('7', { kind: 'allow-once' })).rejects.toThrow('no longer available');
+    server.emitStatus({ availability: 'available' });
+
+    const events = [];
+    for await (const event of run.events) events.push(event);
+    expect(server.requests.some(({ method }) => method === 'thread/read')).toBe(true);
+    expect(events.some((event) => event.nativeId === 'message-1')).toBe(true);
+    expect(events.some((event) => event.payload.kind === 'system-notice' && event.payload.message.includes('idle'))).toBe(true);
   });
 });

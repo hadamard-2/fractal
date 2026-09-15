@@ -248,6 +248,42 @@ describe('CodexAppServer', () => {
 
     expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('exited') });
     await expect(server.request('thread/list', {})).rejects.toThrow('unavailable');
+    await server.dispose();
+  });
+
+  test('recovers an unexpected exit after the bounded first delay and reinitializes', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeCodexProcess(); const second = new FakeCodexProcess();
+      const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+      const starting = CodexAppServer.start(spawn); initialize(first); const server = await starting;
+      const statuses: string[] = []; server.onStatus((status) => statuses.push(status.availability));
+      first.exit(1);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(spawn).toHaveBeenCalledTimes(2); initialize(second);
+      await vi.waitFor(() => expect(server.status.availability).toBe('available'));
+      expect(statuses).toEqual(['unavailable', 'available']);
+      await server.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+
+  test('stops after three reconnect failures until explicit restart', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeCodexProcess();
+      const spawn = vi.fn().mockReturnValueOnce(first).mockImplementation(() => { throw new Error('spawn failed'); });
+      const starting = CodexAppServer.start(spawn); initialize(first); const server = await starting;
+      first.exit(1);
+      await vi.advanceTimersByTimeAsync(4_250);
+      expect(spawn).toHaveBeenCalledTimes(4);
+      expect(server.status).toEqual({ availability: 'unavailable', message: 'Codex App Server reconnect failed after 3 attempts' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(spawn).toHaveBeenCalledTimes(4);
+      await server.restart();
+      expect(spawn).toHaveBeenCalledTimes(5);
+      await server.dispose();
+    } finally { vi.useRealTimers(); }
   });
 
   test('marks the server unavailable after a stdout stream failure', async () => {

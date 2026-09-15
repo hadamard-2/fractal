@@ -42,6 +42,7 @@ export class CodexAppServer {
   private disposed = false;
   private readonly notificationListeners = new Set<(notification: ServerNotification) => void>();
   private readonly serverRequestListeners = new Set<(request: ServerRequest) => void>();
+  private readonly statusListeners = new Set<(status: CodexAppServerStatus) => void>();
   status: CodexAppServerStatus = { availability: 'unavailable', message: 'Codex App Server has not started' };
 
   private constructor(private readonly spawnProcess: () => CodexProcess) {}
@@ -83,6 +84,11 @@ export class CodexAppServer {
   onServerRequest(listener: (request: ServerRequest) => void): Unsubscribe {
     this.serverRequestListeners.add(listener);
     return () => this.serverRequestListeners.delete(listener);
+  }
+
+  onStatus(listener: (status: CodexAppServerStatus) => void): Unsubscribe {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
   }
 
   respond(id: number | string, result: unknown): void {
@@ -141,10 +147,10 @@ export class CodexAppServer {
       }
       await peer.notify('initialized');
       if (!peer.isOpen || this.peer !== peer) throw new Error('Codex App Server transport failed');
-      this.status = { availability: 'available' };
+      this.setStatus({ availability: 'available' });
     } catch (error) {
       this.stop(unavailableMessage(error));
-      this.status = { availability: 'unavailable', message: unavailableMessage(error) };
+      this.setStatus({ availability: 'unavailable', message: unavailableMessage(error) });
     }
   }
 
@@ -155,7 +161,7 @@ export class CodexAppServer {
     this.process = undefined;
     peer?.close(new Error(message));
     if (process) terminateProcess(process);
-    this.status = { availability: 'unavailable', message };
+    this.setStatus({ availability: 'unavailable', message });
   }
 
   private markClosed(peer: JsonRpcPeer, error: Error): void {
@@ -165,7 +171,28 @@ export class CodexAppServer {
     this.process = undefined;
     const exited = error.message.startsWith('Codex App Server exited');
     if (process && !exited) terminateProcess(process);
-    this.status = { availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) };
+    this.setStatus({ availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) });
+    if (!this.disposed && !this.restarting) {
+      this.restarting = this.reconnectAfterExit().finally(() => { this.restarting = undefined; });
+    }
+  }
+
+  private async reconnectAfterExit(): Promise<void> {
+    for (const delay of [250, 1_000, 3_000]) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      if (this.disposed) return;
+      await this.connect();
+      if (this.status.availability === 'available') return;
+    }
+    this.setStatus({ availability: 'unavailable', message: 'Codex App Server reconnect failed after 3 attempts' });
+  }
+
+  private setStatus(status: CodexAppServerStatus): void {
+    if (this.status.availability === status.availability && this.status.message === status.message) return;
+    this.status = status;
+    for (const listener of this.statusListeners) {
+      try { listener(status); } catch { /* Status observers are isolated. */ }
+    }
   }
 
   private requirePeer(): JsonRpcPeer {
