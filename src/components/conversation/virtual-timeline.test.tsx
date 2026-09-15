@@ -82,6 +82,11 @@ test('keeps restoration pending when a partial chunk contains the anchor but can
   rerender(<VirtualTimeline conversationId="other-clamped-session" turns={history} onResolve={() => undefined} />);
   rerender(<VirtualTimeline conversationId="clamped-restore" turns={history.slice(0, 4)} historyComplete={false} onResolve={() => undefined} />);
   await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(560));
+  rerender(<VirtualTimeline conversationId="clamped-restore" turns={history.slice(0, 5)} historyComplete={false} onResolve={() => undefined} />);
+  await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(840));
+  // At five rows the saved position is also the temporary bottom. Let its
+  // scroll event settle before the final chunk arrives, as a browser would.
+  await act(async () => { await Promise.resolve(); });
   rerender(<VirtualTimeline conversationId="clamped-restore" turns={history} historyComplete={true} onResolve={() => undefined} />);
   await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(840));
   expect(screen.queryByRole('button', { name: 'New activity' })).toBeNull();

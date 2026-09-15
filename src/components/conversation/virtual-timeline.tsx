@@ -91,9 +91,11 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
       if (!historyComplete && (offset === null || offset > maximumOffset + 0.5)) return;
       if (offset !== null) {
         element.scrollTo({ top: offset, behavior: 'auto' });
-        if (!historyComplete && Math.abs(element.scrollTop - offset) > 0.5) return;
-      }
-      else followBottom();
+      } else followBottom();
+      // Reaching the anchor in a partial chunk can also put us at its
+      // temporary bottom. Keep the original reading intent until history is
+      // complete, so remember() cannot turn the next chunk into a bottom follow.
+      if (!historyComplete) return;
       restoring.current = false;
     } else if (!old) {
       if (!saved?.anchor || restoreAnchor(saved.anchor, initialMeasurements) === null) followBottom();
