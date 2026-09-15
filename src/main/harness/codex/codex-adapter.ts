@@ -109,21 +109,23 @@ export class CodexAdapter implements HarnessAdapter {
     const queue = new NativeEventQueue();
     const live = createCodexLiveNormalizationContext();
     const pending = new Map<string, { rpcId: string | number; request: Parameters<typeof normalizeCodexServerRequest>[0] }>();
-    const bufferedNotifications: Parameters<typeof normalizeCodexNotification>[0][] = [];
-    const bufferedRequests: Parameters<typeof normalizeCodexServerRequest>[0][] = [];
+    const bufferedTraffic: Array<
+      | { kind: 'notification'; value: Parameters<typeof normalizeCodexNotification>[0] }
+      | { kind: 'request'; value: Parameters<typeof normalizeCodexServerRequest>[0] }
+    > = [];
     let turnId: string | undefined;
     let completeTurn!: () => void;
     const turnCompleted = new Promise<void>((resolve) => { completeTurn = resolve; });
     let interrupting: Promise<void> | undefined;
     let disposed = false;
     const receiveNotification = (notification: Parameters<typeof normalizeCodexNotification>[0]): void => {
-      if (!turnId) { bufferedNotifications.push(notification); return; }
+      if (!turnId) { bufferedTraffic.push({ kind: 'notification', value: notification }); return; }
       if (!matchesNotificationRun(notification, ref.nativeSessionId, turnId)) return;
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
       if (isValidRunCompletion(notification, ref.nativeSessionId, turnId)) { completeTurn(); queue.close(); }
     };
     const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
-      if (!turnId) { bufferedRequests.push(request); return; }
+      if (!turnId) { bufferedTraffic.push({ kind: 'request', value: request }); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
       if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/tool/requestUserInput') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
@@ -177,8 +179,10 @@ export class CodexAdapter implements HarnessAdapter {
         input: [{ type: 'text', text: prompt.text, text_elements: [] }],
       });
       turnId = started.turn.id;
-      bufferedNotifications.splice(0).forEach(receiveNotification);
-      bufferedRequests.splice(0).forEach(receiveRequest);
+      for (const traffic of bufferedTraffic.splice(0)) {
+        if (traffic.kind === 'notification') receiveNotification(traffic.value);
+        else receiveRequest(traffic.value);
+      }
     } catch (error) {
       cleanup();
       throw error;

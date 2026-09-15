@@ -311,11 +311,13 @@ describe('Codex native continuation', () => {
       server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync', delta: 'captured' } });
       server.emitRequest({ id: 13, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync-change', startedAtMs: 1, reason: null, grantRoot: null } });
       server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'other', turnId: 'turn-live', itemId: 'wrong', delta: 'leaked' } });
+      server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } });
     });
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
     const iterator = run.events[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'sync', payload: { text: 'captured' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '13' } } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-finished', turnId: 'turn-live' } } });
     await run.dispose();
   });
 
