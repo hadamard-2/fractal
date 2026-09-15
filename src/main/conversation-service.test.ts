@@ -22,6 +22,10 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function approvalRequest(id = 'request-owned') {
   return { id, kind: 'approval' as const, provider: 'codex' as const, title: 'Run', operation: 'pwd', rememberScope: 'project:/repo', status: 'open' as const };
 }
+function runFixture(): ConversationRun & { events: { [Symbol.asyncIterator]: ReturnType<typeof vi.fn> } } {
+  const iterator = vi.fn(() => ({ next: vi.fn(async () => ({ done: true as const, value: undefined })) }));
+  return { events: { [Symbol.asyncIterator]: iterator }, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined) };
+}
 function fixture(history: NativeEvent[] = [], historyChunkSize = 50) {
   const sinks: NativeEventSink[] = [];
   const unsubscribe = vi.fn();
@@ -223,6 +227,8 @@ describe('ConversationService', () => {
     const uncertain = fixture();
     let discoveries = 0;
     vi.mocked(uncertain.adapter.listConversations).mockImplementation(async () => [{ ...summary, runtime: ++discoveries < 3 ? 'idle' : 'unknown' }]);
+    let loads = 0;
+    vi.mocked(uncertain.adapter.loadConversation).mockImplementation(async () => ({ summary: { ...summary, runtime: ++loads < 2 ? 'idle' : 'unknown' }, events: iterable([]) }));
     vi.mocked(uncertain.adapter.continueConversation).mockRejectedValue(new Error('/private/provider failure'));
     await uncertain.service.open(ref, loadId);
     await expect(uncertain.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation continuation failed');
@@ -235,7 +241,50 @@ describe('ConversationService', () => {
     await expect(proven.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation continuation failed');
     expect(proven.events.filter((item) => item.type === 'runtime.changed').map((item) => item.runtime)).toEqual(['active-in-fractal', 'failed', 'idle']);
     expect(JSON.stringify(proven.events)).not.toContain('private');
+    expect(proven.adapter.loadConversation).toHaveBeenCalledTimes(2);
     await proven.service.dispose();
+  });
+
+  test('denies an open request exactly once when its native event stream fails', async () => {
+    const f = fixture();
+    const nativeRun: ConversationRun = {
+      events: (async function* () { yield event('request', { kind: 'request-opened', turnId: 'owned', request: approvalRequest() }); throw new Error('/private stream failure'); })(),
+      interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined),
+    };
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(nativeRun);
+    await f.service.open(ref, loadId); await f.service.continue(ref, { text: 'Go' }, 'renderer');
+    await vi.waitFor(() => expect(nativeRun.dispose).toHaveBeenCalled());
+    expect(nativeRun.resolveRequest).toHaveBeenCalledTimes(1);
+    expect(nativeRun.resolveRequest).toHaveBeenCalledWith('request-owned', { kind: 'deny', reason: 'Conversation run failed' });
+    await f.service.dispose();
+  });
+
+  test('tears down a native run returned after its renderer ownership was released', async () => {
+    const f = fixture(); const starting = deferred<ConversationRun>(); const nativeRun = runFixture();
+    vi.mocked(f.adapter.continueConversation).mockReturnValue(starting.promise);
+    await f.service.open(ref, loadId);
+    const continuing = f.service.continue(ref, { text: 'Go' }, 'renderer-lost');
+    await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
+    await f.service.denyRequestsForOwner('renderer-lost', 'Fractal window closed');
+    starting.resolve(nativeRun);
+    await expect(continuing).rejects.toThrow('Conversation continuation ended');
+    expect(nativeRun.interrupt).toHaveBeenCalledTimes(1);
+    expect(nativeRun.dispose).toHaveBeenCalledTimes(1);
+    expect(nativeRun.events[Symbol.asyncIterator]).not.toHaveBeenCalled();
+    await f.service.dispose();
+  });
+
+  test('tears down a native run returned after service disposal', async () => {
+    const f = fixture(); const starting = deferred<ConversationRun>(); const nativeRun = runFixture();
+    vi.mocked(f.adapter.continueConversation).mockReturnValue(starting.promise);
+    await f.service.open(ref, loadId);
+    const continuing = f.service.continue(ref, { text: 'Go' }, 'renderer');
+    await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
+    await f.service.dispose();
+    starting.resolve(nativeRun);
+    await expect(continuing).rejects.toThrow('Conversation continuation ended');
+    expect(nativeRun.interrupt).toHaveBeenCalledTimes(1);
+    expect(nativeRun.dispose).toHaveBeenCalledTimes(1);
   });
 
   test('does not regress cumulative text when an overlapping buffered update is behind the snapshot', async () => {

@@ -31,14 +31,15 @@ describe('ConversationRuntimeController', () => {
     await expect(runtime.resolveRequest('request-1', { kind: 'deny' })).rejects.toThrow('Conversation request is no longer available');
   });
 
-  test('denies a mismatched remembered scope instead of broadening permission', async () => {
-    const resolve = vi.fn(async () => undefined);
+  test('denies a mismatched remembered scope and cleans up even when denial fails', async () => {
+    const resolve = vi.fn(async () => { throw new Error('/private adapter failure'); });
     const runtime = new ConversationRuntimeController();
     runtime.observe('idle'); runtime.claimOwnedRun('run-1');
     runtime.openRequest({ conversationKey: 'codex:session', runId: 'run-1', rendererId: 'renderer-1', request: approval, resolve });
     await expect(runtime.resolveRequest('request-1', { kind: 'allow-and-remember', scope: 'project:/other' })).rejects.toThrow('Remembered permission scope does not match');
     expect(resolve).toHaveBeenCalledWith('request-1', { kind: 'deny', reason: 'Permission scope did not match' });
     expect(runtime.state).toBe('active-in-fractal');
+    await expect(runtime.resolveRequest('request-1', { kind: 'deny' })).rejects.toThrow('Conversation request is no longer available');
   });
 
   test('rejects duplicate request ownership and denies unresolved requests after ten minutes', async () => {
@@ -54,6 +55,28 @@ describe('ConversationRuntimeController', () => {
     expect(runtime.state).toBe('active-in-fractal');
   });
 
+  test('contains a rejected timeout denial while closing ownership and restoring state', async () => {
+    vi.useFakeTimers();
+    const resolve = vi.fn(async () => { throw new Error('/private timeout failure'); });
+    const runtime = new ConversationRuntimeController();
+    runtime.observe('idle'); runtime.claimOwnedRun('run-1');
+    runtime.openRequest({ conversationKey: 'codex:session', runId: 'run-1', rendererId: 'renderer-1', request: approval, resolve });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+    expect(runtime.state).toBe('active-in-fractal');
+    await expect(runtime.resolveRequest('request-1', { kind: 'deny' })).rejects.toThrow('Conversation request is no longer available');
+  });
+
+  test('denies every pending native request exactly once before entering failed', async () => {
+    const resolve = vi.fn(async () => undefined);
+    const runtime = new ConversationRuntimeController();
+    runtime.observe('idle'); runtime.claimOwnedRun('run-1');
+    runtime.openRequest({ conversationKey: 'codex:session', runId: 'run-1', rendererId: 'renderer-1', request: approval, resolve });
+    await runtime.failOwnedRun('run-1', 'Conversation run failed');
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith('request-1', { kind: 'deny', reason: 'Conversation run failed' });
+    expect(runtime.state).toBe('failed');
+  });
+
   test('denies unresolved requests immediately when their renderer disappears', async () => {
     const resolve = vi.fn(async () => undefined);
     const runtime = new ConversationRuntimeController();
@@ -64,9 +87,9 @@ describe('ConversationRuntimeController', () => {
     expect(runtime.state).toBe('active-in-fractal');
   });
 
-  test('returns from failure to idle only with a fresh proven observation', () => {
+  test('returns from failure to idle only with a fresh proven observation', async () => {
     const runtime = new ConversationRuntimeController();
-    runtime.observe('idle'); runtime.claimOwnedRun('run-1'); runtime.failOwnedRun('run-1');
+    runtime.observe('idle'); runtime.claimOwnedRun('run-1'); await runtime.failOwnedRun('run-1', 'failed');
     expect(runtime.state).toBe('failed');
     expect(() => runtime.releaseOwnedRun('run-1', 'unknown')).toThrow('Conversation runtime is not proven idle');
     runtime.releaseOwnedRun('run-1', 'idle');

@@ -47,7 +47,7 @@ export class ConversationRuntimeController {
   openRequest(input: Omit<PendingRequest, 'timer'>): void {
     if (!this.runId || input.runId !== this.runId || (this.current !== 'active-in-fractal' && this.current !== 'waiting-for-user')) throw new Error('Conversation request does not belong to the active run');
     if (this.requests.has(input.request.id)) throw new Error('Conversation request is already owned');
-    const timer = setTimeout(() => { void this.deny(input.request.id, 'Request timed out'); }, this.requestTimeoutMs);
+    const timer = setTimeout(() => { void this.deny(input.request.id, 'Request timed out').catch((): void => undefined); }, this.requestTimeoutMs);
     this.requests.set(input.request.id, { ...input, request: structuredClone(input.request), timer });
     if (this.current === 'active-in-fractal') this.move('waiting-for-user');
   }
@@ -62,9 +62,9 @@ export class ConversationRuntimeController {
   async resolveRequest(requestId: string, decision: UserDecision): Promise<void> {
     const pending = this.take(requestId);
     if (decision.kind === 'allow-and-remember' && (pending.request.kind !== 'approval' || decision.scope !== pending.request.rememberScope)) {
-      await pending.resolve(requestId, { kind: 'deny', reason: 'Permission scope did not match' });
-      this.afterRequest();
-      this.onRequestClosed?.(requestId);
+      try { await pending.resolve(requestId, { kind: 'deny', reason: 'Permission scope did not match' }); }
+      catch { /* The locally authored mismatch remains the public failure. */ }
+      finally { this.afterRequest(); this.onRequestClosed?.(requestId); }
       throw new Error('Remembered permission scope does not match');
     }
     try { await pending.resolve(requestId, structuredClone(decision)); }
@@ -80,11 +80,9 @@ export class ConversationRuntimeController {
     await Promise.allSettled(Array.from(this.requests.keys(), (id) => this.deny(id, reason)));
   }
 
-  failOwnedRun(runId: string): void {
+  async failOwnedRun(runId: string, reason: string): Promise<void> {
     this.assertRun(runId);
-    for (const request of this.requests.values()) clearTimeout(request.timer);
-    for (const requestId of this.requests.keys()) this.onRequestClosed?.(requestId);
-    this.requests.clear();
+    await this.denyAll(reason);
     this.move('failed');
   }
 
