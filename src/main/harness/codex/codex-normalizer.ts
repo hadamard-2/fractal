@@ -59,7 +59,7 @@ export function normalizeCodexNotification(notification: ServerNotification, con
     case 'turn/started':
       return normalizeTurn(notification.params.turn, 0);
     case 'turn/completed':
-      if (!hasStrings(notification.params, 'threadId') || !isObject(notification.params.turn) || typeof notification.params.turn.id !== 'string' || typeof notification.params.turn.status !== 'string') return [unsupported(notificationId(notification, context), notification.method, 0)];
+      if (!hasStrings(notification.params, 'threadId') || !isCompleteTurn(notification.params.turn)) return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnIdFromTurn(notification))];
       context.clearTurn(notification.params.threadId, notification.params.turn.id);
       return [event(`${notification.params.turn.id}:status`, notification.method, 0, {
         kind: 'turn-finished', turnId: notification.params.turn.id, status: turnStatus(notification.params.turn.status),
@@ -235,6 +235,25 @@ function notificationTurnId(notification: { params: object }): string | undefine
   const turnId = (notification.params as Record<string, unknown>).turnId;
   return typeof turnId === 'string' ? turnId : undefined;
 }
+
+function notificationTurnIdFromTurn(notification: { params: object }): string | undefined {
+  const turn = (notification.params as Record<string, unknown>).turn;
+  return isObject(turn) && typeof turn.id === 'string' ? turn.id : undefined;
+}
+
+function isCompleteTurn(value: unknown): value is { id: string; status: 'completed' | 'interrupted' | 'failed' } {
+  if (!isObject(value)) return false;
+  return typeof value.id === 'string'
+    && (value.status === 'completed' || value.status === 'interrupted' || value.status === 'failed')
+    && Array.isArray(value.items)
+    && (value.itemsView === 'full' || value.itemsView === 'summary')
+    && (value.error === null || isObject(value.error))
+    && validNullableNumber(value.startedAt)
+    && validNullableNumber(value.completedAt)
+    && validNullableNumber(value.durationMs);
+}
+
+function validNullableNumber(value: unknown): boolean { return value === null || (typeof value === 'number' && Number.isFinite(value)); }
 
 function hasStrings(value: object, ...keys: string[]): value is Record<string, string> {
   return keys.every((key) => typeof (value as Record<string, unknown>)[key] === 'string');

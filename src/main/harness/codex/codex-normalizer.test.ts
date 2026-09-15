@@ -112,7 +112,7 @@ describe('Codex native normalization', () => {
     context.seed(active as never);
     const assistant = normalizeCodexNotification({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-message', delta: ' world' } } as never, context);
     const command = normalizeCodexNotification({ method: 'item/commandExecution/outputDelta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-command', delta: ' second' } } as never, context);
-    normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'interrupted' } } } as never, context);
+    normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', items: [], itemsView: 'full', status: 'interrupted', error: null, startedAt: 1, completedAt: 2, durationMs: 1_000 } } } as never, context);
     const afterInterrupt = normalizeCodexNotification({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'live-message', delta: 'new' } } as never, context);
 
     expect(history.find((event) => event.nativeId === 'live-message')?.payload).toMatchObject({ final: false });

@@ -106,24 +106,24 @@ export class CodexAdapter implements HarnessAdapter {
     const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: projectPath });
     if (resumed.thread.id !== ref.nativeSessionId) throw new Error('Resumed Codex thread does not match the requested thread');
     if (await this.canonicalPath(resumed.thread.cwd) !== projectPath) throw new Error('Resumed Codex project does not match the requested project');
-    const started = await this.server.request('turn/start', {
-      threadId: ref.nativeSessionId,
-      input: [{ type: 'text', text: prompt.text, text_elements: [] }],
-    });
-    const turnId = started.turn.id;
     const queue = new NativeEventQueue();
     const live = createCodexLiveNormalizationContext();
     const pending = new Map<string, { rpcId: string | number; request: Parameters<typeof normalizeCodexServerRequest>[0] }>();
+    const bufferedNotifications: Parameters<typeof normalizeCodexNotification>[0][] = [];
+    const bufferedRequests: Parameters<typeof normalizeCodexServerRequest>[0][] = [];
+    let turnId: string | undefined;
     let completeTurn!: () => void;
     const turnCompleted = new Promise<void>((resolve) => { completeTurn = resolve; });
     let interrupting: Promise<void> | undefined;
     let disposed = false;
-    const notifications = this.server.onNotification((notification) => {
+    const receiveNotification = (notification: Parameters<typeof normalizeCodexNotification>[0]): void => {
+      if (!turnId) { bufferedNotifications.push(notification); return; }
       if (!matchesNotificationRun(notification, ref.nativeSessionId, turnId)) return;
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
-      if (notification.method === 'turn/completed') { completeTurn(); queue.close(); }
-    });
-    const requests = this.server.onServerRequest((request) => {
+      if (isValidRunCompletion(notification, ref.nativeSessionId, turnId)) { completeTurn(); queue.close(); }
+    };
+    const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
+      if (!turnId) { bufferedRequests.push(request); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
       if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/tool/requestUserInput') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
@@ -135,17 +135,33 @@ export class CodexAdapter implements HarnessAdapter {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
         return;
       }
+      if (pending.has(opened.payload.request.id)) {
+        this.denyRequestSafely(request.id, request);
+        return;
+      }
       pending.set(opened.payload.request.id, { rpcId: request.id, request });
       events.forEach((event) => queue.push(event));
-    });
+    };
+    const notifications = this.server.onNotification(receiveNotification);
+    const requests = this.server.onServerRequest(receiveRequest);
     let reconnectGeneration = 0;
     const statuses = this.server.onStatus?.((status) => {
       const generation = ++reconnectGeneration;
       if (status.availability === 'unavailable') {
+        for (const [requestId, entry] of pending) {
+          this.denyRequestSafely(entry.rpcId, entry.request);
+          queue.push(requestResolution(turnId ?? 'pending-turn', requestId, { kind: 'deny', reason: 'Codex connection was lost' }));
+        }
         pending.clear();
-        queue.push(runNotice(turnId, 'Codex connection was lost; native state is being reconciled', 'warning'));
+        if (status.message === 'Codex App Server reconnect failed after 3 attempts') {
+          completeTurn();
+          queue.fail(new Error(status.message));
+          return;
+        }
+        queue.push(runNotice(turnId ?? 'pending-turn', 'Codex connection was lost; native state is being reconciled', 'warning'));
         return;
       }
+      if (!turnId) return;
       void this.reconcileRunAfterReconnect(ref, turnId, queue, generation, () => reconnectGeneration, completeTurn).catch(() => {
         if (generation === reconnectGeneration) {
           queue.push(runNotice(turnId, 'Codex native state could not be reconciled', 'error'));
@@ -155,6 +171,18 @@ export class CodexAdapter implements HarnessAdapter {
     });
     const cleanup = (): void => { notifications(); requests(); statuses?.(); };
     queue.onClose(cleanup);
+    try {
+      const started = await this.server.request('turn/start', {
+        threadId: ref.nativeSessionId,
+        input: [{ type: 'text', text: prompt.text, text_elements: [] }],
+      });
+      turnId = started.turn.id;
+      bufferedNotifications.splice(0).forEach(receiveNotification);
+      bufferedRequests.splice(0).forEach(receiveRequest);
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
     return {
       events: queue,
       interrupt: () => {
@@ -170,7 +198,7 @@ export class CodexAdapter implements HarnessAdapter {
       dispose: async () => {
         if (disposed) return;
         disposed = true;
-        for (const entry of pending.values()) this.denyRequest(entry.rpcId, entry.request);
+        for (const entry of pending.values()) this.denyRequestSafely(entry.rpcId, entry.request);
         pending.clear();
         completeTurn();
         queue.close();
@@ -208,6 +236,10 @@ export class CodexAdapter implements HarnessAdapter {
   private denyRequest(id: string | number, request: Parameters<typeof normalizeCodexServerRequest>[0]): void {
     if (request.method === 'item/commandExecution/requestApproval' || request.method === 'item/fileChange/requestApproval') this.server.respond(id, { decision: 'decline' });
     else this.server.respondError(id, -32000, 'Fractal disconnected before the request was resolved');
+  }
+
+  private denyRequestSafely(id: string | number, request: Parameters<typeof normalizeCodexServerRequest>[0]): void {
+    try { this.denyRequest(id, request); } catch { /* A disconnected transport is already fail closed. */ }
   }
 
   private async readThread(ref: ConversationRef) {
@@ -327,19 +359,29 @@ function matchesNotificationRun(value: unknown, threadId: string, turnId: string
 
 class NativeEventQueue implements AsyncIterable<NativeEvent> {
   private readonly values: NativeEvent[] = [];
-  private readonly waiting: Array<(result: IteratorResult<NativeEvent>) => void> = [];
+  private readonly waiting: Array<{ resolve: (result: IteratorResult<NativeEvent>) => void; reject: (error: Error) => void }> = [];
   private readonly closeListeners = new Set<() => void>();
   private closed = false;
+  private failure: Error | undefined;
   push(value: NativeEvent): void {
     if (this.closed) return;
     const waiter = this.waiting.shift();
-    if (waiter) waiter({ done: false, value });
+    if (waiter) waiter.resolve({ done: false, value });
     else this.values.push(value);
   }
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.waiting.splice(0).forEach((resolve) => resolve({ done: true, value: undefined }));
+    this.waiting.splice(0).forEach(({ resolve }) => resolve({ done: true, value: undefined }));
+    this.closeListeners.forEach((listener) => listener());
+    this.closeListeners.clear();
+  }
+  fail(error: Error): void {
+    if (this.closed) return;
+    this.failure = error;
+    this.closed = true;
+    this.values.splice(0);
+    this.waiting.splice(0).forEach(({ reject }) => reject(error));
     this.closeListeners.forEach((listener) => listener());
     this.closeListeners.clear();
   }
@@ -348,7 +390,8 @@ class NativeEventQueue implements AsyncIterable<NativeEvent> {
     return { next: () => {
       const value = this.values.shift();
       if (value) return Promise.resolve({ done: false, value });
-      return this.closed ? Promise.resolve({ done: true, value: undefined }) : new Promise((resolve) => this.waiting.push(resolve));
+      if (this.failure) return Promise.reject(this.failure);
+      return this.closed ? Promise.resolve({ done: true, value: undefined }) : new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
     } };
   }
 }
@@ -356,3 +399,22 @@ class NativeEventQueue implements AsyncIterable<NativeEvent> {
 function runNotice(turnId: string, message: string, tone: 'info' | 'warning' | 'error'): NativeEvent {
   return { provider: 'codex', nativeId: `${turnId}:reconnect:${message}`, nativeType: 'connection-status', observedAt: Date.now(), payload: { kind: 'system-notice', turnId, message, tone } };
 }
+
+function requestResolution(turnId: string, requestId: string, decision: UserDecision): NativeEvent {
+  return { provider: 'codex', nativeId: `request:${requestId}:disconnect`, nativeType: 'connection-status', observedAt: Date.now(), payload: { kind: 'request-resolved', turnId, requestId, decision } };
+}
+
+function isValidRunCompletion(notification: unknown, threadId: string, turnId: string): boolean {
+  if (!isObject(notification) || notification.method !== 'turn/completed' || !isObject(notification.params) || notification.params.threadId !== threadId || !isObject(notification.params.turn)) return false;
+  const turn = notification.params.turn;
+  return turn.id === turnId
+    && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed')
+    && Array.isArray(turn.items)
+    && (turn.itemsView === 'full' || turn.itemsView === 'summary')
+    && (turn.error === null || isObject(turn.error))
+    && validNullableNumber(turn.startedAt)
+    && validNullableNumber(turn.completedAt)
+    && validNullableNumber(turn.durationMs);
+}
+
+function validNullableNumber(value: unknown): boolean { return value === null || (typeof value === 'number' && Number.isFinite(value)); }

@@ -20,6 +20,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
   const statusListeners = new Set<(status: { availability: 'available' | 'unavailable'; message?: string }) => void>();
   const requests: Array<{ method: string; params: unknown }> = [];
   const responses: Array<{ id: string | number; result: unknown }> = [];
+  let duringTurnStart: (() => void) | undefined;
   return {
     status: { availability: 'available' as const }, requests, responses,
     request: vi.fn(async (method: string, params: Record<string, unknown>) => {
@@ -32,7 +33,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       if (method === 'thread/read') return { thread: threadRead.thread };
       if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
       if (method === 'thread/resume') return { thread: threadRead.thread };
-      if (method === 'turn/start') return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } };
+      if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
       throw new Error(`unexpected ${method}`);
     }),
@@ -56,6 +57,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
     emitStatus(status: { availability: 'available' | 'unavailable'; message?: string }) {
       Object.assign(this.status, status); statusListeners.forEach((listener) => listener(status));
     },
+    duringTurnStart(callback: () => void) { duringTurnStart = callback; },
   };
 }
 
@@ -282,5 +284,70 @@ describe('Codex native continuation', () => {
     expect(server.requests.some(({ method }) => method === 'thread/read')).toBe(true);
     expect(events.some((event) => event.nativeId === 'message-1')).toBe(true);
     expect(events.some((event) => event.payload.kind === 'system-notice' && event.payload.message.includes('idle'))).toBe(true);
+  });
+
+  test('publishes a denial resolution immediately when disconnect invalidates a pending request', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitRequest({ id: 12, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'change', startedAtMs: 1, reason: null, grantRoot: null } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '12' } } } });
+    server.emitStatus({ availability: 'unavailable', message: 'exited' });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved', requestId: '12', decision: { kind: 'deny' } } } });
+    await run.dispose();
+  });
+
+  test('fails the run after the final reconnect failure instead of leaving ownership open', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitStatus({ availability: 'unavailable', message: 'Codex App Server reconnect failed after 3 attempts' });
+    await expect(iterator.next()).rejects.toThrow('reconnect failed after 3 attempts');
+  });
+
+  test('buffers matching synchronous traffic emitted while turn/start is in flight', async () => {
+    const server = createFakeAppServer();
+    server.duringTurnStart(() => {
+      server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync', delta: 'captured' } });
+      server.emitRequest({ id: 13, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync-change', startedAtMs: 1, reason: null, grantRoot: null } });
+      server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'other', turnId: 'turn-live', itemId: 'wrong', delta: 'leaked' } });
+    });
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'sync', payload: { text: 'captured' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '13' } } } });
+    await run.dispose();
+  });
+
+  test('does not settle interrupt on a malformed matching completion', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    let settled = false; const interrupt = run.interrupt().then(() => { settled = true; });
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-live', status: 'bogus' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'unsupported' } } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'interrupted' } } });
+    await interrupt;
+  });
+
+  test('captures a valid synchronous completion emitted during turn/start', async () => {
+    const server = createFakeAppServer();
+    server.duringTurnStart(() => server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } }));
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const events = []; for await (const event of run.events) events.push(event);
+    expect(events.at(-1)).toMatchObject({ payload: { kind: 'turn-finished', turnId: 'turn-live', status: 'completed' } });
+  });
+
+  test('fails a colliding public request ID closed without overwriting the first owner', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const params = { threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, approvalId: 'duplicate', environmentId: null as string | null, command: null as string | null, cwd: null as string | null };
+    server.emitRequest({ id: 20, method: 'item/commandExecution/requestApproval', params });
+    server.emitRequest({ id: 21, method: 'item/commandExecution/requestApproval', params: { ...params, itemId: 'command-2' } });
+    await run.resolveRequest('duplicate', { kind: 'allow-once' });
+    expect(server.responses).toEqual([{ id: 21, result: { decision: 'decline' } }, { id: 20, result: { decision: 'accept' } }]);
+    await run.dispose();
   });
 });
