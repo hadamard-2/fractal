@@ -1,8 +1,10 @@
 import { setImmediate } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import type { ConversationRegistry } from '@/main/conversation-registry';
+import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
-import type { Unsubscribe } from '@/main/harness/types';
+import type { ConversationRun, Unsubscribe } from '@/main/harness/types';
 import { conversationKey, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef, parseLoadId } from '@/shared/conversation-ipc';
 
@@ -29,10 +31,15 @@ type Load = {
   unanchored: NativeEvent[];
   inferredFinishes: Map<string, number>;
 };
+type OwnedRun = { ref: ConversationRef; id: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void> };
 
 export class ConversationService {
   private readonly loads = new Map<string, Load>();
   private readonly loadIds = new Map<string, Load>();
+  private readonly ownedRuns = new Map<string, OwnedRun>();
+  private readonly runtimes = new Map<string, ConversationRuntimeController>();
+  private readonly requestOwners = new Map<string, OwnedRun>();
+  private readonly startingRuns = new Set<string>();
   private readonly chunkSize: number;
   private disposed = false;
 
@@ -77,29 +84,127 @@ export class ConversationService {
     throw new Error('Conversation creation is not available yet');
   }
 
-  async continue(ref: ConversationRef, prompt: { text: string }): Promise<void> {
-    void ref; void prompt;
-    throw new Error('Conversation continuation is not available yet');
+  async continue(input: ConversationRef, prompt: { text: string }, rendererId: string): Promise<void> {
+    this.assertAvailable();
+    const ref = parseConversationRef(input);
+    const key = conversationKey(ref);
+    const load = this.loads.get(key);
+    if (!load || load.ref.projectPath !== ref.projectPath) throw new Error('Conversation is not open');
+    if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
+    const summary = await this.registry.validate(ref);
+    if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
+    const previous = this.runtimes.get(key);
+    if (previous?.ownedRunId) {
+      if (summary.runtime !== 'idle') throw new Error('Conversation is not idle');
+      previous.releaseOwnedRun(previous.ownedRunId, 'idle');
+    }
+    const runtime = new ConversationRuntimeController({ onRequestClosed: (requestId) => {
+      const owner = this.requestOwners.get(requestId);
+      if (owner?.runtime !== runtime) return;
+      this.requestOwners.delete(requestId);
+      queueMicrotask(() => {
+        const currentLoad = this.loads.get(key);
+        if (currentLoad && !currentLoad.closed) this.send(currentLoad, { type: 'runtime.changed', runtime: runtime.state });
+      });
+    } });
+    runtime.observe(summary.runtime);
+    if (!runtime.canContinue()) throw new Error('Conversation is not idle');
+    const id = randomUUID();
+    // No await may separate this claim from the final native status check above.
+    runtime.claimOwnedRun(id);
+    this.runtimes.set(key, runtime);
+    this.startingRuns.add(key);
+    this.send(load, { type: 'runtime.changed', runtime: runtime.state });
+    let run: ConversationRun;
+    try { run = await this.registry.resolve(ref).continueConversation(ref, prompt); }
+    catch {
+      this.startingRuns.delete(key);
+      runtime.failOwnedRun(id);
+      this.send(load, { type: 'runtime.changed', runtime: 'failed' });
+      await this.reconcileFailure(ref, runtime, id, load);
+      throw new Error('Conversation continuation failed');
+    }
+    this.startingRuns.delete(key);
+    const owned = { ref, id, run, runtime, settled: Promise.resolve() } satisfies OwnedRun;
+    this.ownedRuns.set(key, owned);
+    owned.settled = this.consumeOwnedRun(owned, rendererId, load);
   }
 
   async interrupt(ref: ConversationRef): Promise<void> {
-    void ref;
-    throw new Error('No owned conversation run is available');
+    const parsed = parseConversationRef(ref);
+    const owned = this.ownedRuns.get(conversationKey(parsed));
+    if (!owned || owned.ref.projectPath !== parsed.projectPath) throw new Error('No owned conversation run is available');
+    await owned.run.interrupt();
   }
 
   async resolveRequest(requestId: string, decision: UserDecision): Promise<void> {
-    void requestId; void decision;
-    throw new Error('No owned conversation request is available');
+    const owned = this.requestOwners.get(requestId);
+    if (!owned) throw new Error('Conversation request is no longer available');
+    await owned.runtime.resolveRequest(requestId, decision);
   }
 
   async denyRequestsForOwner(rendererId: string, reason: string): Promise<void> {
-    // Run/request ownership is introduced with continuation support.
-    void rendererId; void reason;
+    await Promise.all(Array.from(this.ownedRuns.values(), (owned) => owned.runtime.releaseRenderer(rendererId, reason)));
   }
 
   async dispose(): Promise<void> {
     this.disposed = true;
     for (const load of this.loads.values()) this.release(load);
+    const runs = Array.from(this.ownedRuns.values());
+    await Promise.allSettled(runs.map(async (owned) => {
+      await owned.runtime.denyAll('Conversation service closed');
+      await owned.run.interrupt().catch((): void => undefined);
+      await owned.settled;
+    }));
+  }
+
+  private async consumeOwnedRun(owned: OwnedRun, rendererId: string, load: Load): Promise<void> {
+    const key = conversationKey(owned.ref);
+    let failed = false;
+    try {
+      for await (const event of owned.run.events) {
+        if (event.provider !== owned.ref.provider) throw new Error('Mismatched conversation event provider');
+        if (event.payload.kind === 'request-opened' && event.payload.request.status === 'open') {
+          if (this.requestOwners.has(event.payload.request.id)) throw new Error('Conversation request is already owned');
+          owned.runtime.openRequest({ conversationKey: key, runId: owned.id, rendererId, request: event.payload.request, resolve: (requestId, decision) => owned.run.resolveRequest(requestId, decision) });
+          this.requestOwners.set(event.payload.request.id, owned);
+          if (!load.closed) {
+            this.send(load, { type: 'request.opened', request: event.payload.request });
+            this.send(load, { type: 'runtime.changed', runtime: owned.runtime.state });
+          }
+        }
+        if (event.payload.kind === 'request-resolved') {
+          owned.runtime.acknowledgeRequest(event.payload.requestId);
+          if (!load.closed) {
+            this.send(load, { type: 'request.resolved', requestId: event.payload.requestId, decision: event.payload.decision });
+          }
+        }
+        if (!load.closed) this.deliverLive(load, event);
+      }
+    } catch { failed = true; }
+    if (failed) {
+      try { owned.runtime.failOwnedRun(owned.id); } catch { /* A concurrent teardown may have reconciled ownership. */ }
+      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
+    }
+    await owned.runtime.denyAll(failed ? 'Conversation run failed' : 'Conversation run ended');
+    try { await owned.run.dispose(); }
+    catch {
+      failed = true;
+      if (owned.runtime.state !== 'failed') owned.runtime.failOwnedRun(owned.id);
+      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
+    }
+    if (this.ownedRuns.get(key) !== owned) return;
+    this.ownedRuns.delete(key);
+    await this.reconcileFailure(owned.ref, owned.runtime, owned.id, load);
+  }
+
+  private async reconcileFailure(ref: ConversationRef, runtime: ConversationRuntimeController, runId: string, load: Load): Promise<void> {
+    try {
+      const summary = await this.registry.validate(ref);
+      if (summary.runtime !== 'idle') return;
+      runtime.releaseOwnedRun(runId, 'idle');
+      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'idle' });
+    } catch { /* Fail closed until a later native discovery proves idle. */ }
   }
 
   private async load(load: Load): Promise<OpenResult> {

@@ -114,6 +114,12 @@ describe('conversation IPC', () => {
     expect(f.sender.send).toHaveBeenCalledTimes(1);
   });
 
+  test('passes transport-owned renderer identity to continuation', async () => {
+    const f = fixture(); await f.invoke('open', ref, loadId);
+    await f.invoke('continue', ref, { text: 'Go' });
+    expect(f.service.continue).toHaveBeenCalledWith(ref, { text: 'Go' }, '41');
+  });
+
   test('denies another sender taking a load, closing a load, or answering its request', async () => {
     const f = fixture(); await f.invoke('open', ref, loadId);
     f.registration.emit({ ...complete, type: 'request.opened', request: { id: 'request', provider: 'codex', kind: 'approval', title: 'Run', operation: 'ls', status: 'open' } });

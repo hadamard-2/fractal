@@ -152,7 +152,7 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     });
     invoke(CHANNELS.continue, 2, ([input, promptInput], owner) => {
       const ref = parseConversationRef(input), prompt = parsePromptInput(promptInput); requireLoad(owner, ref);
-      return () => service.continue(ref, prompt);
+      return () => service.continue(ref, prompt, String(owner.sender.id));
     });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {
       const ref = parseConversationRef(input); requireLoad(owner, ref);

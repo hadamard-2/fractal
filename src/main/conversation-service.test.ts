@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationService } from '@/main/conversation-service';
-import type { HarnessAdapter, NativeEventSink } from '@/main/harness/types';
+import type { ConversationRun, HarnessAdapter, NativeEventSink } from '@/main/harness/types';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
 import type { ConversationStreamEvent, ConversationSummary, HarnessCapabilities } from '@/shared/conversation-contract';
 import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
@@ -19,6 +19,9 @@ function prose(text: string, final = false, turnId = 'turn'): NativeEvent { retu
 function finish(id = 'turn'): NativeEvent { return event(`finish:${id}`, { kind: 'turn-finished', turnId: id, status: 'completed' }); }
 async function* iterable(events: NativeEvent[]) { yield* events; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
+function approvalRequest(id = 'request-owned') {
+  return { id, kind: 'approval' as const, provider: 'codex' as const, title: 'Run', operation: 'pwd', rememberScope: 'project:/repo', status: 'open' as const };
+}
 function fixture(history: NativeEvent[] = [], historyChunkSize = 50) {
   const sinks: NativeEventSink[] = [];
   const unsubscribe = vi.fn();
@@ -151,15 +154,88 @@ describe('ConversationService', () => {
     for (const historyChunkSize of [0, 51, -1, 1.5, NaN]) expect(() => new ConversationService(f.registry, () => undefined, { historyChunkSize })).toThrow();
   });
 
-  test('keeps runtime mutation unavailable until run ownership is implemented', async () => {
+  test('keeps creation unavailable while continuation requires a proven idle native session', async () => {
     const f = fixture();
     await expect(f.service.create('codex', '/repo')).rejects.toThrow();
-    await expect(f.service.continue(ref, { text: 'Go' })).rejects.toThrow();
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([{ ...summary, runtime: 'active-externally' }]);
+    await f.service.open(ref, loadId);
+    await expect(f.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation is not idle');
     await expect(f.service.interrupt(ref)).rejects.toThrow();
     await expect(f.service.resolveRequest('request', { kind: 'deny' })).rejects.toThrow();
     await f.service.denyRequestsForOwner('renderer', 'closed');
     expect(f.adapter.continueConversation).not.toHaveBeenCalled();
     expect(f.adapter.createConversation).not.toHaveBeenCalled();
+  });
+
+  test('atomically owns one continuation until its stream and disposal settle', async () => {
+    const f = fixture();
+    const item = deferred<IteratorResult<NativeEvent>>();
+    const disposeGate = deferred<void>();
+    const nativeRun: ConversationRun = {
+      events: { [Symbol.asyncIterator]: () => ({ next: () => item.promise }) },
+      interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(() => disposeGate.promise),
+    };
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(nativeRun);
+    await f.service.open(ref, loadId);
+    await f.service.continue(ref, { text: 'Go' }, 'renderer-1');
+    await expect(f.service.continue(ref, { text: 'Again' }, 'renderer-1')).rejects.toThrow('Conversation is not idle');
+    item.resolve({ done: true, value: undefined });
+    await vi.waitFor(() => expect(nativeRun.dispose).toHaveBeenCalled());
+    await expect(f.service.continue(ref, { text: 'Still owned' }, 'renderer-1')).rejects.toThrow('Conversation is not idle');
+    disposeGate.resolve();
+    await vi.waitFor(() => expect(f.events.some((event) => event.type === 'runtime.changed' && event.runtime === 'idle')).toBe(true));
+    expect(vi.mocked(f.adapter.continueConversation)).toHaveBeenCalledTimes(1);
+    await f.service.dispose();
+  });
+
+  test('owns requests by run and renderer, rejects late answers, and denies renderer loss', async () => {
+    const f = fixture();
+    const items = [
+      event('start:owned', { kind: 'turn-started', turnId: 'owned', userMessageId: 'user:owned', text: 'Go' }),
+      event('request:owned', { kind: 'request-opened', turnId: 'owned', request: { id: 'request-owned', kind: 'approval', provider: 'codex', title: 'Run', operation: 'pwd', rememberScope: 'project:/repo', status: 'open' } }),
+    ];
+    const gate = deferred<IteratorResult<NativeEvent>>();
+    let index = 0;
+    const nativeRun: ConversationRun = { events: { [Symbol.asyncIterator]: () => ({ next: () => index < items.length ? Promise.resolve({ done: false as const, value: items[index++] }) : gate.promise }) }, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined) };
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(nativeRun);
+    await f.service.open(ref, loadId);
+    await f.service.continue(ref, { text: 'Go' }, 'renderer-1');
+    await vi.waitFor(() => expect(f.events.some((item) => item.type === 'request.opened')).toBe(true));
+    await f.service.resolveRequest('request-owned', { kind: 'allow-once' });
+    expect(nativeRun.resolveRequest).toHaveBeenCalledWith('request-owned', { kind: 'allow-once' });
+    await expect(f.service.resolveRequest('request-owned', { kind: 'deny' })).rejects.toThrow('Conversation request is no longer available');
+    gate.resolve({ done: true, value: undefined });
+    await vi.waitFor(() => expect(nativeRun.dispose).toHaveBeenCalled());
+
+    const f2 = fixture(); const secondGate = deferred<IteratorResult<NativeEvent>>(); let secondIndex = 0;
+    const secondItems = [items[0], { ...items[1], nativeId: 'request:second', payload: { ...items[1].payload, request: approvalRequest('request-second') } }];
+    const nativeRun2: ConversationRun = { events: { [Symbol.asyncIterator]: () => ({ next: () => secondIndex < secondItems.length ? Promise.resolve({ done: false as const, value: secondItems[secondIndex++] }) : secondGate.promise }) }, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined) };
+    vi.mocked(f2.adapter.continueConversation).mockResolvedValue(nativeRun2);
+    await f2.service.open(ref, nextLoadId); await f2.service.continue(ref, { text: 'Go' }, 'renderer-2');
+    await vi.waitFor(() => expect(f2.events.some((item) => item.type === 'request.opened')).toBe(true));
+    await f2.service.denyRequestsForOwner('renderer-2', 'Fractal window closed');
+    expect(nativeRun2.resolveRequest).toHaveBeenCalledWith('request-second', { kind: 'deny', reason: 'Fractal window closed' });
+    secondGate.resolve({ done: true, value: undefined });
+    await f.service.dispose(); await f2.service.dispose();
+  });
+
+  test('reports continuation failure and returns to idle only when rediscovery proves it', async () => {
+    const uncertain = fixture();
+    let discoveries = 0;
+    vi.mocked(uncertain.adapter.listConversations).mockImplementation(async () => [{ ...summary, runtime: ++discoveries < 3 ? 'idle' : 'unknown' }]);
+    vi.mocked(uncertain.adapter.continueConversation).mockRejectedValue(new Error('/private/provider failure'));
+    await uncertain.service.open(ref, loadId);
+    await expect(uncertain.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation continuation failed');
+    expect(uncertain.events.filter((item) => item.type === 'runtime.changed').map((item) => item.runtime)).toEqual(['active-in-fractal', 'failed']);
+    await uncertain.service.dispose();
+
+    const proven = fixture();
+    vi.mocked(proven.adapter.continueConversation).mockRejectedValue(new Error('/private/provider failure'));
+    await proven.service.open(ref, nextLoadId);
+    await expect(proven.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation continuation failed');
+    expect(proven.events.filter((item) => item.type === 'runtime.changed').map((item) => item.runtime)).toEqual(['active-in-fractal', 'failed', 'idle']);
+    expect(JSON.stringify(proven.events)).not.toContain('private');
+    await proven.service.dispose();
   });
 
   test('does not regress cumulative text when an overlapping buffered update is behind the snapshot', async () => {
