@@ -135,6 +135,22 @@ describe('runClaudeTurn', () => {
     await expect(events).rejects.toThrow('token=[redacted] stream broke');
   });
 
+  test('terminates an owned live child and settles subscribers when a pipe fails before exit', async () => {
+    vi.useFakeTimers();
+    const child = fakeProcess();
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
+    const completion = run.completion.then((): undefined => undefined, (error: unknown): unknown => error);
+    const events = collect(run.events).then((): undefined => undefined, (error: unknown): unknown => error);
+    child.stdout.destroy(new Error('secret=never-show pipe failed'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.signals).toEqual(['SIGINT']);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(child.signals).toEqual(['SIGINT', 'SIGTERM']);
+    await expect(completion).resolves.toMatchObject({ message: 'secret=[redacted] pipe failed' });
+    await expect(events).resolves.toMatchObject({ message: 'secret=[redacted] pipe failed' });
+    vi.useRealTimers();
+  });
+
   test('drains parsable records after interrupt and ignores malformed or partial NDJSON', async () => {
     vi.useFakeTimers(); const child = fakeProcess();
     const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });

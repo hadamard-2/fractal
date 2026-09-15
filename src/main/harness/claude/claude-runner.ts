@@ -59,20 +59,52 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   child.once('close', (code, signal) => settleTerminal({ code, signal }));
   child.once('error', (error) => settleTerminal({ code: null, signal: null, error }));
 
+  let termination: Promise<void> | undefined;
+  const terminateOwned = (): Promise<void> => {
+    termination ??= (async () => {
+      if (terminalValue) return;
+      child.kill('SIGINT');
+      await Promise.race([terminal, delay(2_000)]);
+      if (!terminalValue) child.kill('SIGTERM');
+    })();
+    return termination;
+  };
+
   const eventBuffer = new ReplayEventBuffer();
   const diagnostic = new DiagnosticBuffer();
   const stdoutDrain = drainStdout(child.stdout, eventBuffer);
   const stderrDrain = drainStderr(child.stderr, diagnostic);
+  let pipeError: Error | undefined;
+  let resolvePipeFailure!: (error: Error) => void;
+  const pipeFailure = new Promise<Error>((resolve) => { resolvePipeFailure = resolve; });
+  const observeDrain = (drain: Promise<void>): Promise<void> => drain.catch((error: unknown) => {
+    if (!pipeError) {
+      pipeError = sanitizedError(error);
+      resolvePipeFailure(pipeError);
+    }
+  });
+  const stdoutObserved = observeDrain(stdoutDrain);
+  const stderrObserved = observeDrain(stderrDrain);
   const completion = (async (): Promise<ClaudeRunCompletion> => {
-    const result = await terminal;
+    const first = await Promise.race([
+      terminal.then((result) => ({ kind: 'terminal' as const, result })),
+      pipeFailure.then((error) => ({ kind: 'pipe-failure' as const, error })),
+    ]);
+    if (first.kind === 'pipe-failure') {
+      await Promise.race([terminal, delay(0)]);
+      if (!(terminalValue?.error && isLaunchError(terminalValue.error))) {
+        await terminateOwned();
+        throw first.error;
+      }
+    }
+    const result = terminalValue ?? await terminal;
     if (result.error && isLaunchError(result.error)) {
-      void stdoutDrain.catch((): void => undefined);
-      void stderrDrain.catch((): void => undefined);
+      void stdoutObserved;
+      void stderrObserved;
     } else {
       if (result.error) throw sanitizedError(result.error);
-      const drains = await Promise.allSettled([stdoutDrain, stderrDrain]);
-      const failedDrain = drains.find((drain): drain is PromiseRejectedResult => drain.status === 'rejected');
-      if (failedDrain) throw sanitizedError(failedDrain.reason);
+      await Promise.all([stdoutObserved, stderrObserved]);
+      if (pipeError) throw pipeError;
     }
     for await (const event of asAsync(await options.rereadNative())) eventBuffer.publish(event);
     eventBuffer.close();
@@ -83,6 +115,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     eventBuffer.fail(safeError);
     throw safeError;
   });
+  void completion.catch((): void => undefined);
 
   const eventStream: AsyncIterable<NativeEvent> = {
     async *[Symbol.asyncIterator](): AsyncGenerator<NativeEvent> {
@@ -93,11 +126,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   return {
     events: eventStream, completion,
     async interrupt(): Promise<void> {
-      if (terminalValue) return;
-      child.kill('SIGINT');
-      await Promise.race([terminal, delay(2_000)]);
-      if (!terminalValue) child.kill('SIGTERM');
-      await terminal;
+      await terminateOwned();
     },
   };
 }
