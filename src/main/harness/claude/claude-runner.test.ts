@@ -76,6 +76,19 @@ describe('runClaudeTurn', () => {
     expect(events.filter((event) => event.nativeId === 'user-1')).toEqual([authoritative]);
   });
 
+  test('active subscribers receive changed authoritative replacements but no identical duplicates', async () => {
+    const child = fakeProcess();
+    const streamed: NativeEvent = { provider: 'claude', nativeId: 'live', nativeType: 'user', observedAt: 0, payload: { kind: 'turn-started', turnId: 'live', userMessageId: 'live', text: 'stream', createdAt: 0 } };
+    const authoritative: NativeEvent = { provider: 'claude', nativeId: 'live', nativeType: 'user', observedAt: 2, payload: { kind: 'turn-started', turnId: 'live', userMessageId: 'live', text: 'file', createdAt: 0 } };
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [authoritative, authoritative] });
+    const iterator = run.events[Symbol.asyncIterator]();
+    child.stdout.write('{"type":"user","uuid":"live","message":{"role":"user","content":"stream"}}\n');
+    await expect(iterator.next()).resolves.toMatchObject({ value: streamed });
+    child.finish();
+    await expect(iterator.next()).resolves.toMatchObject({ value: authoritative });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
   test('owns draining and completion when events are never consumed', async () => {
     const child = fakeProcess(); const rereadNative = vi.fn(async () => []);
     const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative });
@@ -83,6 +96,15 @@ describe('runClaudeTurn', () => {
     await expect(run.completion).resolves.toMatchObject({ exitCode: 0 });
     expect(rereadNative).toHaveBeenCalledOnce();
     expect(await collect(run.events)).toHaveLength(1);
+  });
+
+  test('publishes normalized stdout before the child exits', async () => {
+    const child = fakeProcess();
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
+    const iterator = run.events[Symbol.asyncIterator]();
+    child.stdout.write('{"type":"user","uuid":"live","message":{"role":"user","content":"live now"}}\n');
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { nativeId: 'live' } });
+    child.finish(); await run.completion; await iterator.return?.();
   });
 
   test('keeps draining and supports late replay after an iterator returns early', async () => {
@@ -102,6 +124,15 @@ describe('runClaudeTurn', () => {
     await expect(run.completion).resolves.toMatchObject({ exitCode: null, diagnostic: expect.stringContaining('spawn missing ENOENT') });
     await run.interrupt(); expect(child.signals).toEqual([]);
     expect(await collect(run.events)).toEqual([]);
+  });
+
+  test('surfaces a sanitized post-launch stdout failure to completion and subscribers', async () => {
+    const child = fakeProcess();
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
+    const events = collect(run.events);
+    child.stdout.destroy(new Error('token=private-value stream broke')); child.finish(1);
+    await expect(run.completion).rejects.toThrow('token=[redacted] stream broke');
+    await expect(events).rejects.toThrow('token=[redacted] stream broke');
   });
 
   test('drains parsable records after interrupt and ignores malformed or partial NDJSON', async () => {
