@@ -67,6 +67,40 @@ describe('ClaudePermissionBridge', () => {
     }
   });
 
+  test('enforces approval and question routing capabilities independently', async () => {
+    const approvalsOnly = vi.fn(async () => ({ kind: 'allow-once' } as const));
+    const approvalBridge = await ClaudePermissionBridge.start({ tempDir, onRequest: approvalsOnly, approvals: true, questions: false });
+    try {
+      await expect(callTool(approvalBridge, {
+        tool_name: 'AskUserQuestion', tool_use_id: 'question-disabled',
+        input: { questions: [{ question: 'Where?', header: 'deploy', multiSelect: false }] },
+      })).resolves.toEqual({ behavior: 'deny', message: 'Question routing is unavailable' });
+      expect(approvalsOnly).not.toHaveBeenCalled();
+    } finally { await approvalBridge.dispose(); }
+
+    const questionsOnly = vi.fn(async () => ({ kind: 'answer', answers: { deploy: 'Production' } } as const));
+    const questionBridge = await ClaudePermissionBridge.start({ tempDir, onRequest: questionsOnly, approvals: false, questions: true });
+    try {
+      await expect(callTool(questionBridge, command)).resolves.toEqual({ behavior: 'deny', message: 'Approval routing is unavailable' });
+      expect(questionsOnly).not.toHaveBeenCalled();
+    } finally { await questionBridge.dispose(); }
+  });
+
+  test('denies multi-question prompts without partially routing them', async () => {
+    const onRequest = vi.fn(async () => ({ kind: 'answer', answers: {} } as const));
+    const bridge = await ClaudePermissionBridge.start({ tempDir, onRequest, approvals: true, questions: true });
+    try {
+      await expect(callTool(bridge, {
+        tool_name: 'AskUserQuestion', tool_use_id: 'questions-many',
+        input: { questions: [
+          { question: 'Where?', header: 'deploy', multiSelect: false },
+          { question: 'When?', header: 'timing', multiSelect: false },
+        ] },
+      })).resolves.toEqual({ behavior: 'deny', message: 'Multiple questions are not supported' });
+      expect(onRequest).not.toHaveBeenCalled();
+    } finally { await bridge.dispose(); }
+  });
+
   test('denies malformed, oversized, timed-out, disconnected, and disposed work', async () => {
     const onRequest = vi.fn((_request: BlockingRequest, signal: AbortSignal): Promise<UserDecision> => new Promise((resolve) => signal.addEventListener('abort', () => resolve({ kind: 'deny' }), { once: true })));
     const bridge = await ClaudePermissionBridge.start({ tempDir, onRequest, timeoutMs: 10 });

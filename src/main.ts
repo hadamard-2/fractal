@@ -10,6 +10,7 @@ import { CodexAppServer } from '@/main/harness/codex/codex-app-server';
 import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
+import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
 import { registerSettingsIpc } from '@/main/settings-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -207,13 +208,15 @@ app.on('ready', () => {
     codexServer = await CodexAppServer.start(undefined, conversationStartupController.signal);
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
+    const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
     const registry = new ConversationRegistry([
       new CodexAdapter(codexServer, { realpath: canonicalPath }),
       new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
         realpath: canonicalPath,
         tempDir: app.getPath('temp'),
+        ownedProcesses: claudeOwnedProcesses,
         probe: () => probeClaude(defaultClaudeExec),
-        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec: defaultClaudeExec }),
+        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec }),
       }),
     ], canonicalPath);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));

@@ -4,6 +4,7 @@ import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import type { NativeEvent } from '@/main/harness/reconciler';
 import type { BlockingRequest, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
 import type { ClaudeTurnRun } from './claude-runner';
+import { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
 const root = path.join(import.meta.dirname, '__fixtures__');
 const ref = { provider: 'claude' as const, nativeSessionId: 'claude-session-1', projectPath: '/canonical/fractal' };
@@ -81,6 +82,53 @@ describe('Claude adapter', () => {
     await expect(run.resolveRequest('approval-1', { kind: 'deny' })).rejects.toThrow('no longer available');
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved' } } });
     finish(); await run.dispose(); expect(disposeBridge).toHaveBeenCalledOnce();
+  });
+
+  test('denies and audits a pending bridge request before closing a naturally ended turn', async () => {
+    let route!: (request: BlockingRequest, signal: AbortSignal) => Promise<UserDecision>;
+    const controller = new AbortController();
+    const startBridge = vi.fn(async (options: { onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision> }) => {
+      route = options.onRequest;
+      return { configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: async () => controller.abort('Permission bridge closed') };
+    });
+    let finish!: () => void;
+    const runTurn = vi.fn((): ClaudeTurnRun => ({
+      events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
+      completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
+    }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', startBridge, runTurn });
+    const run = await adapter.continueConversation(ref, { text: 'continue' });
+    const decision = route({ id: 'pending', kind: 'approval', provider: 'claude', title: 'Run', operation: 'pnpm test', status: 'open' }, controller.signal);
+    finish();
+    const events = await collect(run.events);
+    await expect(decision).resolves.toEqual({ kind: 'deny', reason: 'Permission bridge closed' });
+    expect(events.map((event) => event.payload.kind)).toEqual(['request-opened', 'request-resolved']);
+    expect(events[1]?.payload).toMatchObject({ decision: { kind: 'deny', reason: 'Permission bridge closed' } });
+  });
+
+  test('tracks owned processes before spawn and clears ownership on success and failure', async () => {
+    const ownedProcesses = new ClaudeOwnedProcessRegistry();
+    let finish!: () => void;
+    const runTurn = vi.fn((): ClaudeTurnRun => {
+      expect(ownedProcesses.has(ref)).toBe(true);
+      return {
+        events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
+        completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
+      };
+    });
+    const startBridge = vi.fn(async () => ({ configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge, ownedProcesses });
+    const successful = await adapter.continueConversation(ref, { text: 'continue' });
+    expect(ownedProcesses.has(ref)).toBe(true); finish(); await collect(successful.events);
+    expect(ownedProcesses.has(ref)).toBe(false);
+
+    runTurn.mockImplementationOnce((): ClaudeTurnRun => {
+      expect(ownedProcesses.has(ref)).toBe(true);
+      return { events: (async function* () { yield* [] as NativeEvent[]; throw new Error('stream failed'); })(), completion: Promise.resolve({ exitCode: 1, signal: null }), interrupt: vi.fn(async () => undefined) };
+    });
+    const failed = await adapter.continueConversation(ref, { text: 'again' });
+    await expect(collect(failed.events)).rejects.toThrow('stream failed');
+    expect(ownedProcesses.has(ref)).toBe(false);
   });
 
   test('creates UUID drafts in memory, uses session-id once, and later resumes the exact native session', async () => {

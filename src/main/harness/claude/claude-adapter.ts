@@ -8,10 +8,11 @@ import type { ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSi
 import type { NativeEvent } from '@/main/harness/reconciler';
 import type { BlockingRequest, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
+import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
 const NO_CAPABILITIES: HarnessCapabilities = { create: false, partialStreaming: false, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
 interface BridgeHandle { configPath: string; toolName: string; dispose(): Promise<void> }
-interface BridgeStartOptions { tempDir: string; onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision> }
+interface BridgeStartOptions { tempDir: string; onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision>; approvals: boolean; questions: boolean }
 interface ClaudeAdapterDependencies {
   realpath?: Realpath;
   probe?: () => Promise<HarnessStatus>;
@@ -22,6 +23,7 @@ interface ClaudeAdapterDependencies {
   tempDir?: string;
   executable?: string;
   rereadNative?: (ref: ConversationRef) => Promise<NativeEvent[]>;
+  ownedProcesses?: ClaudeOwnedProcessRegistry;
 }
 
 export class ClaudeAdapter implements HarnessAdapter {
@@ -91,10 +93,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     let bridge: BridgeHandle | undefined;
     if (status.capabilities.approvals || status.capabilities.questions) {
       if (!this.dependencies.startBridge && !this.dependencies.tempDir) throw new Error('Claude permission bridge temp path is unavailable');
-      bridge = await (this.dependencies.startBridge ?? ((options) => ClaudePermissionBridge.start(options)))({ tempDir: this.dependencies.tempDir ?? '', onRequest });
+      bridge = await (this.dependencies.startBridge ?? ((options) => ClaudePermissionBridge.start(options)))({
+        tempDir: this.dependencies.tempDir ?? '', onRequest,
+        approvals: status.capabilities.approvals, questions: status.capabilities.questions,
+      });
     }
     let bridgeDisposal: Promise<void> | undefined;
     const disposeBridge = (): Promise<void> => bridgeDisposal ??= bridge?.dispose() ?? Promise.resolve();
+    const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
     let runner: ClaudeTurnRun;
     try {
       runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt, executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
@@ -103,18 +109,29 @@ export class ClaudeAdapter implements HarnessAdapter {
         return events;
       } });
     } catch (error) {
-      if (newSession && draft) this.drafts.set(ref.nativeSessionId, draft); await disposeBridge(); throw error;
+      releaseOwned(); if (newSession && draft) this.drafts.set(ref.nativeSessionId, draft); await disposeBridge(); throw error;
     }
     let disposed = false;
     const pump = (async () => {
-      try { for await (const event of runner.events) { if (event.payload.kind === 'turn-started') currentTurnId = event.payload.turnId; queue.push(event); } queue.close(); }
-      catch (error) { queue.fail(error); }
-      finally { await disposeBridge(); }
+      let failure: unknown;
+      try { for await (const event of runner.events) { if (event.payload.kind === 'turn-started') currentTurnId = event.payload.turnId; queue.push(event); } }
+      catch (error) { failure = error; }
+      finally {
+        await disposeBridge();
+        releaseOwned();
+        if (failure) queue.fail(failure); else queue.close();
+      }
     })();
     void pump.catch((): void => undefined);
     return {
-      events: queue, interrupt: () => runner.interrupt(), resolveRequest: async (requestId, decision) => settle(requestId, decision),
-      dispose: async () => { if (disposed) return; disposed = true; for (const id of [...pending.keys()]) settle(id, { kind: 'deny', reason: 'Conversation run ended' }); await disposeBridge(); },
+      events: queue,
+      interrupt: async () => { await runner.interrupt(); releaseOwned(); },
+      resolveRequest: async (requestId, decision) => settle(requestId, decision),
+      dispose: async () => {
+        if (disposed) return; disposed = true;
+        for (const id of [...pending.keys()]) settle(id, { kind: 'deny', reason: 'Conversation run ended' });
+        await runner.interrupt().catch((): void => undefined); releaseOwned(); await disposeBridge();
+      },
     };
   }
 

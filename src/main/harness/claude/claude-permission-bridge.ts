@@ -35,6 +35,8 @@ interface StartOptions {
   tempDir: string;
   onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision>;
   timeoutMs?: number;
+  approvals?: boolean;
+  questions?: boolean;
 }
 
 export class ClaudePermissionBridge {
@@ -52,6 +54,7 @@ export class ClaudePermissionBridge {
     private readonly closeMcp: () => Promise<void>,
     private readonly timeoutMs: number,
     private readonly onRequest: StartOptions['onRequest'],
+    private readonly capabilities: { approvals: boolean; questions: boolean },
     values: { token: string; port: number; configPath: string; mcpToolName: string; toolName: string },
   ) {
     this.token = values.token;
@@ -109,6 +112,8 @@ export class ClaudePermissionBridge {
       throw error;
     }
     const bridge = new ClaudePermissionBridge(httpServer, () => handler.close(), options.timeoutMs ?? 10 * 60 * 1_000, options.onRequest, {
+      approvals: options.approvals ?? true, questions: options.questions ?? true,
+    }, {
       token, port, configPath, mcpToolName, toolName,
     });
     bridgeRef.current = bridge;
@@ -126,6 +131,11 @@ export class ClaudePermissionBridge {
   private async route(value: unknown, clientSignal?: AbortSignal): Promise<ClaudePermissionResult> {
     const parsed = TOOL_INPUT.safeParse(value);
     if (!parsed.success || this.disposed) return denial(this.disposed ? 'Permission bridge closed' : 'Invalid permission request');
+    if (parsed.data.tool_name === 'AskUserQuestion') {
+      if (!this.capabilities.questions) return denial('Question routing is unavailable');
+      const questions = QUESTION_INPUT.safeParse(parsed.data.input);
+      if (questions.success && questions.data.questions.length !== 1) return denial('Multiple questions are not supported');
+    } else if (!this.capabilities.approvals) return denial('Approval routing is unavailable');
     const request = blockingRequest(parsed.data);
     if (!request) return denial('Invalid permission request');
     const controller = new AbortController();
