@@ -125,12 +125,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     void pump.catch((): void => undefined);
     return {
       events: queue,
-      interrupt: async () => { await runner.interrupt(); releaseOwned(); },
+      interrupt: () => runner.interrupt(),
       resolveRequest: async (requestId, decision) => settle(requestId, decision),
       dispose: async () => {
         if (disposed) return; disposed = true;
         for (const id of [...pending.keys()]) settle(id, { kind: 'deny', reason: 'Conversation run ended' });
-        await runner.interrupt().catch((): void => undefined); releaseOwned(); await disposeBridge();
+        await runner.interrupt().catch((): void => undefined);
+        await disposeBridge();
+        await pump;
       },
     };
   }

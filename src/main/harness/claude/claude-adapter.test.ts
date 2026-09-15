@@ -131,6 +131,33 @@ describe('Claude adapter', () => {
     expect(ownedProcesses.has(ref)).toBe(false);
   });
 
+  test('retains ownership after interrupt and during disposal until the process stream settles', async () => {
+    const ownedProcesses = new ClaudeOwnedProcessRegistry();
+    let finish!: () => void;
+    const interrupt = vi.fn(async () => undefined);
+    const runTurn = vi.fn((): ClaudeTurnRun => ({
+      events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
+      completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt,
+    }));
+    const startBridge = vi.fn(async () => ({ configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge, ownedProcesses });
+    const run = await adapter.continueConversation(ref, { text: 'continue' });
+
+    await run.interrupt();
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(ownedProcesses.has(ref)).toBe(true);
+
+    let disposed = false;
+    const disposal = run.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+    expect(ownedProcesses.has(ref)).toBe(true);
+
+    finish();
+    await disposal;
+    expect(ownedProcesses.has(ref)).toBe(false);
+  });
+
   test('creates UUID drafts in memory, uses session-id once, and later resumes the exact native session', async () => {
     const draftId = '123e4567-e89b-42d3-a456-426614174000';
     const calls: Array<{ newSession?: boolean }> = [];
