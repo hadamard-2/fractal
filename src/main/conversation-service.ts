@@ -41,6 +41,7 @@ export class ConversationService {
   private readonly runtimes = new Map<string, ConversationRuntimeController>();
   private readonly requestOwners = new Map<string, OwnedRun>();
   private readonly startingRuns = new Map<string, StartingRun>();
+  private readonly drafts = new Map<string, ConversationSummary>();
   private readonly chunkSize: number;
   private disposed = false;
 
@@ -66,23 +67,40 @@ export class ConversationService {
     if (previous) this.release(previous);
     const load: Load = {
       ref, loadId, seq: 0, closed: false, phase: 'watching',
-      promise: Promise.resolve().then(() => this.load(load)),
+      promise: Promise.resolve(undefined as never),
       initial: new Map(), buffered: new Map(), projector: new TurnProjector(), journal: new Map(), observations: new Map(), turns: new Map(), unanchored: [], inferredFinishes: new Map(),
     };
     this.loads.set(key, load);
     this.loadIds.set(loadId, load);
+    const draft = this.drafts.get(key);
+    if (draft?.ref.projectPath === ref.projectPath) {
+      load.phase = 'live';
+      load.promise = Promise.resolve({ summary: structuredClone(draft), capabilities: this.registry.resolve(ref).capabilities() });
+      this.send(load, { type: 'history.complete' });
+      return load.promise;
+    }
+    load.promise = Promise.resolve().then(() => this.load(load));
     return load.promise;
   }
 
   async close(input: ConversationRef): Promise<void> {
     const ref = parseConversationRef(input);
     const load = this.loads.get(conversationKey(ref));
-    if (load && load.ref.projectPath === ref.projectPath) this.release(load);
+    if (load && load.ref.projectPath === ref.projectPath) {
+      this.release(load);
+      this.drafts.delete(conversationKey(ref));
+    }
   }
 
   async create(provider: ProviderId, projectPath: string): Promise<ConversationRef> {
-    void provider; void projectPath;
-    throw new Error('Conversation creation is not available yet');
+    this.assertAvailable();
+    const ref = await this.registry.create(provider, projectPath);
+    if (provider === 'claude') {
+      this.drafts.set(conversationKey(ref), { ref, title: 'New Claude conversation', updatedAt: Date.now(), runtime: 'idle', captureCompleteness: 'complete' });
+    } else {
+      await this.registry.refreshProvider(provider);
+    }
+    return ref;
   }
 
   async continue(input: ConversationRef, prompt: { text: string }, rendererId: string): Promise<void> {
@@ -92,7 +110,8 @@ export class ConversationService {
     const load = this.loads.get(key);
     if (!load || load.ref.projectPath !== ref.projectPath) throw new Error('Conversation is not open');
     if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
-    const summary = await this.registry.validate(ref);
+    const draft = this.drafts.get(key);
+    const summary = draft?.ref.projectPath === ref.projectPath ? draft : await this.registry.validate(ref);
     if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
     const previous = this.runtimes.get(key);
     if (previous?.ownedRunId) {
@@ -222,8 +241,12 @@ export class ConversationService {
       if (conversationKey(loaded.summary.ref) !== conversationKey(ref) || loaded.summary.ref.projectPath !== ref.projectPath) return;
       for await (const event of loaded.events) if (event.provider !== ref.provider) throw new Error('Mismatched conversation event provider');
       if (loaded.summary.runtime !== 'idle') return;
+      this.drafts.delete(conversationKey(ref));
       runtime.releaseOwnedRun(runId, 'idle');
-      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'idle' });
+      if (!load.closed) {
+        this.send(load, { type: 'summary.updated', summary: loaded.summary });
+        this.send(load, { type: 'runtime.changed', runtime: 'idle' });
+      }
     } catch { /* Fail closed until a later native discovery proves idle. */ }
   }
 

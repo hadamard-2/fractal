@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { Blocks, FolderPlus, MessageCirclePlus, Search } from 'lucide-react';
+import { Blocks, FolderPlus, Search } from 'lucide-react';
 import { useRef } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import type { NavSelection } from '@/components/sidebar-03/nav-main';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import type { ConversationRef } from '@/shared/conversation-contract';
+import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 
 /*
  * Widths for the drag-to-resize handle, in px. The sidebar's own geometry is
@@ -144,7 +145,7 @@ export function DashboardSidebar({
   onOpenSettings,
   selected,
   onItemSelect,
-  onNewChat,
+  onConversationCreated,
   width,
   onWidthChange,
   onResizingChange,
@@ -163,7 +164,7 @@ export function DashboardSidebar({
   onItemSelect?: (item: NavSelection) => void;
   // Creates a conversation and switches this mode to it; ExecuteMode owns
   // the conversationId state.
-  onNewChat?: () => void;
+  onConversationCreated?: (ref: ConversationRef) => void;
   // Chosen sidebar width in px, owned by App for the same reason as the
   // open/collapsed state. Null means the 16rem default.
   width?: number | null;
@@ -172,7 +173,7 @@ export function DashboardSidebar({
   onCollapse?: () => void;
 }) {
   const { state } = useSidebar();
-  const { projects, error } = useConversationHistory();
+  const { projects, providers, error } = useConversationHistory();
   const isCollapsed = state === 'collapsed';
 
   return (
@@ -256,10 +257,7 @@ export function DashboardSidebar({
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={onNewChat} tooltip="New Chat">
-              <MessageCirclePlus />
-              <span>New Chat</span>
-            </SidebarMenuButton>
+            <NewConversationMenu providers={providers} onCreated={(ref) => onConversationCreated?.(ref)} />
           </SidebarMenuItem>
         </SidebarMenu>
         {/*

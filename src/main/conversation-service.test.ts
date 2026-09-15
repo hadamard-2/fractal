@@ -9,7 +9,7 @@ import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session', projectPath: '/repo' };
 const loadId = '00000000-0000-4000-8000-000000000001';
 const nextLoadId = '00000000-0000-4000-8000-000000000002';
-const capabilities: HarnessCapabilities = { create: false, partialStreaming: true, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
+const capabilities: HarnessCapabilities = { create: true, partialStreaming: true, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
 const summary: ConversationSummary = { ref, title: 'Session', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' };
 function event(nativeId: string, payload: NativeEventPayload): NativeEvent {
   return { provider: 'codex', nativeId, nativeType: payload.kind, observedAt: 1, payload };
@@ -26,12 +26,12 @@ function runFixture(): ConversationRun & { events: { [Symbol.asyncIterator]: Ret
   const iterator = vi.fn(() => ({ next: vi.fn(async () => ({ done: true as const, value: undefined })) }));
   return { events: { [Symbol.asyncIterator]: iterator }, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined) };
 }
-function fixture(history: NativeEvent[] = [], historyChunkSize = 50) {
+function fixture(history: NativeEvent[] = [], historyChunkSize = 50, provider: 'codex' | 'claude' = 'codex') {
   const sinks: NativeEventSink[] = [];
   const unsubscribe = vi.fn();
   const adapter: HarnessAdapter = {
-    provider: 'codex', capabilities: () => capabilities,
-    probe: vi.fn(async () => ({ provider: 'codex' as const, availability: 'available' as const, capabilities })),
+    provider, capabilities: () => capabilities,
+    probe: vi.fn(async () => ({ provider, availability: 'available' as const, capabilities })),
     listConversations: vi.fn(async () => [summary]),
     loadConversation: vi.fn(async () => ({ summary, events: iterable(history) })),
     watchConversation: vi.fn(async (_ref, sink) => { sinks.push(sink); return unsubscribe; }),
@@ -160,7 +160,8 @@ describe('ConversationService', () => {
 
   test('keeps creation unavailable while continuation requires a proven idle native session', async () => {
     const f = fixture();
-    await expect(f.service.create('codex', '/repo')).rejects.toThrow();
+    vi.mocked(f.adapter.createConversation).mockResolvedValue(ref);
+    await expect(f.service.create('codex', '/repo')).resolves.toEqual(ref);
     vi.mocked(f.adapter.listConversations).mockResolvedValue([{ ...summary, runtime: 'active-externally' }]);
     await f.service.open(ref, loadId);
     await expect(f.service.continue(ref, { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation is not idle');
@@ -168,7 +169,31 @@ describe('ConversationService', () => {
     await expect(f.service.resolveRequest('request', { kind: 'deny' })).rejects.toThrow();
     await f.service.denyRequestsForOwner('renderer', 'closed');
     expect(f.adapter.continueConversation).not.toHaveBeenCalled();
-    expect(f.adapter.createConversation).not.toHaveBeenCalled();
+    expect(f.adapter.createConversation).toHaveBeenCalledWith('/repo');
+  });
+
+  test('opens an unsent Claude draft as empty native history and forgets it after reconciliation', async () => {
+    const f = fixture([], 50, 'claude');
+    const claudeRef = { provider: 'claude' as const, nativeSessionId: '00000000-0000-4000-8000-000000000099', projectPath: '/repo' };
+    vi.mocked(f.adapter.probe).mockResolvedValue({ provider: 'claude', availability: 'available', capabilities });
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([]);
+    vi.mocked(f.adapter.createConversation).mockResolvedValue(claudeRef);
+    const created = await f.service.create('claude', '/repo');
+    const opened = await f.service.open(created, loadId);
+    expect(opened.summary).toEqual({ ref: claudeRef, title: 'New Claude conversation', updatedAt: expect.any(Number), runtime: 'idle', captureCompleteness: 'complete' });
+    expect(f.events).toContainEqual({ type: 'history.complete', ref: claudeRef, loadId, seq: 0 });
+    expect(f.adapter.watchConversation).not.toHaveBeenCalled();
+    expect(f.adapter.loadConversation).not.toHaveBeenCalled();
+
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([{ ref: claudeRef, title: 'First native prompt', updatedAt: 2, runtime: 'idle', captureCompleteness: 'complete' }]);
+    vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary: { ref: claudeRef, title: 'First native prompt', updatedAt: 2, runtime: 'idle', captureCompleteness: 'complete' }, events: iterable([]) });
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(runFixture());
+    await f.service.continue(claudeRef, { text: 'First native prompt' }, 'renderer');
+    await vi.waitFor(() => expect(f.events.some((item) => item.type === 'summary.updated')).toBe(true));
+    await f.service.close(claudeRef);
+    await f.service.open(claudeRef, nextLoadId);
+    expect(f.adapter.loadConversation).toHaveBeenCalled();
+    await f.service.dispose();
   });
 
   test('atomically owns one continuation until its stream and disposal settle', async () => {

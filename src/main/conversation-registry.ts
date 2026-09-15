@@ -34,6 +34,16 @@ export class ConversationRegistry {
     return adapter;
   }
 
+  async create(provider: ProviderId, projectPath: string): Promise<ConversationRef> {
+    await this.refreshProvider(provider);
+    const adapter = this.adapters.get(provider);
+    const status = this.statuses.get(provider);
+    if (!adapter || status?.availability !== 'available' || !status.capabilities.create) throw new Error('Conversation creation is not available');
+    const ref = parseConversationRef(await adapter.createConversation(projectPath));
+    if (ref.provider !== provider || ref.projectPath !== projectPath) throw new Error('Created conversation does not match the selected provider and project');
+    return structuredClone(ref);
+  }
+
   async validate(ref: ConversationRef): Promise<ConversationSummary> {
     const parsed = parseConversationRef(ref);
     this.resolve(parsed);

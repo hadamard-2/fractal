@@ -51,7 +51,6 @@ export function ExecuteMode({
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
   const { providers, loading, error } = useConversationHistory();
-  const [creationError, setCreationError] = useState<string | null>(null);
   // Selection lives here, not in the sidebar: the header below shows the
   // picked item's title, and only this component renders both.
   const [selectedItem, setSelectedItem] = useState<NavSelection | null>(null);
@@ -62,29 +61,6 @@ export function ExecuteMode({
     by the length of its own transition.
   */
   const [resizing, setResizing] = useState(false);
-
-  // The sidebar's New Chat action creates the conversation this mode then
-  // displays; there is no in-panel affordance any more, just the logo.
-  const startNewChat = async () => {
-    // Keep creation native and capability-gated while provider creation is
-    // implemented in the runtime tasks. Prefer the selected provider.
-    const provider = providers.find((item) => item.provider === selectedRef?.provider)
-      ?? providers.find((item) => item.availability === 'available' && item.capabilities.create);
-    if (!provider || provider.availability !== 'available' || !provider.capabilities.create) {
-      setCreationError('New conversations are not available from this provider yet. Select an existing conversation from the sidebar.');
-      return;
-    }
-    setCreationError(null);
-    try {
-      const ref = await window.fractal.conversations.create({ provider: provider.provider });
-      if (ref) {
-        setSelectedRef(ref);
-        setSelectedItem(null);
-      }
-    } catch (cause) {
-      setCreationError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
 
   return (
     <SidebarProvider
@@ -100,7 +76,10 @@ export function ExecuteMode({
     >
       <DashboardSidebar
         onCollapse={() => onSidebarOpenChange?.(false)}
-        onNewChat={startNewChat}
+        onConversationCreated={(ref) => {
+          setSelectedRef(ref);
+          setSelectedItem(null);
+        }}
         onOpenSettings={onOpenSettings}
         onResizingChange={setResizing}
         onWidthChange={onSidebarWidthChange}
@@ -173,7 +152,6 @@ export function ExecuteMode({
           )}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {creationError && <p className="px-4 py-2 text-sm text-muted-foreground" role="status">{creationError}</p>}
           {selectedRef ? (
             <ConversationPanel conversationRef={selectedRef} />
           ) : (
