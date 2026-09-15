@@ -64,6 +64,14 @@ describe('Codex native normalization', () => {
     expect(JSON.stringify(events)).not.toContain('private');
   });
 
+  test('exposes only the generated session scope for remembered permission grants', () => {
+    const events = normalizeCodexServerRequest({ id: 30, method: 'item/permissions/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'permission', environmentId: null, startedAtMs: 3,
+      cwd: '/repo', reason: null, permissions: { network: { enabled: true }, fileSystem: null },
+    } } as never);
+    expect(events).toMatchObject([{ payload: { kind: 'request-opened', request: { id: '30', kind: 'approval', rememberScope: 'session' } } }]);
+  });
+
   test('quarantines malformed known items, preserves later valid items, and keeps empty active turns', () => {
     const malformed = {
       ...threadRead.thread,

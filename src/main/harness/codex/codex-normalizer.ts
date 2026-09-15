@@ -118,7 +118,8 @@ export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent
         : request.method === 'item/fileChange/requestApproval' ? 'File change' : 'Permission change';
       return [event(`request:${String(request.id)}`, request.method, request.params.startedAtMs, {
         kind: 'request-opened', turnId: request.params.turnId,
-        request: { id: requestId, kind: 'approval', provider: 'codex', title: `Approve ${operation.toLowerCase()}`, operation, status: 'open' },
+        request: { id: requestId, kind: 'approval', provider: 'codex', title: `Approve ${operation.toLowerCase()}`, operation,
+          ...(request.method === 'item/permissions/requestApproval' ? { rememberScope: 'session' } : {}), status: 'open' },
       })];
     }
     default:

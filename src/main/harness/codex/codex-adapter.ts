@@ -127,7 +127,7 @@ export class CodexAdapter implements HarnessAdapter {
     const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
       if (!turnId) { bufferedTraffic.push({ kind: 'request', value: request }); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
-      if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/tool/requestUserInput') {
+      if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/permissions/requestApproval' && request.method !== 'item/tool/requestUserInput') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
         return;
       }
@@ -234,11 +234,19 @@ export class CodexAdapter implements HarnessAdapter {
       else this.server.respondError(id, -32602, 'Unsupported approval decision');
       return;
     }
+    if (request.method === 'item/permissions/requestApproval') {
+      const permissions = grantedPermissions(request.params.permissions);
+      if (decision.kind === 'allow-once') this.server.respond(id, { permissions, scope: 'turn' });
+      else if (decision.kind === 'allow-and-remember' && decision.scope === 'session') this.server.respond(id, { permissions, scope: 'session' });
+      else this.server.respond(id, { permissions: {}, scope: 'turn' });
+      return;
+    }
     this.server.respondError(id, -32601, 'Unsupported Codex request');
   }
 
   private denyRequest(id: string | number, request: Parameters<typeof normalizeCodexServerRequest>[0]): void {
     if (request.method === 'item/commandExecution/requestApproval' || request.method === 'item/fileChange/requestApproval') this.server.respond(id, { decision: 'decline' });
+    else if (request.method === 'item/permissions/requestApproval') this.server.respond(id, { permissions: {}, scope: 'turn' });
     else this.server.respondError(id, -32000, 'Fractal disconnected before the request was resolved');
   }
 
@@ -422,3 +430,10 @@ function isValidRunCompletion(notification: unknown, threadId: string, turnId: s
 }
 
 function validNullableNumber(value: unknown): boolean { return value === null || (typeof value === 'number' && Number.isFinite(value)); }
+
+function grantedPermissions(permissions: Extract<Parameters<typeof normalizeCodexServerRequest>[0], { method: 'item/permissions/requestApproval' }>['params']['permissions']) {
+  return {
+    ...(permissions.network === null ? {} : { network: permissions.network }),
+    ...(permissions.fileSystem === null ? {} : { fileSystem: permissions.fileSystem }),
+  };
+}

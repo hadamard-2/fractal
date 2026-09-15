@@ -352,4 +352,43 @@ describe('Codex native continuation', () => {
     expect(server.responses).toEqual([{ id: 21, result: { decision: 'decline' } }, { id: 20, result: { decision: 'accept' } }]);
     await run.dispose();
   });
+
+  test.each([
+    { decision: { kind: 'allow-once' } as const, result: { permissions: { network: { enabled: true }, fileSystem: { read: ['/repo'], write: ['/repo'], globScanMaxDepth: 4 } }, scope: 'turn' } },
+    { decision: { kind: 'allow-and-remember', scope: 'session' } as const, result: { permissions: { network: { enabled: true }, fileSystem: { read: ['/repo'], write: ['/repo'], globScanMaxDepth: 4 } }, scope: 'session' } },
+    { decision: { kind: 'deny', reason: 'No' } as const, result: { permissions: {}, scope: 'turn' } },
+  ])('responds to a permission request with the generated $result.scope grant shape', async ({ decision, result }) => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emitRequest({ id: 30, method: 'item/permissions/requestApproval', params: permissionParams() });
+    await run.resolveRequest('30', decision);
+    expect(server.responses).toEqual([{ id: 30, result }]);
+    await run.dispose();
+  });
+
+  test('rejects a remembered permission scope that is not the exact provider scope', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emitRequest({ id: 31, method: 'item/permissions/requestApproval', params: permissionParams() });
+    await run.resolveRequest('31', { kind: 'allow-and-remember', scope: 'project:/repo' });
+    expect(server.responses).toEqual([{ id: 31, result: { permissions: {}, scope: 'turn' } }]);
+    await run.dispose();
+  });
+
+  test('denies a permission request with the generated empty turn grant on disconnect', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emitRequest({ id: 32, method: 'item/permissions/requestApproval', params: permissionParams() });
+    server.emitStatus({ availability: 'unavailable', message: 'exited' });
+    expect(server.responses).toEqual([{ id: 32, result: { permissions: {}, scope: 'turn' } }]);
+    await run.dispose();
+  });
 });
+
+function permissionParams() {
+  return {
+    threadId: 'thread-1', turnId: 'turn-live', itemId: 'permission', environmentId: null as string | null, startedAtMs: 1,
+    cwd: '/repo', reason: 'Needs repository and network access',
+    permissions: { network: { enabled: true }, fileSystem: { read: ['/repo'], write: ['/repo'], globScanMaxDepth: 4 } },
+  };
+}
