@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 import { createClaudeNormalizationContext, normalizeClaudeRecord } from '@/main/harness/claude/claude-normalizer';
-import type { NativeEvent } from '@/main/harness/reconciler';
+import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import type { ConversationRef } from '@/shared/conversation-contract';
 
 export interface ClaudeChildProcess {
@@ -10,6 +10,7 @@ export interface ClaudeChildProcess {
   readonly stdout: AsyncIterable<Uint8Array | string>;
   readonly stderr: AsyncIterable<Uint8Array | string>;
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  once(event: 'error', listener: (error: Error) => void): this;
   kill(signal: NodeJS.Signals): boolean;
 }
 
@@ -45,47 +46,52 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const child = (options.spawnProcess ?? spawnClaude)(options.executable, args, {
     cwd: options.ref.projectPath, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  let exited = false;
-  let resolveExit!: (result: { code: number | null; signal: NodeJS.Signals | null }) => void;
-  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => { resolveExit = resolve; });
-  child.once('close', (code, signal) => { exited = true; resolveExit({ code, signal }); });
+  type Terminal = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
+  let terminalValue: Terminal | undefined;
+  let resolveTerminal!: (result: Terminal) => void;
+  const terminal = new Promise<Terminal>((resolve) => { resolveTerminal = resolve; });
+  const settleTerminal = (value: Terminal): void => {
+    if (terminalValue) return;
+    terminalValue = value;
+    resolveTerminal(value);
+  };
+  child.once('close', (code, signal) => settleTerminal({ code, signal }));
+  child.once('error', (error) => settleTerminal({ code: null, signal: null, error }));
 
-  let resolveCompletion!: (value: ClaudeRunCompletion) => void;
-  let rejectCompletion!: (reason?: unknown) => void;
-  const completion = new Promise<ClaudeRunCompletion>((resolve, reject) => { resolveCompletion = resolve; rejectCompletion = reject; });
+  const processEvents: NativeEvent[] = [];
+  const diagnostic = new DiagnosticBuffer();
+  const stdoutDrain = drainStdout(child.stdout, processEvents);
+  const stderrDrain = drainStderr(child.stderr, diagnostic);
+  let resolveReplay!: (events: readonly NativeEvent[]) => void;
+  let rejectReplay!: (reason?: unknown) => void;
+  const replay = new Promise<readonly NativeEvent[]>((resolve, reject) => { resolveReplay = resolve; rejectReplay = reject; });
+  const completion = (async (): Promise<ClaudeRunCompletion> => {
+    const result = await terminal;
+    if (!result.error) await Promise.all([stdoutDrain, stderrDrain]);
+    const fileEvents: NativeEvent[] = [];
+    for await (const event of asAsync(await options.rereadNative())) fileEvents.push(event);
+    resolveReplay(reconcileNativeEvents(processEvents, fileEvents));
+    const combinedDiagnostic = diagnostic.value(result.error?.message);
+    return { exitCode: result.code, signal: result.signal, ...(combinedDiagnostic ? { diagnostic: combinedDiagnostic } : {}) };
+  })().catch((error: unknown) => {
+    rejectReplay(error);
+    throw error;
+  });
 
-  async function* eventStream(): AsyncGenerator<NativeEvent> {
-    const decoder = new NdjsonDecoder<unknown>();
-    const context = createClaudeNormalizationContext();
-    let ordinal = 0;
-    const stderr = collectDiagnostic(child.stderr);
-    try {
-      for await (const chunk of child.stdout) {
-        for (const line of decoder.push(chunk)) {
-          if (!line.ok) continue;
-          for (const event of normalizeClaudeRecord(line.value, ordinal++, context)) yield event;
-        }
-      }
-      decoder.finish();
-      const result = await exit;
-      const diagnostic = await stderr;
-      const reread = await options.rereadNative();
-      for await (const event of asAsync(reread)) yield event;
-      resolveCompletion({ exitCode: result.code, signal: result.signal, ...(diagnostic ? { diagnostic } : {}) });
-    } catch (error) {
-      rejectCompletion(error);
-      throw error;
-    }
-  }
+  const eventStream: AsyncIterable<NativeEvent> = {
+    async *[Symbol.asyncIterator](): AsyncGenerator<NativeEvent> {
+      for (const event of await replay) yield event;
+    },
+  };
 
   return {
-    events: eventStream(), completion,
+    events: eventStream, completion,
     async interrupt(): Promise<void> {
-      if (exited) return;
+      if (terminalValue) return;
       child.kill('SIGINT');
-      await Promise.race([exit, delay(2_000)]);
-      if (!exited) child.kill('SIGTERM');
-      await exit;
+      await Promise.race([terminal, delay(2_000)]);
+      if (!terminalValue) child.kill('SIGTERM');
+      await terminal;
     },
   };
 }
@@ -94,13 +100,36 @@ function spawnClaude(file: string, args: string[], options: ClaudeSpawnOptions):
   return spawn(file, args, options) as ChildProcessWithoutNullStreams;
 }
 
-async function collectDiagnostic(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
-  let value = '';
-  for await (const chunk of stream) {
-    if (value.length >= 4_096) continue;
-    value += Buffer.from(chunk).toString('utf8').slice(0, 4_096 - value.length);
+async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: NativeEvent[]): Promise<void> {
+  const decoder = new NdjsonDecoder<unknown>();
+  const context = createClaudeNormalizationContext();
+  let ordinal = 0;
+  try {
+    for await (const chunk of stream) {
+      for (const line of decoder.push(chunk)) {
+        if (!line.ok) continue;
+        events.push(...normalizeClaudeRecord(line.value, ordinal++, context));
+      }
+    }
+    decoder.finish();
+  } catch { /* A launch failure can destroy the pipe; terminal error remains the diagnostic. */ }
+}
+
+async function drainStderr(stream: AsyncIterable<Uint8Array | string>, diagnostic: DiagnosticBuffer): Promise<void> {
+  try { for await (const chunk of stream) diagnostic.append(chunk); }
+  catch { /* A launch failure can destroy the pipe; terminal error remains the diagnostic. */ }
+}
+
+class DiagnosticBuffer {
+  private text = '';
+  append(chunk: Uint8Array | string): void {
+    if (this.text.length >= 4_096) return;
+    this.text += Buffer.from(chunk).toString('utf8').slice(0, 4_096 - this.text.length);
   }
-  return sanitize(value);
+  value(extra?: string): string {
+    const joined = extra ? `${this.text}\n${extra}`.slice(0, 4_096) : this.text;
+    return sanitize(joined);
+  }
 }
 
 function sanitize(value: string): string {

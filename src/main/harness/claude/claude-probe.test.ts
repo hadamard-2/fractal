@@ -66,4 +66,19 @@ describe('detectClaudeRuntime', () => {
     const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '{"agents":[]}' } });
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => false })).resolves.toBe('idle');
   });
+
+  test.each([
+    '{"agents":[{"sessionId":"session-1","cwd":"/work/fractal"}]}',
+    '{"agents":[{"sessionId":"session-1","cwd":"/work/fractal","status":"teleporting"}]}',
+    '{"agents":[{"sessionId":4,"cwd":"/work/fractal","status":"running"}]}',
+    '{"agents":{}}',
+  ])('treats malformed or unrecognized native agent evidence as unknown: %s', async (stdout) => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => false })).resolves.toBe('unknown');
+  });
+
+  test('treats transcript-growth inspection failure conservatively', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '{"agents":[]}' } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => { throw new Error('stat failed'); } })).resolves.toBe('unknown');
+  });
 });

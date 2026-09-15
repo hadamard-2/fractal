@@ -69,14 +69,34 @@ export async function detectClaudeRuntime(ref: ConversationRef, dependencies: Cl
   if (dependencies.hasOwnedProcess(ref)) return 'active-in-fractal';
   const result = await safeExec(dependencies.exec, dependencies.executable ?? 'claude', ['agents', '--json']);
   const document = result.exitCode === 0 ? parseObject(result.stdout) : undefined;
-  const agents = Array.isArray(document?.agents) ? document.agents : undefined;
-  const matchingActiveAgent = agents?.some((value) => {
-    const agent = objectValue(value);
-    return agent?.sessionId === ref.nativeSessionId && agent.cwd === ref.projectPath && agent.status !== 'idle' && agent.status !== 'stopped';
-  }) ?? false;
+  const agents = parseAgents(document?.agents);
+  const matchingActiveAgent = agents?.some((agent) =>
+    agent.sessionId === ref.nativeSessionId && agent.cwd === ref.projectPath && (agent.status === 'active' || agent.status === 'running')) ?? false;
   if (matchingActiveAgent) return 'active-externally';
-  if (await dependencies.transcriptGrew?.(ref)) return 'active-externally';
+  try {
+    if (await dependencies.transcriptGrew?.(ref)) return 'active-externally';
+  } catch {
+    return 'unknown';
+  }
   return agents ? 'idle' : 'unknown';
+}
+
+type ClaudeAgentStatus = 'active' | 'running' | 'idle' | 'stopped';
+interface ClaudeAgentStatusRecord { sessionId: string; cwd: string; status: ClaudeAgentStatus }
+
+function parseAgents(value: unknown): ClaudeAgentStatusRecord[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const agents: ClaudeAgentStatusRecord[] = [];
+  for (const item of value) {
+    const agent = objectValue(item);
+    if (typeof agent?.sessionId !== 'string' || typeof agent.cwd !== 'string' || !isAgentStatus(agent.status)) return undefined;
+    agents.push({ sessionId: agent.sessionId, cwd: agent.cwd, status: agent.status });
+  }
+  return agents;
+}
+
+function isAgentStatus(value: unknown): value is ClaudeAgentStatus {
+  return value === 'active' || value === 'running' || value === 'idle' || value === 'stopped';
 }
 
 async function safeExec(exec: ClaudeExec, executable: string, args: string[]): Promise<ClaudeExecResult> {
