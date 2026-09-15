@@ -280,9 +280,14 @@ describe('ConversationService', () => {
     await f.service.open(ref, loadId);
     const continuing = f.service.continue(ref, { text: 'Go' }, 'renderer');
     await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
-    await f.service.dispose();
+    let disposed = false;
+    const disposing = f.service.dispose().then(() => { disposed = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(disposed).toBe(false);
     starting.resolve(nativeRun);
     await expect(continuing).rejects.toThrow('Conversation continuation ended');
+    await disposing;
+    expect(disposed).toBe(true);
     expect(nativeRun.interrupt).toHaveBeenCalledTimes(1);
     expect(nativeRun.dispose).toHaveBeenCalledTimes(1);
   });
