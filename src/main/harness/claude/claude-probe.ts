@@ -25,14 +25,14 @@ const NO_CAPABILITIES = {
 } as const;
 
 export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executable = 'claude'): Promise<ClaudeProbeStatus> {
-  const [version, help, agents] = await Promise.all([
+  const [version, help, auth] = await Promise.all([
     safeExec(exec, executable, ['--version']),
     safeExec(exec, executable, ['--help']),
-    safeExec(exec, executable, ['agents', '--json']),
+    safeExec(exec, executable, ['auth', 'status', '--json']),
   ]);
   const helpText = help.stdout ?? '';
-  const agentsDocument = agents.exitCode === 0 ? parseObject(agents.stdout) : undefined;
-  const authenticated = agentsDocument?.authenticated === true;
+  const authDocument = auth.exitCode === 0 ? parseObject(auth.stdout) : undefined;
+  const authenticated = authDocument?.loggedIn === true;
   const evidence: ClaudeCapabilityEvidence = {
     resume: hasFlag(helpText, '--resume'),
     sessionId: hasFlag(helpText, '--session-id'),
@@ -68,8 +68,8 @@ export interface ClaudeRuntimeDependencies {
 export async function detectClaudeRuntime(ref: ConversationRef, dependencies: ClaudeRuntimeDependencies): Promise<ConversationRuntime> {
   if (dependencies.hasOwnedProcess(ref)) return 'active-in-fractal';
   const result = await safeExec(dependencies.exec, dependencies.executable ?? 'claude', ['agents', '--json']);
-  const document = result.exitCode === 0 ? parseObject(result.stdout) : undefined;
-  const agents = parseAgents(document?.agents);
+  const document = result.exitCode === 0 ? parseJson(result.stdout) : undefined;
+  const agents = parseAgents(Array.isArray(document) ? document : objectValue(document)?.agents);
   const matchingActiveAgent = agents?.some((agent) =>
     agent.sessionId === ref.nativeSessionId && agent.cwd === ref.projectPath && (agent.status === 'active' || agent.status === 'running')) ?? false;
   if (matchingActiveAgent) return 'active-externally';
@@ -89,8 +89,9 @@ function parseAgents(value: unknown): ClaudeAgentStatusRecord[] | undefined {
   const agents: ClaudeAgentStatusRecord[] = [];
   for (const item of value) {
     const agent = objectValue(item);
-    if (typeof agent?.sessionId !== 'string' || typeof agent.cwd !== 'string' || !isAgentStatus(agent.status)) return undefined;
-    agents.push({ sessionId: agent.sessionId, cwd: agent.cwd, status: agent.status });
+    const sessionId = agent?.sessionId ?? agent?.session_id;
+    if (typeof sessionId !== 'string' || typeof agent?.cwd !== 'string' || !isAgentStatus(agent.status)) return undefined;
+    agents.push({ sessionId, cwd: agent.cwd, status: agent.status });
   }
   return agents;
 }
@@ -117,4 +118,5 @@ export function defaultClaudeExec(file: string, args: string[], options: { timeo
 function hasFlag(help: string, flag: string): boolean { return new RegExp(`(?:^|\\s)${flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|,|$)`, 'm').test(help); }
 function firstLine(value?: string): string | undefined { return value?.split(/\r?\n/, 1)[0]?.trim() || undefined; }
 function parseObject(value?: string): Record<string, unknown> | undefined { try { return objectValue(JSON.parse(value ?? '')); } catch { return undefined; } }
+function parseJson(value?: string): unknown { try { return JSON.parse(value ?? ''); } catch { return undefined; } }
 function objectValue(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }

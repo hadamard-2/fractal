@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
-import { createClaudeNormalizationContext, normalizeClaudeRecord } from '@/main/harness/claude/claude-normalizer';
+import { createClaudeNormalizationContext, normalizeClaudeRecord, normalizeClaudeStreamRecord } from '@/main/harness/claude/claude-normalizer';
 import { nativeEventKey, type NativeEvent } from '@/main/harness/reconciler';
 import type { ConversationRef } from '@/shared/conversation-contract';
 
@@ -74,7 +74,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
 
   const eventBuffer = new ReplayEventBuffer();
   const diagnostic = new DiagnosticBuffer();
-  const stdoutDrain = drainStdout(child.stdout, eventBuffer);
+  const stdoutDrain = drainStdout(child.stdout, eventBuffer, options.rereadNative, options.prompt.text, options.ref.nativeSessionId, Date.now());
   const stderrDrain = drainStderr(child.stderr, diagnostic);
   let pipeError: Error | undefined;
   let resolvePipeFailure!: (error: Error) => void;
@@ -108,9 +108,13 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
       await Promise.all([stdoutObserved, stderrObserved]);
       if (pipeError) throw pipeError;
     }
-    for await (const event of asAsync(await options.rereadNative())) eventBuffer.publish(event);
-    eventBuffer.close();
+    if (!result.error || !isLaunchError(result.error)) {
+      for await (const event of asAsync(await options.rereadNative())) eventBuffer.publish(event);
+    }
     const combinedDiagnostic = diagnostic.value(result.error?.message);
+    if (result.error) throw sanitizedError(result.error);
+    if (result.signal || result.code !== 0) throw new Error(`Claude process ${result.signal ? `terminated by ${result.signal}` : `exited with code ${result.code}`}${combinedDiagnostic ? `: ${combinedDiagnostic}` : ''}`);
+    eventBuffer.close();
     return { exitCode: result.code, signal: result.signal, ...(combinedDiagnostic ? { diagnostic: combinedDiagnostic } : {}) };
   })().catch((error: unknown) => {
     const safeError = sanitizedError(error);
@@ -137,14 +141,38 @@ function spawnClaude(file: string, args: string[], options: ClaudeSpawnOptions):
   return spawn(file, args, options) as ChildProcessWithoutNullStreams;
 }
 
-async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: ReplayEventBuffer): Promise<void> {
+async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: ReplayEventBuffer, rereadNative: RunClaudeTurnOptions['rereadNative'], prompt: string, sessionId: string, startedAt: number): Promise<void> {
   const decoder = new NdjsonDecoder<unknown>();
   const context = createClaudeNormalizationContext();
   let ordinal = 0;
+  let anchoredTurnId: string | undefined;
   for await (const chunk of stream) {
     for (const line of decoder.push(chunk)) {
       if (!line.ok) continue;
-      for (const event of normalizeClaudeRecord(line.value, ordinal++, context)) events.publish(event);
+      const record = line.value && typeof line.value === 'object' && !Array.isArray(line.value) ? line.value as Record<string, unknown> : undefined;
+      if (typeof record?.session_id === 'string' && record.session_id !== sessionId) { ordinal += 1; continue; }
+      if (record?.type === 'system' && record.subtype === 'init') { ordinal += 1; continue; }
+      if (record?.type === 'stream_event' || record?.type === 'assistant' || record?.type === 'result') {
+        if (!anchoredTurnId) {
+          try {
+            for await (const event of asAsync(await rereadNative())) {
+              if (event.payload.kind === 'turn-started' && event.payload.text === prompt && event.observedAt >= startedAt - 5_000) {
+                anchoredTurnId = event.payload.turnId;
+                events.publish(event);
+              }
+            }
+          } catch { /* The native user record may not be persisted yet. */ }
+        }
+        const normalized = record.type === 'stream_event'
+          ? normalizeClaudeStreamRecord(record, ordinal++, context, anchoredTurnId ?? '')
+          : normalizeClaudeRecord({ ...record, parentUuid: anchoredTurnId }, ordinal++, context);
+        if (anchoredTurnId) for (const event of normalized) events.publish(event);
+        continue;
+      }
+      for (const event of normalizeClaudeRecord(line.value, ordinal++, context)) {
+        if (event.payload.kind === 'turn-started' && event.payload.text === prompt) anchoredTurnId = event.payload.turnId;
+        events.publish(event);
+      }
     }
   }
   decoder.finish();
@@ -189,8 +217,8 @@ class ReplayEventBuffer {
   async *iterate(waitForFinal: boolean): AsyncGenerator<NativeEvent> {
     if (waitForFinal) {
       await this.done;
-      if (this.failure) throw this.failure;
       yield* this.logical;
+      if (this.failure) throw this.failure;
       return;
     }
     const subscriber: Subscriber = { queue: [...this.logical] };

@@ -21,10 +21,14 @@ export interface ClaudeHistoryRecord {
 
 export interface ClaudeNormalizationContext {
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined;
+  streamMessageId?: string;
+  streamText?: Map<number, string>;
 }
 
 class NormalizationContext implements ClaudeNormalizationContext {
   private readonly turnByNativeId = new Map<string, string>();
+  streamMessageId?: string;
+  streamText = new Map<number, string>();
 
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined {
     const uuid = nativeId;
@@ -50,6 +54,27 @@ export function createClaudeNormalizationContext(): ClaudeNormalizationContext {
   return new NormalizationContext();
 }
 
+export function normalizeClaudeStreamRecord(input: unknown, ordinal: number, context: ClaudeNormalizationContext, turnId: string): NativeEvent[] {
+  const record = objectValue(input);
+  if (record?.type !== 'stream_event') return normalizeClaudeRecord(input, ordinal, context);
+  const streamEvent = objectValue(record.event);
+  const type = stringValue(streamEvent?.type);
+  if (type === 'message_start') {
+    const id = stringValue(objectValue(streamEvent?.message)?.id);
+    context.streamMessageId = id;
+    context.streamText?.clear();
+    return [];
+  }
+  if (type !== 'content_block_delta' || !context.streamMessageId || !Number.isSafeInteger(streamEvent?.index) || (streamEvent?.index as number) < 0) return [];
+  const delta = objectValue(streamEvent.delta);
+  if (delta?.type !== 'text_delta' || typeof delta.text !== 'string') return [];
+  const index = streamEvent.index as number;
+  const text = `${context.streamText?.get(index) ?? ''}${delta.text}`;
+  context.streamText?.set(index, text);
+  const nativeId = `${context.streamMessageId}:text:${index}`;
+  return [event(nativeId, 'text', ordinal, { kind: 'assistant-text', turnId, blockId: nativeId, text, final: false })];
+}
+
 export function normalizeClaudeRecord(
   input: unknown,
   ordinal: number,
@@ -60,6 +85,7 @@ export function normalizeClaudeRecord(
   const nativeType = stringValue(record.type) ?? 'unknown';
   const message = objectValue(record.message);
   const uuid = stringValue(record.uuid) ?? stringValue(message?.id) ?? `record:${ordinal}`;
+  const contentId = nativeType === 'assistant' ? stringValue(message?.id) ?? uuid : uuid;
   const observedAt = timestampValue(record.timestamp, ordinal);
   const turnId = context.recordTurn(record, uuid) ?? stringValue(record.parentUuid) ?? uuid;
 
@@ -69,7 +95,7 @@ export function normalizeClaudeRecord(
 
   if ((nativeType === 'assistant' || nativeType === 'user') && message) {
     const content = arrayValue(message.content);
-    if (content) return normalizeContent(record, content, turnId, uuid, nativeType, observedAt);
+    if (content) return normalizeContent(record, content, turnId, contentId, nativeType, observedAt);
   }
 
   if (nativeType === 'question') {

@@ -19,7 +19,8 @@ describe('probeClaude', () => {
     const exec = fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.0\n' },
       '--help': { exitCode: 0, stdout: '--resume --session-id --output-format stream-json --mcp-config\nAskUserQuestion\n' },
-      'agents --json': { exitCode: 0, stdout: '{"agents":[],"authenticated":true}' },
+      'agents --json': { exitCode: 0, stdout: '[]' },
+      'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' },
     });
     const status = await probeClaude(exec, '/usr/bin/claude');
     expect(status).toMatchObject({
@@ -36,11 +37,17 @@ describe('probeClaude', () => {
     await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unauthenticated', evidence: { authenticated: false } });
   });
 
+  test('does not infer authentication from an empty documented agent array', async () => {
+    const exec = fakeExec({ '--version': { exitCode: 0, stdout: '2.1.263' }, '--help': { exitCode: 0, stdout: '--resume' }, 'agents --json': { exitCode: 0, stdout: '[]' } });
+    await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unauthenticated', evidence: { authenticated: false } });
+  });
+
   test('does not confuse permission-tool routing with ordinary permission prompt support', async () => {
     const exec = fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.0' },
       '--help': { exitCode: 0, stdout: '--permission-prompt-tool <name>' },
-      'agents --json': { exitCode: 0, stdout: '{"agents":[],"authenticated":true}' },
+      'agents --json': { exitCode: 0, stdout: '[]' },
+      'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
     });
     await expect(probeClaude(exec)).resolves.toMatchObject({
       evidence: { permissionPromptTool: true, permissionPrompts: false },
@@ -58,12 +65,22 @@ describe('detectClaudeRuntime', () => {
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('active-externally');
   });
 
+  test('recognizes snake-case session IDs in an agent array without treating unknown status as idle', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '[{"session_id":"session-1","cwd":"/work/fractal","status":"running"}]' } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('active-externally');
+  });
+
   test('cannot prove idle when agent discovery is unsupported and transcript inactivity is unproven', async () => {
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec: fakeExec({}), transcriptGrew: async () => false })).resolves.toBe('unknown');
   });
 
   test('returns idle only from supported native inactivity evidence', async () => {
     const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '{"agents":[]}' } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => false })).resolves.toBe('idle');
+  });
+
+  test('accepts the documented agents JSON array as native idle evidence', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '[]' } });
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => false })).resolves.toBe('idle');
   });
 

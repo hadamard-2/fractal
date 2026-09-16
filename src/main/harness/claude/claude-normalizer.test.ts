@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { createClaudeNormalizationContext, normalizeClaudeRecord, type ClaudeHistoryRecord } from '@/main/harness/claude/claude-normalizer';
+import { createClaudeNormalizationContext, normalizeClaudeRecord, normalizeClaudeStreamRecord, type ClaudeHistoryRecord } from '@/main/harness/claude/claude-normalizer';
 
 const completeFixturePath = path.join(import.meta.dirname, '__fixtures__', 'complete-session.jsonl');
 
@@ -13,14 +13,25 @@ async function completeRecords(): Promise<ClaudeHistoryRecord[]> {
 }
 
 describe('normalizeClaudeRecord', () => {
+  test('accumulates native stream-json text deltas under the persisted message identity and turn', () => {
+    const stream = createClaudeNormalizationContext();
+    const start = normalizeClaudeStreamRecord({ type: 'stream_event', session_id: 'session-1', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg-1', role: 'assistant', content: [] } } }, 0, stream, 'user-1');
+    const first = normalizeClaudeStreamRecord({ type: 'stream_event', session_id: 'session-1', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } } }, 1, stream, 'user-1');
+    const second = normalizeClaudeStreamRecord({ type: 'stream_event', session_id: 'session-1', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ' world' } } }, 2, stream, 'user-1');
+    const persisted = normalizeClaudeRecord({ type: 'assistant', uuid: 'file-record-1', parentUuid: 'user-1', message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'Hello world' }] } }, 3, createClaudeNormalizationContext());
+    expect(start).toEqual([]);
+    expect(first).toMatchObject([{ nativeId: 'msg-1:text:0', payload: { kind: 'assistant-text', turnId: 'user-1', text: 'Hello', final: false } }]);
+    expect(second).toMatchObject([{ nativeId: 'msg-1:text:0', payload: { kind: 'assistant-text', turnId: 'user-1', text: 'Hello world', final: false } }]);
+    expect(persisted).toMatchObject([{ nativeId: 'msg-1:text:0', payload: { kind: 'assistant-text', turnId: 'user-1', text: 'Hello world', final: true } }]);
+  });
   test('preserves content block ordering and stable IDs across a user, prose, thinking, and tool use', async () => {
     const records = await completeRecords();
     const events = records.slice(0, 2).flatMap((record, ordinal) => normalizeClaudeRecord(record, ordinal));
 
     expect(events.map((event) => event.nativeId)).toEqual([
       'user-1',
-      'assistant-1:text:0',
-      'assistant-1:thinking:1',
+      'message-assistant-1:text:0',
+      'message-assistant-1:thinking:1',
       'tool-parent',
     ]);
     expect(events.map((event) => event.payload.kind)).toEqual([

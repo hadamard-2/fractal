@@ -78,7 +78,7 @@ describe('Claude native history', () => {
     unsubscribe();
     await rm(directory, { recursive: true, force: true });
 
-    expect(events.filter((event) => event.nativeId === 'watch-assistant:text:0')).toHaveLength(2);
+    expect(events.filter((event) => event.nativeId === 'watch-assistant-message:text:0')).toHaveLength(2);
     expect(events.filter((event) => event.nativeId === 'watch-user')).toHaveLength(1);
   });
 

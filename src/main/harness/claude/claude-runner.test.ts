@@ -49,10 +49,12 @@ describe('runClaudeTurn', () => {
     child.stderr.write('token=secret\u0000 bad\n');
     child.stdout.write('{"type":"user","uuid":"user-1","message":{"role":"user","content":"go"}}\n');
     child.finish(1);
-    const events = await collect(run.events);
-    expect(events.some((event) => event.payload.kind === 'turn-started')).toBe(true);
-    expect(events.at(-1)).toEqual(reconciled);
-    await expect(run.completion).resolves.toMatchObject({ exitCode: 1, diagnostic: expect.not.stringContaining('\u0000') });
+    const observed: NativeEvent[] = [];
+    const reading = (async () => { for await (const event of run.events) observed.push(event); })();
+    await expect(reading).rejects.toThrow('Claude process exited with code 1');
+    expect(observed.some((event) => event.payload.kind === 'turn-started')).toBe(true);
+    expect(observed.at(-1)).toEqual(reconciled);
+    await expect(run.completion).rejects.toThrow('Claude process exited with code 1');
   });
 
   test('interrupt signals only its owned child with SIGINT then SIGTERM after two seconds', async () => {
@@ -107,6 +109,24 @@ describe('runClaudeTurn', () => {
     child.finish(); await run.completion; await iterator.return?.();
   });
 
+  test('waits for the persisted user anchor before streaming partials and reconciles by message id', async () => {
+    const child = fakeProcess();
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'file-user', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'file-user', userMessageId: 'file-user', text: 'go' } };
+    const final: NativeEvent = { provider: 'claude', nativeId: 'msg-1:text:0', nativeType: 'text', observedAt: 3, payload: { kind: 'assistant-text', turnId: 'file-user', blockId: 'msg-1:text:0', text: 'Hello world', final: true } };
+    let available = false;
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, rereadNative: async () => available ? [anchor, final] : [] });
+    const iterator = run.events[Symbol.asyncIterator]();
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1","role":"assistant","content":[]}}}\n');
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}}\n');
+    await new Promise<void>((resolve) => setImmediate(resolve)); available = true;
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}}\n');
+    await expect(iterator.next()).resolves.toMatchObject({ value: anchor });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'msg-1:text:0', payload: { turnId: 'file-user', text: 'Hello world', final: false } } });
+    child.finish();
+    await expect(iterator.next()).resolves.toMatchObject({ value: final });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
   test('keeps draining and supports late replay after an iterator returns early', async () => {
     const child = fakeProcess();
     const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
@@ -121,9 +141,9 @@ describe('runClaudeTurn', () => {
     const child = fakeProcess();
     const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'missing', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
     child.fail(Object.assign(new Error('spawn missing ENOENT'), { code: 'ENOENT' }));
-    await expect(run.completion).resolves.toMatchObject({ exitCode: null, diagnostic: expect.stringContaining('spawn missing ENOENT') });
+    await expect(run.completion).rejects.toThrow('spawn missing ENOENT');
     await run.interrupt(); expect(child.signals).toEqual([]);
-    expect(await collect(run.events)).toEqual([]);
+    await expect(collect(run.events)).rejects.toThrow('spawn missing ENOENT');
   });
 
   test('surfaces a sanitized post-launch stdout failure to completion and subscribers', async () => {
@@ -159,7 +179,9 @@ describe('runClaudeTurn', () => {
     child.stdout.write('{"type":"user","uuid":"after","message":{"role":"user","content":"kept"}}\n');
     child.stdout.write('{"partial":'); child.finish(130);
     await interrupted;
-    expect((await collect(run.events)).map((event) => event.nativeId)).toEqual(['after']);
+    const observed: NativeEvent[] = [];
+    await expect((async () => { for await (const event of run.events) observed.push(event); })()).rejects.toThrow('Claude process exited with code 130');
+    expect(observed.map((event) => event.nativeId)).toEqual(['after']);
     vi.useRealTimers();
   });
 
@@ -167,7 +189,6 @@ describe('runClaudeTurn', () => {
     const child = fakeProcess();
     const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [] });
     child.stderr.write(`token=super-secret\u0000 ${'x'.repeat(5_000)}`); child.finish(1);
-    const result = await run.completion;
-    expect(result.diagnostic).not.toContain('super-secret'); expect(result.diagnostic).not.toContain('\u0000'); expect(result.diagnostic?.length).toBeLessThanOrEqual(4_096);
+    await expect(run.completion).rejects.toThrow('token=[redacted]');
   });
 });

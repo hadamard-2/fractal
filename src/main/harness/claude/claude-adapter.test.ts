@@ -131,6 +131,24 @@ describe('Claude adapter', () => {
     expect(ownedProcesses.has(ref)).toBe(false);
   });
 
+  test('propagates a failed runner completion even when its event stream closes cleanly', async () => {
+    const ownedProcesses = new ClaudeOwnedProcessRegistry();
+    let fail!: (error: Error) => void;
+    const completion = new Promise<never>((_resolve, reject) => { fail = reject; });
+    const runTurn = (): ClaudeTurnRun => ({
+      events: (async function* () { yield { provider: 'claude', nativeId: 'native-user', nativeType: 'user', observedAt: 1, payload: { kind: 'turn-started', turnId: 'native-user', userMessageId: 'native-user', text: 'go' } } as NativeEvent; })(),
+      completion, interrupt: vi.fn(async () => undefined),
+    });
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge: async () => ({ configPath: '/tmp/private.json', toolName: 'permission', dispose: async () => undefined }), ownedProcesses });
+    const run = await adapter.continueConversation(ref, { text: 'go' });
+    const observed: NativeEvent[] = [];
+    const reading = (async () => { for await (const event of run.events) observed.push(event); })();
+    fail(new Error('Claude process exited with code 1'));
+    await expect(reading).rejects.toThrow('Claude process exited with code 1');
+    expect(observed.map((event) => event.nativeId)).toEqual(['native-user']);
+    expect(ownedProcesses.has(ref)).toBe(false);
+  });
+
   test('retains ownership after interrupt and during disposal until the process stream settles', async () => {
     const ownedProcesses = new ClaudeOwnedProcessRegistry();
     let finish!: () => void;

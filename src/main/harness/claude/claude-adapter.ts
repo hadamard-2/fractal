@@ -111,10 +111,15 @@ export class ClaudeAdapter implements HarnessAdapter {
     } catch (error) {
       releaseOwned(); if (newSession && draft) this.drafts.set(ref.nativeSessionId, draft); await disposeBridge(); throw error;
     }
+    void runner.completion.catch((): void => undefined);
     let disposed = false;
     const pump = (async () => {
       let failure: unknown;
-      try { for await (const event of runner.events) { if (event.payload.kind === 'turn-started') currentTurnId = event.payload.turnId; queue.push(event); } }
+      try {
+        for await (const event of runner.events) { if (event.payload.kind === 'turn-started') currentTurnId = event.payload.turnId; queue.push(event); }
+        const completion = await runner.completion;
+        if (completion.signal || completion.exitCode !== 0) throw new Error(`Claude process ${completion.signal ? `terminated by ${completion.signal}` : `exited with code ${completion.exitCode}`}`);
+      }
       catch (error) { failure = error; }
       finally {
         await disposeBridge();
