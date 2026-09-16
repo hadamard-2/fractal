@@ -1,7 +1,4 @@
 import { describe, expect, test, vi } from 'vitest';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationService } from '@/main/conversation-service';
 import type { ConversationRun, HarnessAdapter, NativeEventSink } from '@/main/harness/types';
@@ -176,7 +173,6 @@ describe('ConversationService', () => {
   });
 
   test('opens an unsent Claude draft as empty native history and forgets it after reconciliation', async () => {
-    const userData = await mkdtemp(path.join(tmpdir(), 'fractal-native-create-'));
     const f = fixture([], 50, 'claude');
     const claudeRef = { provider: 'claude' as const, nativeSessionId: '00000000-0000-4000-8000-000000000099', projectPath: '/repo' };
     vi.mocked(f.adapter.probe).mockResolvedValue({ provider: 'claude', availability: 'available', capabilities });
@@ -198,8 +194,6 @@ describe('ConversationService', () => {
     await f.service.close(claudeRef);
     await f.service.open(claudeRef, nextLoadId);
     expect(f.adapter.loadConversation).toHaveBeenCalled();
-    expect(await readdir(userData)).toEqual([]);
-    await rm(userData, { recursive: true });
     await f.service.dispose();
   });
 

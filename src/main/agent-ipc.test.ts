@@ -176,6 +176,33 @@ describe('conversation IPC', () => {
     expect(f.service.create).toHaveBeenCalledTimes(1);
   });
 
+  test('returns the adapter native identity through the production creation boundary without wrapper storage', async () => {
+    const sender = new Sender();
+    const nativeRef = { provider: 'codex' as const, nativeSessionId: 'app-server-thread-42', projectPath: '/tmp' };
+    const capabilities = { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: false };
+    const adapter: HarnessAdapter = {
+      provider: 'codex', capabilities: () => capabilities,
+      probe: vi.fn(async () => ({ provider: 'codex' as const, availability: 'available' as const, capabilities })),
+      listConversations: vi.fn(async () => []),
+      createConversation: vi.fn(async () => nativeRef),
+      loadConversation: vi.fn(), watchConversation: vi.fn(), continueConversation: vi.fn(),
+    };
+    const service = new ConversationService(new ConversationRegistry([adapter], async (value) => value), () => undefined);
+    boundary.registerConversationIpc(service, () => ({ webContents: sender, isDestroyed: () => false }) as unknown as BrowserWindow);
+    electron.picker.mockResolvedValue({ canceled: false, filePaths: ['/tmp/../tmp'] });
+    const handler = electron.handlers.get('fractal:conversations:create');
+    if (!handler) throw new Error('Missing create handler');
+
+    const result = await handler({ sender, senderFrame: sender.mainFrame } as unknown as IpcMainInvokeEvent, { provider: 'codex' });
+
+    expect(adapter.createConversation).toHaveBeenCalledWith('/tmp');
+    expect(result).toEqual(nativeRef);
+    expect(Object.keys(result as object).sort()).toEqual(['nativeSessionId', 'projectPath', 'provider']);
+    expect(adapter.loadConversation).not.toHaveBeenCalled();
+    expect(adapter.watchConversation).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
   test('service and picker exceptions never expose native details', async () => {
     const f = fixture(); f.service.list.mockRejectedValue(new Error('/secret/native.json TOKEN=hidden'));
     await expect(f.invoke('list')).rejects.toThrow(/^Conversation operation failed$/);
