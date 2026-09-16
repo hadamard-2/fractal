@@ -31,7 +31,7 @@ Never paste credentials, prompts, responses, source text, command output, raw pr
 3. Launch Fractal only after the native CLI portion says to do so. In Fractal, use the project group for the temporary repository and match the exact native session ID.
 4. Treat native history as authoritative. Do not edit provider history files or create a second transcript for comparison.
 
-Example local setup (replace the directory shown by `mktemp -d` in later steps):
+These commands create and enter an isolated temporary Git repository:
 
 ```bash
 SMOKE_REPO="$(mktemp -d)"
