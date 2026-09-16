@@ -311,6 +311,30 @@ describe('Codex native continuation', () => {
     expect(server.responses).toEqual([]);
   });
 
+  test.each(['completed', 'interrupted'] as const)('settles every pending approval before a %s turn closes', async (status) => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emitRequest({ id: 50, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command-a', startedAtMs: 1, environmentId: null, command: 'pnpm lint', cwd: '/repo',
+    } });
+    server.emitRequest({ id: 51, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command-b', startedAtMs: 2, environmentId: null, command: 'pnpm test', cwd: '/repo',
+    } });
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status } } });
+    server.emit({ method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 50 } });
+    const events = []; for await (const event of run.events) events.push(event);
+    expect(events.map((event) => event.payload.kind)).toEqual([
+      'request-opened', 'request-opened', 'request-resolved', 'request-resolved', 'turn-finished',
+    ]);
+    expect(events.filter((event) => event.payload.kind === 'request-resolved').map((event) => event.payload)).toMatchObject([
+      { requestId: '50', decision: { kind: 'deny' } }, { requestId: '51', decision: { kind: 'deny' } },
+    ]);
+    expect(server.responses).toEqual([
+      { id: 50, result: { decision: 'decline' } }, { id: 51, result: { decision: 'decline' } },
+    ]);
+    await expect(run.resolveRequest('50', { kind: 'allow-once' })).rejects.toThrow('no longer available');
+  });
+
   test('routes a supported single-field question by its native field ID', async () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Ask' });
@@ -384,6 +408,7 @@ describe('Codex native continuation', () => {
     const iterator = run.events[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'sync', payload: { text: 'captured' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '13' } } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved', requestId: '13', decision: { kind: 'deny' } } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-finished', turnId: 'turn-live' } } });
     await run.dispose();
   });

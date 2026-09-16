@@ -121,7 +121,15 @@ export class CodexAdapter implements HarnessAdapter {
     let interrupting: Promise<void> | undefined;
     let disposed = false;
     const resolveEvent = (requestId: string, decision: UserDecision): void => {
-      queue.push(requestResolution(turnId ?? 'pending-turn', requestId, decision));
+      if (queue.isOpen()) queue.push(requestResolution(turnId ?? 'pending-turn', requestId, decision));
+    };
+    const settlePending = (reason: string): void => {
+      for (const [requestId, entry] of pending) {
+        this.denyRequestSafely(entry.rpcId, entry.request);
+        resolvedRpcIds.add(String(entry.rpcId));
+        resolveEvent(requestId, { kind: 'deny', reason });
+      }
+      pending.clear();
     };
     const receiveNotification = (notification: Parameters<typeof normalizeCodexNotification>[0]): void => {
       if (notification.method === 'serverRequest/resolved' && notification.params.threadId === ref.nativeSessionId) {
@@ -137,15 +145,18 @@ export class CodexAdapter implements HarnessAdapter {
       }
       if (!turnId) { bufferedTraffic.push({ kind: 'notification', value: notification }); return; }
       if (!matchesNotificationRun(notification, ref.nativeSessionId, turnId)) return;
+      const completed = isValidRunCompletion(notification, ref.nativeSessionId, turnId);
+      if (completed) settlePending('Codex turn completed before a decision was submitted');
       if ((notification.method === 'item/started' || notification.method === 'item/completed') && notification.params.item.type === 'fileChange') {
         fileChanges.set(notification.params.item.id, notification.params.item.changes.map((change) => change.path));
       }
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
-      if (isValidRunCompletion(notification, ref.nativeSessionId, turnId)) { completeTurn(); queue.close(); }
+      if (completed) { completeTurn(); queue.close(); }
     };
     const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
       if (!turnId) { bufferedTraffic.push({ kind: 'request', value: request }); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
+      if (!queue.isOpen()) { this.denyRequestSafely(request.id, request); return; }
       if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/permissions/requestApproval' && request.method !== 'item/tool/requestUserInput') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
         return;
@@ -177,12 +188,7 @@ export class CodexAdapter implements HarnessAdapter {
     const statuses = this.server.onStatus?.((status) => {
       const generation = ++reconnectGeneration;
       if (status.availability === 'unavailable') {
-        for (const [requestId, entry] of pending) {
-          this.denyRequestSafely(entry.rpcId, entry.request);
-          resolvedRpcIds.add(String(entry.rpcId));
-          resolveEvent(requestId, { kind: 'deny', reason: 'Codex connection was lost' });
-        }
-        pending.clear();
+        settlePending('Codex connection was lost');
         if (status.message === 'Codex App Server reconnect failed after 3 attempts') {
           completeTurn();
           queue.fail(new Error(status.message));
@@ -192,8 +198,9 @@ export class CodexAdapter implements HarnessAdapter {
         return;
       }
       if (!turnId) return;
-      void this.reconcileRunAfterReconnect(ref, turnId, queue, generation, () => reconnectGeneration, completeTurn).catch(() => {
+      void this.reconcileRunAfterReconnect(ref, turnId, queue, generation, () => reconnectGeneration, completeTurn, settlePending).catch(() => {
         if (generation === reconnectGeneration) {
+          settlePending('Codex native state could not be reconciled');
           queue.push(runNotice(turnId, 'Codex native state could not be reconciled', 'error'));
           queue.close();
         }
@@ -223,7 +230,7 @@ export class CodexAdapter implements HarnessAdapter {
       },
       resolveRequest: async (requestId, decision) => {
         const entry = pending.get(requestId);
-        if (!entry) throw new Error('Codex request is no longer available');
+        if (!entry || !queue.isOpen()) throw new Error('Codex request is no longer available');
         this.respondToRequest(entry.rpcId, entry.request, decision);
         pending.delete(requestId);
         resolvedRpcIds.add(String(entry.rpcId));
@@ -232,21 +239,17 @@ export class CodexAdapter implements HarnessAdapter {
       dispose: async () => {
         if (disposed) return;
         disposed = true;
-        for (const [requestId, entry] of pending) {
-          this.denyRequestSafely(entry.rpcId, entry.request);
-          resolvedRpcIds.add(String(entry.rpcId));
-          resolveEvent(requestId, { kind: 'deny', reason: 'Fractal disconnected' });
-        }
-        pending.clear();
+        if (queue.isOpen()) settlePending('Fractal disconnected');
         completeTurn();
         queue.close();
       },
     };
   }
 
-  private async reconcileRunAfterReconnect(ref: ConversationRef, turnId: string, queue: NativeEventQueue, generation: number, currentGeneration: () => number, completeTurn: () => void): Promise<void> {
+  private async reconcileRunAfterReconnect(ref: ConversationRef, turnId: string, queue: NativeEventQueue, generation: number, currentGeneration: () => number, completeTurn: () => void, settlePending: (reason: string) => void): Promise<void> {
     const thread = await this.readThread(ref);
     if (generation !== currentGeneration()) return;
+    if (thread.status.type === 'idle') settlePending('Codex thread became idle before a decision was submitted');
     normalizeCodexThread(thread).forEach((event) => queue.push(event));
     if (thread.status.type === 'idle') {
       queue.push(runNotice(turnId, 'Codex thread is idle', 'info'));
@@ -409,6 +412,7 @@ class NativeEventQueue implements AsyncIterable<NativeEvent> {
   private readonly closeListeners = new Set<() => void>();
   private closed = false;
   private failure: Error | undefined;
+  isOpen(): boolean { return !this.closed; }
   push(value: NativeEvent): void {
     if (this.closed) return;
     const waiter = this.waiting.shift();
