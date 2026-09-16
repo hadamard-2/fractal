@@ -109,6 +109,8 @@ export class CodexAdapter implements HarnessAdapter {
     const queue = new NativeEventQueue();
     const live = createCodexLiveNormalizationContext();
     const pending = new Map<string, { rpcId: string | number; request: Parameters<typeof normalizeCodexServerRequest>[0] }>();
+    const fileChanges = new Map<string, string[]>();
+    const resolvedRpcIds = new Set<string>();
     const bufferedTraffic: Array<
       | { kind: 'notification'; value: Parameters<typeof normalizeCodexNotification>[0] }
       | { kind: 'request'; value: Parameters<typeof normalizeCodexServerRequest>[0] }
@@ -118,9 +120,26 @@ export class CodexAdapter implements HarnessAdapter {
     const turnCompleted = new Promise<void>((resolve) => { completeTurn = resolve; });
     let interrupting: Promise<void> | undefined;
     let disposed = false;
+    const resolveEvent = (requestId: string, decision: UserDecision): void => {
+      queue.push(requestResolution(turnId ?? 'pending-turn', requestId, decision));
+    };
     const receiveNotification = (notification: Parameters<typeof normalizeCodexNotification>[0]): void => {
+      if (notification.method === 'serverRequest/resolved' && notification.params.threadId === ref.nativeSessionId) {
+        const rpcId = String(notification.params.requestId);
+        if (resolvedRpcIds.has(rpcId)) return;
+        const entry = Array.from(pending.entries()).find(([, value]) => String(value.rpcId) === rpcId);
+        if (entry) {
+          pending.delete(entry[0]);
+          resolvedRpcIds.add(rpcId);
+          resolveEvent(entry[0], { kind: 'deny', reason: 'Codex resolved the request before a decision was submitted' });
+        }
+        return;
+      }
       if (!turnId) { bufferedTraffic.push({ kind: 'notification', value: notification }); return; }
       if (!matchesNotificationRun(notification, ref.nativeSessionId, turnId)) return;
+      if ((notification.method === 'item/started' || notification.method === 'item/completed') && notification.params.item.type === 'fileChange') {
+        fileChanges.set(notification.params.item.id, notification.params.item.changes.map((change) => change.path));
+      }
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
       if (isValidRunCompletion(notification, ref.nativeSessionId, turnId)) { completeTurn(); queue.close(); }
     };
@@ -131,7 +150,15 @@ export class CodexAdapter implements HarnessAdapter {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
         return;
       }
-      const events = normalizeCodexServerRequest(request);
+      if (request.method === 'item/fileChange/requestApproval' && !fileChanges.get(request.params.itemId)?.length) {
+        this.denyRequestSafely(request.id, request);
+        return;
+      }
+      if (request.method === 'item/commandExecution/requestApproval' && !request.params.command?.trim()) {
+        this.denyRequestSafely(request.id, request);
+        return;
+      }
+      const events = normalizeCodexServerRequest(request, request.method === 'item/fileChange/requestApproval' ? fileChanges.get(request.params.itemId) : undefined);
       const opened = events.find((event) => event.payload.kind === 'request-opened');
       if (!opened || opened.payload.kind !== 'request-opened') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
@@ -152,7 +179,8 @@ export class CodexAdapter implements HarnessAdapter {
       if (status.availability === 'unavailable') {
         for (const [requestId, entry] of pending) {
           this.denyRequestSafely(entry.rpcId, entry.request);
-          queue.push(requestResolution(turnId ?? 'pending-turn', requestId, { kind: 'deny', reason: 'Codex connection was lost' }));
+          resolvedRpcIds.add(String(entry.rpcId));
+          resolveEvent(requestId, { kind: 'deny', reason: 'Codex connection was lost' });
         }
         pending.clear();
         if (status.message === 'Codex App Server reconnect failed after 3 attempts') {
@@ -196,13 +224,19 @@ export class CodexAdapter implements HarnessAdapter {
       resolveRequest: async (requestId, decision) => {
         const entry = pending.get(requestId);
         if (!entry) throw new Error('Codex request is no longer available');
-        pending.delete(requestId);
         this.respondToRequest(entry.rpcId, entry.request, decision);
+        pending.delete(requestId);
+        resolvedRpcIds.add(String(entry.rpcId));
+        resolveEvent(requestId, submittedDecision(entry.request, decision));
       },
       dispose: async () => {
         if (disposed) return;
         disposed = true;
-        for (const entry of pending.values()) this.denyRequestSafely(entry.rpcId, entry.request);
+        for (const [requestId, entry] of pending) {
+          this.denyRequestSafely(entry.rpcId, entry.request);
+          resolvedRpcIds.add(String(entry.rpcId));
+          resolveEvent(requestId, { kind: 'deny', reason: 'Fractal disconnected' });
+        }
         pending.clear();
         completeTurn();
         queue.close();
@@ -413,7 +447,18 @@ function runNotice(turnId: string, message: string, tone: 'info' | 'warning' | '
 }
 
 function requestResolution(turnId: string, requestId: string, decision: UserDecision): NativeEvent {
-  return { provider: 'codex', nativeId: `request:${requestId}:disconnect`, nativeType: 'connection-status', observedAt: Date.now(), payload: { kind: 'request-resolved', turnId, requestId, decision } };
+  return { provider: 'codex', nativeId: `request:${requestId}:resolution`, nativeType: 'serverRequest/resolved', observedAt: Date.now(), payload: { kind: 'request-resolved', turnId, requestId, decision } };
+}
+
+function submittedDecision(request: Parameters<typeof normalizeCodexServerRequest>[0], decision: UserDecision): UserDecision {
+  if (request.method === 'item/tool/requestUserInput') return decision.kind === 'answer' ? decision : { kind: 'deny' };
+  if (request.method === 'item/commandExecution/requestApproval' || request.method === 'item/fileChange/requestApproval') {
+    return decision.kind === 'allow-once' || decision.kind === 'deny' ? decision : { kind: 'deny' };
+  }
+  if (request.method === 'item/permissions/requestApproval') {
+    return decision.kind === 'allow-once' || (decision.kind === 'allow-and-remember' && decision.scope === 'session') ? decision : { kind: 'deny' };
+  }
+  return { kind: 'deny' };
 }
 
 function isValidRunCompletion(notification: unknown, threadId: string, turnId: string): boolean {

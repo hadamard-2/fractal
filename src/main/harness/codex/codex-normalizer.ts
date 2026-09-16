@@ -88,7 +88,7 @@ export function normalizeCodexNotification(notification: ServerNotification, con
   }
 }
 
-export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent[] {
+export function normalizeCodexServerRequest(request: ServerRequest, filePaths: readonly string[] = []): NativeEvent[] {
   if (!isObject(request) || !isObject(request.params) || (typeof request.id !== 'string' && typeof request.id !== 'number') || typeof request.method !== 'string') return [unsupported('request:malformed', 'malformed-request', 0)];
   switch (request.method) {
     case 'item/tool/requestUserInput': {
@@ -114,17 +114,24 @@ export function normalizeCodexServerRequest(request: ServerRequest): NativeEvent
         ? request.params.approvalId
         : String(request.id);
       const operation = request.method === 'item/commandExecution/requestApproval'
-        ? 'Command execution'
-        : request.method === 'item/fileChange/requestApproval' ? 'File change' : 'Permission change';
+        ? ['Command execution', request.params.command && `Command: ${request.params.command}`, request.params.cwd && `Working directory: ${request.params.cwd}`, request.params.reason && `Reason: ${request.params.reason}`].filter(Boolean).join('\n')
+        : request.method === 'item/fileChange/requestApproval'
+          ? ['File change', ...filePaths.map((path) => `File: ${path}`), request.params.grantRoot && `Session write root: ${request.params.grantRoot}`, request.params.reason && `Reason: ${request.params.reason}`].filter(Boolean).join('\n')
+          : ['Permission request', `Working directory: ${request.params.cwd}`, request.params.reason && `Reason: ${request.params.reason}`, `Network: ${request.params.permissions.network?.enabled ? 'enabled' : 'none'}`, `Filesystem read: ${request.params.permissions.fileSystem?.read.join(', ') || 'none'}`, `Filesystem write: ${request.params.permissions.fileSystem?.write.join(', ') || 'none'}`, `Scope: turn or session`].filter(Boolean).join('\n');
       return [event(`request:${String(request.id)}`, request.method, request.params.startedAtMs, {
         kind: 'request-opened', turnId: request.params.turnId,
-        request: { id: requestId, kind: 'approval', provider: 'codex', title: `Approve ${operation.toLowerCase()}`, operation,
+        request: { id: requestId, kind: 'approval', provider: 'codex', title: request.method === 'item/commandExecution/requestApproval' ? 'Approve command execution' : request.method === 'item/fileChange/requestApproval' ? 'Approve file change' : 'Approve permission request', operation: redactApprovalSecrets(operation),
           ...(request.method === 'item/permissions/requestApproval' ? { rememberScope: 'session' } : {}), status: 'open' },
       })];
     }
     default:
       return [unsupported(`request:${String(request.id)}`, request.method, 0)];
   }
+}
+
+function redactApprovalSecrets(value: string): string {
+  return value.replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\b(token|api[-_ ]?key|secret)\s*[:=]\s*[^\s"']+/gi, '$1=[redacted]');
 }
 
 function normalizeTurn(turn: unknown, ordinal: number): NativeEvent[] {

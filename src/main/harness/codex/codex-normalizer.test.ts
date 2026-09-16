@@ -54,14 +54,14 @@ describe('Codex native normalization', () => {
     expect(JSON.stringify(unknown)).not.toContain('never expose');
   });
 
-  test('opens a sanitized native approval request', () => {
+  test('opens a decision-relevant native approval request without unrelated provider fields', () => {
     const events = normalizeCodexServerRequest({
       id: 9, method: 'item/commandExecution/requestApproval',
       params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'command-1', startedAtMs: 3, approvalId: null, environmentId: null, reason: 'private', command: 'private command', cwd: null, commandActions: null, proposedExecpolicyAmendment: null, proposedNetworkPolicyAmendments: null },
     } as never);
 
-    expect(events).toMatchObject([{ nativeId: 'request:9', payload: { kind: 'request-opened', turnId: 'turn-1', request: { id: '9', kind: 'approval', provider: 'codex', operation: 'Command execution' } } }]);
-    expect(JSON.stringify(events)).not.toContain('private');
+    expect(events).toMatchObject([{ nativeId: 'request:9', payload: { kind: 'request-opened', turnId: 'turn-1', request: { id: '9', kind: 'approval', provider: 'codex', operation: expect.stringContaining('private command') } } }]);
+    expect(JSON.stringify(events)).toContain('Reason: private');
   });
 
   test('exposes only the generated session scope for remembered permission grants', () => {
@@ -70,6 +70,41 @@ describe('Codex native normalization', () => {
       cwd: '/repo', reason: null, permissions: { network: { enabled: true }, fileSystem: null },
     } } as never);
     expect(events).toMatchObject([{ payload: { kind: 'request-opened', request: { id: '30', kind: 'approval', rememberScope: 'session' } } }]);
+  });
+
+  test('describes the command and working directory without exposing unrelated provider fields', () => {
+    const events = normalizeCodexServerRequest({ id: 40, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'command', startedAtMs: 1, environmentId: null,
+      command: 'pnpm lint', cwd: '/repo', reason: 'Requires network access', networkApprovalContext: null,
+    } } as never);
+    expect(events[0]?.payload).toMatchObject({ kind: 'request-opened', request: { operation: expect.stringContaining('pnpm lint') } });
+    expect(JSON.stringify(events)).toContain('/repo');
+    expect(JSON.stringify(events)).toContain('Requires network access');
+  });
+
+  test('redacts embedded credentials while retaining the proposed command', () => {
+    const events = normalizeCodexServerRequest({ id: 43, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'command', startedAtMs: 1, environmentId: null,
+      command: 'curl -H "Authorization: Bearer top-secret" https://example.com', cwd: '/repo', reason: null,
+    } } as never);
+    expect(JSON.stringify(events)).toContain('curl -H');
+    expect(JSON.stringify(events)).not.toContain('top-secret');
+  });
+
+  test('describes a file grant and requested permission scope explicitly', () => {
+    const file = normalizeCodexServerRequest({ id: 41, method: 'item/fileChange/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'change', startedAtMs: 1,
+      reason: 'Edit config', grantRoot: '/repo/config',
+    } } as never);
+    expect(JSON.stringify(file)).toContain('/repo/config');
+    expect(JSON.stringify(file)).toContain('Edit config');
+    const permissions = normalizeCodexServerRequest({ id: 42, method: 'item/permissions/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-1', itemId: 'permission', startedAtMs: 1, environmentId: null,
+      cwd: '/repo', reason: 'Fetch dependencies', permissions: { network: { enabled: true }, fileSystem: { read: ['/repo'], write: ['/repo/config'], globScanMaxDepth: 4 } },
+    } } as never);
+    expect(JSON.stringify(permissions)).toContain('Network: enabled');
+    expect(JSON.stringify(permissions)).toContain('/repo/config');
+    expect(JSON.stringify(permissions)).toContain('session');
   });
 
   test('quarantines malformed known items, preserves later valid items, and keeps empty active turns', () => {

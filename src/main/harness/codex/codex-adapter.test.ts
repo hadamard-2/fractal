@@ -244,6 +244,73 @@ describe('Codex native continuation', () => {
     await run.dispose();
   });
 
+  test('emits exactly one resolution with the submitted decision across native completion', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitRequest({ id: 44, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'pnpm lint', cwd: '/repo',
+    } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '44' } } } });
+    await run.resolveRequest('44', { kind: 'allow-once' });
+    server.emit({ method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 44 } });
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } });
+    const remaining = []; for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
+    expect(remaining.filter((event) => event.payload.kind === 'request-resolved')).toMatchObject([
+      { payload: { requestId: '44', decision: { kind: 'allow-once' } } },
+    ]);
+  });
+
+  test('correlates file approval with native file changes before presenting it', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Edit' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emit({ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-live', startedAtMs: 1,
+      item: { type: 'fileChange', id: 'change', changes: [{ path: '/repo/config.ts', kind: 'update', diff: '@@ config' }], status: 'inProgress' } } });
+    server.emitRequest({ id: 45, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'change', startedAtMs: 2, reason: 'Update config', grantRoot: null } });
+    const events = [await iterator.next(), await iterator.next(), await iterator.next()];
+    expect(JSON.stringify(events)).toContain('/repo/config.ts');
+    expect(events.at(-1)?.value?.payload).toMatchObject({ kind: 'request-opened', request: { operation: expect.stringContaining('/repo/config.ts') } });
+    await run.dispose();
+  });
+
+  test('fails a file approval closed when the referenced edit is not known', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Edit' });
+    server.emitRequest({ id: 46, method: 'item/fileChange/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'unknown-change', startedAtMs: 1, reason: null, grantRoot: null,
+    } });
+    expect(server.responses).toEqual([{ id: 46, result: { decision: 'decline' } }]);
+    await run.dispose();
+  });
+
+  test('fails a command approval closed when the command is absent', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emitRequest({ id: 48, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: null, cwd: '/repo',
+    } });
+    expect(server.responses).toEqual([{ id: 48, result: { decision: 'decline' } }]);
+    await run.dispose();
+  });
+
+  test('resolves a provider-timed-out request once with a denial', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitRequest({ id: 47, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'pnpm lint', cwd: '/repo',
+    } });
+    await iterator.next();
+    server.emit({ method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 47 } });
+    server.emit({ method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 47 } });
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } });
+    const remaining = []; for await (const event of { [Symbol.asyncIterator]: () => iterator }) remaining.push(event);
+    expect(remaining.filter((event) => event.payload.kind === 'request-resolved')).toHaveLength(1);
+    expect(remaining).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ kind: 'request-resolved', decision: expect.objectContaining({ kind: 'deny' }) }) }));
+    expect(server.responses).toEqual([]);
+  });
+
   test('routes a supported single-field question by its native field ID', async () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Ask' });
@@ -290,7 +357,7 @@ describe('Codex native continuation', () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
     const iterator = run.events[Symbol.asyncIterator]();
-    server.emitRequest({ id: 12, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'change', startedAtMs: 1, reason: null, grantRoot: null } });
+    server.emitRequest({ id: 12, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'pnpm lint', cwd: '/repo' } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { id: '12' } } } });
     server.emitStatus({ availability: 'unavailable', message: 'exited' });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved', requestId: '12', decision: { kind: 'deny' } } } });
@@ -309,7 +376,7 @@ describe('Codex native continuation', () => {
     const server = createFakeAppServer();
     server.duringTurnStart(() => {
       server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync', delta: 'captured' } });
-      server.emitRequest({ id: 13, method: 'item/fileChange/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync-change', startedAtMs: 1, reason: null, grantRoot: null } });
+      server.emitRequest({ id: 13, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'sync-command', startedAtMs: 1, environmentId: null, command: 'pnpm lint', cwd: '/repo' } });
       server.emit({ method: 'item/agentMessage/delta', params: { threadId: 'other', turnId: 'turn-live', itemId: 'wrong', delta: 'leaked' } });
       server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } });
     });
@@ -345,7 +412,7 @@ describe('Codex native continuation', () => {
   test('fails a colliding public request ID closed without overwriting the first owner', async () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
-    const params = { threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, approvalId: 'duplicate', environmentId: null as string | null, command: null as string | null, cwd: null as string | null };
+    const params = { threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, approvalId: 'duplicate', environmentId: null as string | null, command: 'pnpm lint', cwd: '/repo' };
     server.emitRequest({ id: 20, method: 'item/commandExecution/requestApproval', params });
     server.emitRequest({ id: 21, method: 'item/commandExecution/requestApproval', params: { ...params, itemId: 'command-2' } });
     await run.resolveRequest('duplicate', { kind: 'allow-once' });
