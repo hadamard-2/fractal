@@ -33,6 +33,12 @@ pnpm install
 pnpm start
 ```
 
+Execute mode uses the Codex and Claude Code harnesses already installed and authenticated on your machine. Install and sign in with each provider's native CLI before starting Fractal; Fractal does not provide provider login or handle provider credentials.
+
+Codex and Claude Code remain the authority for conversation history. Fractal discovers their native sessions and writes continuations through the corresponding harness instead of maintaining a parallel transcript. Continuation is disabled whenever a session is active in another process or Fractal cannot prove that it is idle.
+
+Not yet supported: full-text transcript search, attachments, forks, deletion, archival, and Claude mid-turn steering. See [the opt-in interoperability guide](docs/testing/native-conversation-interoperability.md) for credential-safe manual verification.
+
 ## Scripts
 
 | Command | Does |
