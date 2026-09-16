@@ -182,6 +182,7 @@ export class ConversationService {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.drafts.clear();
     const starts = Array.from(this.startingRuns.values());
     for (const starting of starts) starting.cancelled = true;
     for (const load of this.loads.values()) this.release(load);

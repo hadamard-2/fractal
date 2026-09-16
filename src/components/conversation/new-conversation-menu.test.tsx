@@ -9,6 +9,7 @@ const capabilities = { create: true, partialStreaming: true, approvals: true, qu
 const codex: HarnessStatus = { provider: 'codex', availability: 'available', capabilities };
 const claude: HarnessStatus = { provider: 'claude', availability: 'unavailable', capabilities: { ...capabilities, create: false }, message: '/private/provider secret' };
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-thread', projectPath: '/work/fractal' };
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -31,12 +32,17 @@ describe('NewConversationMenu', () => {
   });
 
   test('keeps selection unchanged when directory selection is cancelled', async () => {
-    const onCreated = vi.fn(); install(vi.fn(async () => null));
+    const create = vi.fn<ConversationApi['create']>().mockResolvedValueOnce(null).mockResolvedValueOnce(ref);
+    const onCreated = vi.fn(); install(create);
     render(<NewConversationMenu providers={[codex]} onCreated={onCreated} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'New conversation' }));
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect(onCreated).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'New conversation' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(onCreated).toHaveBeenCalledWith(ref);
   });
 
   test('shows a sanitized provider failure without changing selection', async () => {
@@ -47,6 +53,27 @@ describe('NewConversationMenu', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect((await screen.findByRole('status')).textContent).toBe('Codex could not create a conversation.');
     expect(screen.queryByText(/private|secret/i)).toBeNull();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  test('serializes creation and ignores a stale completion after unmount', async () => {
+    const pending = deferred<ConversationRef | null>();
+    const create = vi.fn<ConversationApi['create']>(() => pending.promise);
+    const onCreated = vi.fn(); install(create);
+    const view = render(<NewConversationMenu providers={[codex, { ...codex, provider: 'claude' }]} onCreated={onCreated} />);
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: 'New conversation' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    expect(trigger.getAttribute('aria-busy')).toBe('true');
+    expect(trigger).toHaveProperty('disabled', true);
+    expect(screen.getByRole('status').textContent).toBe('Creating Codex conversation…');
+    trigger.removeAttribute('disabled');
+    await user.click(trigger);
+    expect(create).toHaveBeenCalledTimes(1);
+    view.unmount();
+    pending.resolve(ref);
+    await Promise.resolve();
     expect(onCreated).not.toHaveBeenCalled();
   });
 });

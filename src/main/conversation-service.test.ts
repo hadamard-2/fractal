@@ -1,4 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationService } from '@/main/conversation-service';
 import type { ConversationRun, HarnessAdapter, NativeEventSink } from '@/main/harness/types';
@@ -173,6 +176,7 @@ describe('ConversationService', () => {
   });
 
   test('opens an unsent Claude draft as empty native history and forgets it after reconciliation', async () => {
+    const userData = await mkdtemp(path.join(tmpdir(), 'fractal-native-create-'));
     const f = fixture([], 50, 'claude');
     const claudeRef = { provider: 'claude' as const, nativeSessionId: '00000000-0000-4000-8000-000000000099', projectPath: '/repo' };
     vi.mocked(f.adapter.probe).mockResolvedValue({ provider: 'claude', availability: 'available', capabilities });
@@ -189,10 +193,26 @@ describe('ConversationService', () => {
     vi.mocked(f.adapter.loadConversation).mockResolvedValue({ summary: { ref: claudeRef, title: 'First native prompt', updatedAt: 2, runtime: 'idle', captureCompleteness: 'complete' }, events: iterable([]) });
     vi.mocked(f.adapter.continueConversation).mockResolvedValue(runFixture());
     await f.service.continue(claudeRef, { text: 'First native prompt' }, 'renderer');
+    expect(f.adapter.continueConversation).toHaveBeenCalledWith(claudeRef, { text: 'First native prompt' });
     await vi.waitFor(() => expect(f.events.some((item) => item.type === 'summary.updated')).toBe(true));
     await f.service.close(claudeRef);
     await f.service.open(claudeRef, nextLoadId);
     expect(f.adapter.loadConversation).toHaveBeenCalled();
+    expect(await readdir(userData)).toEqual([]);
+    await rm(userData, { recursive: true });
+    await f.service.dispose();
+  });
+
+  test('keeps unused Claude drafts out of discovery and drops them when closed', async () => {
+    const f = fixture([], 50, 'claude');
+    const draft = { provider: 'claude' as const, nativeSessionId: '00000000-0000-4000-8000-000000000098', projectPath: '/repo' };
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([]);
+    vi.mocked(f.adapter.createConversation).mockResolvedValue(draft);
+    expect(await f.service.create('claude', '/repo')).toEqual(draft);
+    expect(await f.service.list()).toMatchObject({ projects: [] });
+    await f.service.open(draft, loadId);
+    await f.service.close(draft);
+    await expect(f.service.open(draft, nextLoadId)).rejects.toThrow();
     await f.service.dispose();
   });
 

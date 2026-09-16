@@ -171,6 +171,7 @@ describe('Claude adapter', () => {
     expect(draft).toEqual({ provider: 'claude', nativeSessionId: draftId, projectPath: '/canonical/fractal' });
     const first = await adapter.continueConversation(draft, { text: 'begin' }); await collect(first.events); await first.dispose();
     expect(calls[0]).toEqual({ newSession: true });
+    expect(runTurn).toHaveBeenNthCalledWith(1, expect.objectContaining({ ref: draft, newSession: true }));
     await adapter.continueConversation(draft, { text: 'again' });
     expect(calls[1]).toEqual({ newSession: undefined });
   });
