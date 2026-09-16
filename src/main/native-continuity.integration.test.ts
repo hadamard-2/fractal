@@ -1,119 +1,158 @@
-import { describe, expect, test, vi } from 'vitest';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import threadRead from '@/main/harness/codex/__fixtures__/thread-read.json';
+import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
+import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
+import type { ClaudeTurnRun, RunClaudeTurnOptions } from '@/main/harness/claude/claude-runner';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationService } from '@/main/conversation-service';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
-import type { ConversationRun, HarnessAdapter, NativeEventSink } from '@/main/harness/types';
-import type { ConversationRef, ConversationStreamEvent, ProviderId } from '@/shared/conversation-contract';
+import type { ConversationRun, HarnessAdapter } from '@/main/harness/types';
+import type { ConversationRef, ConversationStreamEvent, HarnessCapabilities, ProviderId } from '@/shared/conversation-contract';
 
-const capabilities = { create: true, partialStreaming: true, approvals: false, questions: false, interrupt: true, steerWhileRunning: false, fork: false };
-const loadId = '00000000-0000-4000-8000-000000000010';
+const loadIds = { codex: '00000000-0000-4000-8000-000000000010', claude: '00000000-0000-4000-8000-000000000011', crash: '00000000-0000-4000-8000-000000000012' };
+const capabilities: HarnessCapabilities = { create: true, partialStreaming: true, approvals: false, questions: false, interrupt: true, steerWhileRunning: false, fork: false };
+const tempDirectories: string[] = [];
 
-function nativeEvent(provider: ProviderId, nativeId: string, payload: NativeEventPayload): NativeEvent {
-  return { provider, nativeId, nativeType: payload.kind, observedAt: Date.now(), payload };
+afterEach(async () => { await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
+
+function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+function nativeEvent(provider: ProviderId, nativeId: string, payload: NativeEventPayload): NativeEvent { return { provider, nativeId, nativeType: payload.kind, observedAt: 1, payload }; }
+async function* nativeEvents(values: readonly NativeEvent[]) { yield* values; }
+
+function expectNoFractalTranscriptWriter(service: ConversationService): void {
+  expect(Object.keys(service).some((key) => /store|storage|transcript|data.*path/i.test(key))).toBe(false);
 }
 
-function turn(provider: ProviderId, id: string, text: string): NativeEvent[] {
-  return [
-    nativeEvent(provider, `start:${id}`, { kind: 'turn-started', turnId: id, userMessageId: `user:${id}`, text }),
-    nativeEvent(provider, `finish:${id}`, { kind: 'turn-finished', turnId: id, status: 'completed' }),
-  ];
+function codexThread() {
+  const thread = clone(threadRead.thread);
+  thread.id = 'native-codex-1'; thread.sessionId = 'native-codex-session'; thread.name = null; thread.preview = 'First Codex prompt';
+  thread.turns = [{ ...clone(thread.turns[0]), id: 'codex-external', items: [{ type: 'userMessage', id: 'codex-user-1', clientId: null, content: [{ type: 'text', text: 'First Codex prompt', text_elements: [] }] }, { type: 'agentMessage', id: 'codex-agent-1', text: 'External answer', phase: null, memoryCitation: null, delivery: null }] }];
+  return thread;
 }
 
-async function* events(values: NativeEvent[]) { yield* values; }
+function createCodexNativeBoundary() {
+  const thread = codexThread();
+  const listeners = new Set<(notification: never) => void>();
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const server = {
+    status: { availability: 'available' as const }, requests,
+    request: vi.fn(async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params });
+      if (method === 'thread/list') return { data: [clone(thread)], nextCursor: null };
+      if (method === 'thread/read') return { thread: clone(thread) };
+      if (method === 'thread/resume') return { thread: clone(thread) };
+      if (method === 'turn/start') {
+        const input = params.input as Array<{ text: string }>;
+        const turn = { ...clone(thread.turns[0]), id: 'codex-continued', status: 'completed', items: [{ type: 'userMessage', id: 'codex-user-2', clientId: null as string | null, content: [{ type: 'text', text: input[0].text, text_elements: [] as never[] }] }, { type: 'agentMessage', id: 'codex-agent-2', text: 'Fractal answer', phase: null as string | null, memoryCitation: null as never, delivery: null as never }] };
+        queueMicrotask(() => { thread.turns.push(turn); listeners.forEach((listener) => listener({ method: 'turn/completed', params: { threadId: thread.id, turn: clone(turn) } } as never)); });
+        return { turn: { ...turn, status: 'inProgress' } };
+      }
+      if (method === 'turn/interrupt') return {};
+      throw new Error(`Unexpected native Codex operation: ${method}`);
+    }),
+    onNotification(listener: (notification: never) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    onServerRequest: (): (() => void) => () => undefined, onStatus: (): (() => void) => () => undefined,
+    respond: (): void => undefined, respondError: (): void => undefined,
+  };
+  return {
+    adapter: new CodexAdapter(server as never, { realpath: async (value) => value }),
+    async nativeResumeAndRead(): Promise<string[]> {
+      await server.request('thread/resume', { threadId: thread.id, cwd: thread.cwd });
+      const snapshot = await server.request('thread/read', { threadId: thread.id });
+      if (!('thread' in snapshot)) throw new Error('Native thread read failed');
+      return snapshot.thread.turns.flatMap((turn) => turn.items.flatMap((item) => item.type === 'userMessage' ? item.content.flatMap((content) => content.type === 'text' ? [content.text] : []) : []));
+    },
+    requests,
+  };
+}
 
-function createFakeNativeHarness(provider: ProviderId) {
-  const ref: ConversationRef = { provider, nativeSessionId: 'native-1', projectPath: '/work/fractal' };
-  const nativeEvents = turn(provider, 'external', 'First prompt');
-  const messages = ['First prompt'];
-  const sinks = new Set<NativeEventSink>();
-  let idle = Promise.resolve();
-  const adapter: HarnessAdapter = {
-    provider,
-    probe: async () => ({ provider, availability: 'available', capabilities }),
-    capabilities: () => capabilities,
-    listConversations: async () => [{ ref, title: 'Native conversation', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }],
-    loadConversation: async () => ({ summary: { ref, title: 'Native conversation', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, events: events(nativeEvents) }),
-    watchConversation: async (_ref, sink) => { sinks.add(sink); return () => sinks.delete(sink); },
-    createConversation: async () => ref,
-    continueConversation: async (_ref, prompt) => {
-      const continuation = turn(provider, 'continued', prompt.text);
-      const run: ConversationRun = {
-        events: (async function* () {
-          for (const event of continuation) { nativeEvents.push(event); sinks.forEach((sink) => sink(event)); yield event; }
-          messages.push(prompt.text);
-        })(),
-        interrupt: async () => undefined,
-        resolveRequest: async () => undefined,
-        dispose: async () => undefined,
-      };
-      idle = (async () => { for await (const event of run.events) void event; })();
-      return { ...run, events: events(continuation) };
+async function createClaudeNativeBoundary() {
+  const root = await mkdtemp(path.join(tmpdir(), 'fractal-native-claude-'));
+  tempDirectories.push(root);
+  const transcript = path.join(root, 'native-claude-1.jsonl');
+  const record = (value: object) => `${JSON.stringify(value)}\n`;
+  await writeFile(transcript, record({ type: 'user', uuid: 'claude-user-1', parentUuid: null, sessionId: 'native-claude-1', cwd: '/work/fractal', timestamp: '2026-09-12T01:00:00.000Z', message: { role: 'user', content: 'First Claude prompt' } }));
+  const runTurn = vi.fn((options: RunClaudeTurnOptions): ClaudeTurnRun => {
+    const events = (async function* () {
+      await appendFile(transcript, record({ type: 'user', uuid: 'claude-user-2', parentUuid: 'claude-user-1', sessionId: 'native-claude-1', cwd: '/work/fractal', timestamp: '2026-09-12T01:00:01.000Z', message: { role: 'user', content: options.prompt.text } }));
+      await appendFile(transcript, record({ type: 'assistant', uuid: 'claude-agent-2', parentUuid: 'claude-user-2', sessionId: 'native-claude-1', cwd: '/work/fractal', timestamp: '2026-09-12T01:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Fractal answer' }] } }));
+      yield* await options.rereadNative() as NativeEvent[];
+    })();
+    return { events, completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: async () => undefined };
+  });
+  const dependencies = { realpath: async (value: string) => value, probe: async () => ({ provider: 'claude' as const, availability: 'available' as const, capabilities }), runtime: async () => 'idle' as const, runTurn };
+  return {
+    adapter: new ClaudeAdapter(root, dependencies), runTurn,
+    async nativeResumeAndRead(): Promise<string[]> {
+      const adapter = new ClaudeAdapter(root, dependencies);
+      const [summary] = await adapter.listConversations();
+      const loaded = await adapter.loadConversation(summary.ref);
+      const prompts: string[] = [];
+      for await (const event of loaded.events) if (event.payload.kind === 'turn-started') prompts.push(event.payload.text);
+      return prompts;
     },
   };
-  return { adapter, ref, waitForIdle: () => idle, readNativeMessages: () => [...messages], inspectFractalTranscriptFiles: () => [] as string[] };
 }
 
-describe('native continuity', () => {
-  test.each(['codex', 'claude'] as const)('%s starts external, continues in Fractal, and remains natively resumable', async (provider) => {
-    const harness = createFakeNativeHarness(provider);
-    const registry = new ConversationRegistry([harness.adapter], async (path) => path);
-    const app = new ConversationService(registry, () => undefined);
-    const listed = await app.list();
-    const ref = listed.projects[0].conversations[0].ref;
-    await app.open(ref, loadId);
-    await app.continue(ref, { text: 'Second prompt' }, 'renderer');
-    await harness.waitForIdle();
-    expect(harness.readNativeMessages()).toEqual(['First prompt', 'Second prompt']);
-    expect(harness.inspectFractalTranscriptFiles()).toEqual([]);
-
-    const nativeClient = new ConversationService(new ConversationRegistry([harness.adapter], async (path) => path), () => undefined);
-    const resumed: ConversationStreamEvent[] = [];
-    const reopened = new ConversationService(new ConversationRegistry([harness.adapter], async (path) => path), (event) => resumed.push(event));
-    expect((await nativeClient.list()).projects[0].conversations[0].ref).toEqual(ref);
-    await reopened.open(ref, '00000000-0000-4000-8000-000000000012');
-    expect(resumed.flatMap((event) => event.type === 'history.chunk' ? event.turns.map((item) => item.userMessage.text) : [])).toEqual(['First prompt', 'Second prompt']);
-    await Promise.all([app.dispose(), nativeClient.dispose(), reopened.dispose()]);
+describe('native continuity at provider boundaries', () => {
+  test('Codex starts in App Server state, continues through CodexAdapter, and remains App Server resumable', async () => {
+    const native = createCodexNativeBoundary();
+    const service = new ConversationService(new ConversationRegistry([native.adapter], async (value) => value), () => undefined);
+    const ref = (await service.list()).projects[0].conversations[0].ref;
+    await service.open(ref, loadIds.codex);
+    await service.continue(ref, { text: 'Second Codex prompt' }, 'renderer');
+    await vi.waitFor(() => expect(native.requests.some((request) => request.method === 'turn/start')).toBe(true));
+    await vi.waitFor(async () => expect(await native.nativeResumeAndRead()).toEqual(['First Codex prompt', 'Second Codex prompt']));
+    expect(native.requests.filter((request) => request.method === 'thread/resume')).toHaveLength(2);
+    expectNoFractalTranscriptWriter(service);
+    await service.dispose();
   });
 
-  test('reconciles a crash without duplicating persisted final work', async () => {
+  test('Claude starts in provider JSONL, continues through ClaudeAdapter runner resume, and remains natively readable', async () => {
+    const native = await createClaudeNativeBoundary();
+    const service = new ConversationService(new ConversationRegistry([native.adapter], async (value) => value), () => undefined);
+    const ref = (await service.list()).projects[0].conversations[0].ref;
+    await service.open(ref, loadIds.claude);
+    await service.continue(ref, { text: 'Second Claude prompt' }, 'renderer');
+    await vi.waitFor(() => expect(native.runTurn).toHaveBeenCalled());
+    await vi.waitFor(async () => expect(await native.nativeResumeAndRead()).toEqual(['First Claude prompt', 'Second Claude prompt']));
+    expect(native.runTurn).toHaveBeenCalledWith(expect.objectContaining({ ref }));
+    expect(native.runTurn.mock.calls[0][0]).not.toHaveProperty('newSession');
+    expectNoFractalTranscriptWriter(service);
+    await service.dispose();
+  });
+});
+
+describe('native crash reconciliation', () => {
+  test('does not emit a persisted final native observation twice after its stream crashes', async () => {
     const provider = 'codex' as const;
     const ref: ConversationRef = { provider, nativeSessionId: 'native-crash', projectPath: '/work/fractal' };
-    const persisted = [
-      nativeEvent(provider, 'start:crash', { kind: 'turn-started', turnId: 'crash', userMessageId: 'user:crash', text: 'Continue' }),
-      nativeEvent(provider, 'tool-1', { kind: 'action-requested', turnId: 'crash', actionId: 'tool-1', actionKind: 'tool', label: 'Build' }),
-    ];
-    let crash = false;
+    const start = nativeEvent(provider, 'start:crash', { kind: 'turn-started', turnId: 'crash', userMessageId: 'user:crash', text: 'Continue' });
+    const finalObservation = nativeEvent(provider, 'native-final-X', { kind: 'unsupported', turnId: 'crash', summary: 'Provider final marker', captureCompleteness: 'partial' });
+    let persisted: NativeEvent[] = [start];
     const adapter: HarnessAdapter = {
       provider, capabilities: () => capabilities,
       probe: async () => ({ provider, availability: 'available', capabilities }),
-      listConversations: async () => [{ ref, title: 'Crash', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }],
-      loadConversation: async () => ({ summary: { ref, title: 'Crash', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, events: events(persisted) }),
-      watchConversation: async () => () => undefined,
-      createConversation: async () => ref,
-      continueConversation: vi.fn(async () => ({
-        events: (async function* () {
-          yield nativeEvent(provider, 'start:crash', { kind: 'turn-started', turnId: 'crash', userMessageId: 'user:crash', text: 'Continue' });
-          yield nativeEvent(provider, 'tool-1', { kind: 'action-requested', turnId: 'crash', actionId: 'tool-1', actionKind: 'tool', label: 'Build' });
-          persisted.push(nativeEvent(provider, 'tool-1:final', { kind: 'action-updated', turnId: 'crash', actionId: 'tool-1', status: 'completed', output: 'done' }));
-          persisted.push(nativeEvent(provider, 'finish:crash', { kind: 'turn-finished', turnId: 'crash', status: 'completed' }));
-          crash = true;
-          throw new Error('Provider process exited');
-        })(),
-        interrupt: async (): Promise<void> => undefined,
-        resolveRequest: async (): Promise<void> => undefined,
-        dispose: async (): Promise<void> => undefined,
-      })),
+      listConversations: async () => [{ ref, title: 'Crash', updatedAt: 1, runtime: 'idle', captureCompleteness: 'partial' }],
+      loadConversation: async () => ({ summary: { ref, title: 'Crash', updatedAt: 1, runtime: 'idle', captureCompleteness: 'partial' }, events: nativeEvents(persisted) }),
+      watchConversation: async () => () => undefined, createConversation: async () => ref,
+      continueConversation: async (): Promise<ConversationRun> => ({
+        events: (async function* () { yield start; yield finalObservation; persisted = [start, finalObservation]; throw new Error('Provider process exited'); })(),
+        interrupt: async () => undefined, resolveRequest: async () => undefined, dispose: async () => undefined,
+      }),
     };
-    const streamed: ConversationStreamEvent[] = [];
-    const app = new ConversationService(new ConversationRegistry([adapter], async (path) => path), (event) => streamed.push(event));
-    await app.open(ref, '00000000-0000-4000-8000-000000000011');
-    await app.continue(ref, { text: 'Continue' }, 'renderer');
-    await vi.waitFor(() => expect(crash).toBe(true));
-    await vi.waitFor(() => expect(streamed.some((event) => event.type === 'runtime.changed' && event.runtime === 'idle')).toBe(true));
-    const turns = streamed.flatMap((event) => event.type === 'history.chunk' ? event.turns : event.type === 'turn.upserted' ? [event.turn] : []);
-    const final = turns.at(-1);
-    expect(final).toMatchObject({ id: 'crash', status: 'completed', blocks: [{ kind: 'work-packet', actions: [{ id: 'tool-1', status: 'completed', outputSummary: 'done' }] }] });
-    expect(final?.blocks.flatMap((block) => block.kind === 'work-packet' ? block.actions.filter((action) => action.id === 'tool-1') : [])).toHaveLength(1);
-    await app.dispose();
+    const emitted: ConversationStreamEvent[] = [];
+    const projected = vi.spyOn(ConversationService.prototype as never, 'project');
+    const service = new ConversationService(new ConversationRegistry([adapter], async (value) => value), (event) => emitted.push(event));
+    await service.open(ref, loadIds.crash);
+    await service.continue(ref, { text: 'Continue' }, 'renderer');
+    await vi.waitFor(() => expect(emitted.some((event) => event.type === 'runtime.changed' && event.runtime === 'idle')).toBe(true));
+    expect(projected.mock.calls.filter(([, event]) => (event as NativeEvent).nativeId === finalObservation.nativeId)).toHaveLength(1);
+    expect(emitted.some((event) => event.type === 'turn.upserted' && event.turn.blocks.some((block) => block.id === finalObservation.nativeId))).toBe(true);
+    projected.mockRestore();
+    await service.dispose();
   });
 });
