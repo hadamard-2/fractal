@@ -71,7 +71,7 @@ export async function detectClaudeRuntime(ref: ConversationRef, dependencies: Cl
   const document = result.exitCode === 0 ? parseJson(result.stdout) : undefined;
   const agents = parseAgents(Array.isArray(document) ? document : objectValue(document)?.agents);
   const matchingActiveAgent = agents?.some((agent) =>
-    agent.sessionId === ref.nativeSessionId && agent.cwd === ref.projectPath && (agent.status === 'active' || agent.status === 'running')) ?? false;
+    agent.sessionId === ref.nativeSessionId && agent.cwd === ref.projectPath && isActiveAgentStatus(agent.status)) ?? false;
   if (matchingActiveAgent) return 'active-externally';
   try {
     if (await dependencies.transcriptGrew?.(ref)) return 'active-externally';
@@ -81,7 +81,7 @@ export async function detectClaudeRuntime(ref: ConversationRef, dependencies: Cl
   return agents ? 'idle' : 'unknown';
 }
 
-type ClaudeAgentStatus = 'active' | 'running' | 'idle' | 'stopped';
+type ClaudeAgentStatus = 'active' | 'running' | 'busy' | 'waiting' | 'working' | 'blocked' | 'idle' | 'done' | 'failed' | 'stopped';
 interface ClaudeAgentStatusRecord { sessionId: string; cwd: string; status: ClaudeAgentStatus }
 
 function parseAgents(value: unknown): ClaudeAgentStatusRecord[] | undefined {
@@ -90,14 +90,19 @@ function parseAgents(value: unknown): ClaudeAgentStatusRecord[] | undefined {
   for (const item of value) {
     const agent = objectValue(item);
     const sessionId = agent?.sessionId ?? agent?.session_id;
-    if (typeof sessionId !== 'string' || typeof agent?.cwd !== 'string' || !isAgentStatus(agent.status)) return undefined;
-    agents.push({ sessionId, cwd: agent.cwd, status: agent.status });
+    const status = agent?.state ?? agent?.status;
+    if (typeof sessionId !== 'string' || typeof agent?.cwd !== 'string' || !isAgentStatus(status)) return undefined;
+    agents.push({ sessionId, cwd: agent.cwd, status });
   }
   return agents;
 }
 
 function isAgentStatus(value: unknown): value is ClaudeAgentStatus {
-  return value === 'active' || value === 'running' || value === 'idle' || value === 'stopped';
+  return value === 'active' || value === 'running' || value === 'busy' || value === 'waiting' || value === 'working' || value === 'blocked' || value === 'idle' || value === 'done' || value === 'failed' || value === 'stopped';
+}
+
+function isActiveAgentStatus(value: ClaudeAgentStatus): boolean {
+  return value === 'active' || value === 'running' || value === 'idle' || value === 'busy' || value === 'waiting' || value === 'working' || value === 'blocked';
 }
 
 async function safeExec(exec: ClaudeExec, executable: string, args: string[]): Promise<ClaudeExecResult> {

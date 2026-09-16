@@ -70,6 +70,31 @@ describe('detectClaudeRuntime', () => {
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('active-externally');
   });
 
+  test.each(['idle', 'busy', 'waiting'])('treats a matching foreground %s status as external ownership', async (status) => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: JSON.stringify([{ sessionId: 'unrelated', cwd: '/elsewhere', status: 'busy' }, { sessionId: 'session-1', cwd: '/work/fractal', status }]) } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('active-externally');
+  });
+
+  test.each(['working', 'blocked'])('treats a matching background %s state as external activity', async (state) => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: JSON.stringify([{ session_id: 'session-1', cwd: '/work/fractal', state }]) } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('active-externally');
+  });
+
+  test.each(['done', 'failed', 'stopped'])('accepts a matching terminal background %s state as idle proof', async (state) => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: JSON.stringify([{ session_id: 'unrelated', cwd: '/other', status: 'waiting' }, { session_id: 'session-1', cwd: '/work/fractal', state }]) } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('idle');
+  });
+
+  test('unrelated recognized busy and waiting rows do not poison an absent session idle proof', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '[{"sessionId":"other-1","cwd":"/other","status":"busy"},{"sessionId":"other-2","cwd":"/other","status":"waiting"}]' } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec })).resolves.toBe('idle');
+  });
+
+  test('unknown matching state remains unknown despite unrelated valid rows', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '[{"sessionId":"other","cwd":"/other","status":"busy"},{"sessionId":"session-1","cwd":"/work/fractal","state":"teleporting"}]' } });
+    await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, transcriptGrew: async () => false })).resolves.toBe('unknown');
+  });
+
   test('cannot prove idle when agent discovery is unsupported and transcript inactivity is unproven', async () => {
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec: fakeExec({}), transcriptGrew: async () => false })).resolves.toBe('unknown');
   });
