@@ -31,7 +31,7 @@ type Load = {
   unanchored: NativeEvent[];
   inferredFinishes: Map<string, number>;
 };
-type OwnedRun = { ref: ConversationRef; id: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']> };
+type OwnedRun = { ref: ConversationRef; id: string; rendererId: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']>; revokedReason?: string; revokedRequests: Set<string> };
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
 
 export class ConversationService {
@@ -156,7 +156,7 @@ export class ConversationService {
         await runtime.failOwnedRun(id, 'Conversation continuation ended');
         throw new Error('Conversation continuation ended');
       }
-      const owned = { ref, id, run, runtime, settled: Promise.resolve(), events: new Map(), requests: new Map() } satisfies OwnedRun;
+      const owned = { ref, id, rendererId, run, runtime, settled: Promise.resolve(), events: new Map(), requests: new Map(), revokedRequests: new Set<string>() } satisfies OwnedRun;
       this.ownedRuns.set(key, owned);
       owned.settled = this.consumeOwnedRun(owned, rendererId);
     } finally {
@@ -180,7 +180,12 @@ export class ConversationService {
 
   async denyRequestsForOwner(rendererId: string, reason: string): Promise<void> {
     for (const starting of this.startingRuns.values()) if (starting.rendererId === rendererId) starting.cancelled = true;
-    await Promise.all(Array.from(this.ownedRuns.values(), (owned) => owned.runtime.releaseRenderer(rendererId, reason)));
+    const ownedRuns = Array.from(this.ownedRuns.values()).filter((owned) => owned.rendererId === rendererId);
+    for (const owned of ownedRuns) {
+      owned.revokedReason = reason;
+      for (const requestId of owned.requests.keys()) owned.revokedRequests.add(requestId);
+    }
+    await Promise.all(ownedRuns.map((owned) => owned.runtime.releaseRenderer(rendererId, reason)));
   }
 
   async dispose(): Promise<void> {
@@ -204,8 +209,14 @@ export class ConversationService {
     try {
       for await (const event of owned.run.events) {
         if (event.provider !== owned.ref.provider) throw new Error('Mismatched conversation event provider');
-        owned.events.set(nativeEventKey(event), event);
         if (event.payload.kind === 'request-opened' && event.payload.request.status === 'open') {
+          if (owned.revokedReason !== undefined) {
+            if (!owned.revokedRequests.has(event.payload.request.id)) {
+              owned.revokedRequests.add(event.payload.request.id);
+              await owned.run.resolveRequest(event.payload.request.id, { kind: 'deny', reason: owned.revokedReason });
+            }
+            continue;
+          }
           if (this.requestOwners.has(event.payload.request.id)) throw new Error('Conversation request is already owned');
           owned.runtime.openRequest({ conversationKey: key, runId: owned.id, rendererId, request: event.payload.request, resolve: (requestId, decision) => owned.run.resolveRequest(requestId, decision) });
           this.requestOwners.set(event.payload.request.id, owned);
@@ -216,6 +227,7 @@ export class ConversationService {
             this.send(load, { type: 'runtime.changed', runtime: owned.runtime.state });
           }
         }
+        owned.events.set(nativeEventKey(event), event);
         if (event.payload.kind === 'request-resolved') {
           owned.runtime.acknowledgeRequest(event.payload.requestId);
           const load = this.currentLoad(owned.ref);

@@ -312,6 +312,35 @@ describe('ConversationService', () => {
     await f.service.dispose();
   });
 
+  test('renderer loss denies both pending and future requests from a deselected owned run', async () => {
+    const f = fixture();
+    const pending: Array<(value: IteratorResult<NativeEvent>) => void> = [];
+    const send = (value: IteratorResult<NativeEvent>) => { const next = pending.shift(); expect(next).toBeDefined(); next?.(value); };
+    const nativeRun: ConversationRun = {
+      events: { [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<NativeEvent>>((resolve) => pending.push(resolve)) }) },
+      interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined),
+    };
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(nativeRun);
+    await f.service.open(ref, loadId);
+    await f.service.continue(ref, { text: 'Go' }, 'renderer-lost');
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    send({ done: false, value: event('first-request', { kind: 'request-opened', turnId: 'live', request: approvalRequest('first') }) });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await f.service.close(ref);
+    await f.service.denyRequestsForOwner('renderer-lost', 'Fractal window closed');
+    expect(nativeRun.resolveRequest).toHaveBeenCalledWith('first', { kind: 'deny', reason: 'Fractal window closed' });
+    send({ done: false, value: event('late-request', { kind: 'request-opened', turnId: 'live', request: approvalRequest('late') }) });
+    await vi.waitFor(() => expect(nativeRun.resolveRequest).toHaveBeenCalledWith('late', { kind: 'deny', reason: 'Fractal window closed' }));
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await f.service.open(ref, nextLoadId);
+    expect(f.events.filter((item) => item.loadId === nextLoadId && item.type === 'request.opened')).toHaveLength(0);
+    await expect(f.service.resolveRequest('late', { kind: 'allow-once' })).rejects.toThrow('Conversation request is no longer available');
+    send({ done: true, value: undefined });
+    await vi.waitFor(() => expect(nativeRun.dispose).toHaveBeenCalled());
+    expect(nativeRun.resolveRequest).toHaveBeenCalledTimes(2);
+    await f.service.dispose();
+  });
+
   test('reports continuation failure and returns to idle only when rediscovery proves it', async () => {
     const uncertain = fixture();
     let discoveries = 0;
