@@ -262,6 +262,56 @@ describe('ConversationService', () => {
     await f.service.dispose(); await f2.service.dispose();
   });
 
+  test('rebinds an owned run, pending approval, and completion to a reopened load', async () => {
+    const f = fixture();
+    const pending: Array<(value: IteratorResult<NativeEvent>) => void> = [];
+    const resolveNext = (value: IteratorResult<NativeEvent>) => { const resolve = pending.shift(); expect(resolve).toBeDefined(); resolve?.(value); };
+    const nativeRun: ConversationRun = {
+      events: { [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<NativeEvent>>((resolve) => pending.push(resolve)) }) },
+      interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), dispose: vi.fn(async () => undefined),
+    };
+    vi.mocked(f.adapter.continueConversation).mockResolvedValue(nativeRun);
+    await f.service.open(ref, loadId);
+    await f.service.continue(ref, { text: 'Go' }, 'renderer');
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await f.service.close(ref);
+    resolveNext({ done: false, value: event('live-start', { kind: 'turn-started', turnId: 'live', userMessageId: 'user-live', text: 'Go' }) });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    resolveNext({ done: false, value: event('live-request', { kind: 'request-opened', turnId: 'live', request: approvalRequest() }) });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await f.service.open(ref, nextLoadId);
+    expect(f.events.filter((item) => item.loadId === nextLoadId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'turn.upserted', turn: expect.objectContaining({ id: 'live' }) }),
+      expect.objectContaining({ type: 'request.opened', request: expect.objectContaining({ id: 'request-owned' }) }),
+      expect.objectContaining({ type: 'runtime.changed', runtime: 'waiting-for-user' }),
+    ]));
+    await f.service.resolveRequest('request-owned', { kind: 'allow-once' });
+    expect(nativeRun.resolveRequest).toHaveBeenCalledWith('request-owned', { kind: 'allow-once' });
+    resolveNext({ done: false, value: event('live-finish', { kind: 'turn-finished', turnId: 'live', status: 'completed' }) });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    resolveNext({ done: true, value: undefined });
+    await vi.waitFor(() => expect(f.events.some((item) => item.loadId === nextLoadId && item.type === 'runtime.changed' && item.runtime === 'idle')).toBe(true));
+    expect(f.events.filter((item) => item.loadId === loadId && item.type === 'turn.upserted')).toHaveLength(0);
+    await f.service.dispose();
+  });
+
+  test('selection close during native start does not cancel renderer-owned continuation', async () => {
+    const f = fixture();
+    const starting = deferred<ConversationRun>();
+    const nativeRun = runFixture();
+    vi.mocked(f.adapter.continueConversation).mockReturnValue(starting.promise);
+    await f.service.open(ref, loadId);
+    const continuing = f.service.continue(ref, { text: 'Go' }, 'renderer');
+    await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
+    await f.service.close(ref);
+    await f.service.open(ref, nextLoadId);
+    starting.resolve(nativeRun);
+    await continuing;
+    expect(nativeRun.interrupt).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(nativeRun.dispose).toHaveBeenCalled());
+    await f.service.dispose();
+  });
+
   test('reports continuation failure and returns to idle only when rediscovery proves it', async () => {
     const uncertain = fixture();
     let discoveries = 0;

@@ -31,7 +31,7 @@ type Load = {
   unanchored: NativeEvent[];
   inferredFinishes: Map<string, number>;
 };
-type OwnedRun = { ref: ConversationRef; id: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void> };
+type OwnedRun = { ref: ConversationRef; id: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']> };
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
 
 export class ConversationService {
@@ -77,6 +77,7 @@ export class ConversationService {
       load.phase = 'live';
       load.promise = Promise.resolve({ summary: structuredClone(draft), capabilities: this.registry.resolve(ref).capabilities() });
       this.send(load, { type: 'history.complete' });
+      this.replayOwnedRun(load);
       return load.promise;
     }
     load.promise = Promise.resolve().then(() => this.load(load));
@@ -122,9 +123,10 @@ export class ConversationService {
       const owner = this.requestOwners.get(requestId);
       if (owner?.runtime !== runtime) return;
       this.requestOwners.delete(requestId);
+      owner.requests.delete(requestId);
       queueMicrotask(() => {
         const currentLoad = this.loads.get(key);
-        if (currentLoad && !currentLoad.closed) this.send(currentLoad, { type: 'runtime.changed', runtime: runtime.state });
+        if (currentLoad?.phase === 'live') this.send(currentLoad, { type: 'runtime.changed', runtime: runtime.state });
       });
     } });
     runtime.observe(summary.runtime);
@@ -143,20 +145,20 @@ export class ConversationService {
       try { run = await this.registry.resolve(ref).continueConversation(ref, prompt); }
       catch {
         await runtime.failOwnedRun(id, 'Conversation continuation failed');
-        this.markTurnFailed(load, id);
-        if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
-        await this.reconcileFailure(ref, runtime, id, load);
+        const currentLoad = this.currentLoad(ref);
+        if (currentLoad) { this.markTurnFailed(currentLoad, id); this.send(currentLoad, { type: 'runtime.changed', runtime: 'failed' }); }
+        await this.reconcileFailure(ref, runtime, id);
         throw new Error('Conversation continuation failed');
       }
-      if (starting.cancelled || this.disposed || load.closed) {
+      if (starting.cancelled || this.disposed) {
         await run.interrupt().catch((): void => undefined);
         await run.dispose().catch((): void => undefined);
         await runtime.failOwnedRun(id, 'Conversation continuation ended');
         throw new Error('Conversation continuation ended');
       }
-      const owned = { ref, id, run, runtime, settled: Promise.resolve() } satisfies OwnedRun;
+      const owned = { ref, id, run, runtime, settled: Promise.resolve(), events: new Map(), requests: new Map() } satisfies OwnedRun;
       this.ownedRuns.set(key, owned);
-      owned.settled = this.consumeOwnedRun(owned, rendererId, load);
+      owned.settled = this.consumeOwnedRun(owned, rendererId);
     } finally {
       if (this.startingRuns.get(key) === starting) this.startingRuns.delete(key);
       starting.settle();
@@ -196,61 +198,68 @@ export class ConversationService {
     }));
   }
 
-  private async consumeOwnedRun(owned: OwnedRun, rendererId: string, load: Load): Promise<void> {
+  private async consumeOwnedRun(owned: OwnedRun, rendererId: string): Promise<void> {
     const key = conversationKey(owned.ref);
     let failed = false;
     try {
       for await (const event of owned.run.events) {
         if (event.provider !== owned.ref.provider) throw new Error('Mismatched conversation event provider');
+        owned.events.set(nativeEventKey(event), event);
         if (event.payload.kind === 'request-opened' && event.payload.request.status === 'open') {
           if (this.requestOwners.has(event.payload.request.id)) throw new Error('Conversation request is already owned');
           owned.runtime.openRequest({ conversationKey: key, runId: owned.id, rendererId, request: event.payload.request, resolve: (requestId, decision) => owned.run.resolveRequest(requestId, decision) });
           this.requestOwners.set(event.payload.request.id, owned);
-          if (!load.closed) {
+          owned.requests.set(event.payload.request.id, event.payload.request);
+          const load = this.currentLoad(owned.ref);
+          if (load?.phase === 'live') {
             this.send(load, { type: 'request.opened', request: event.payload.request });
             this.send(load, { type: 'runtime.changed', runtime: owned.runtime.state });
           }
         }
         if (event.payload.kind === 'request-resolved') {
           owned.runtime.acknowledgeRequest(event.payload.requestId);
-          if (!load.closed) {
+          const load = this.currentLoad(owned.ref);
+          if (load?.phase === 'live') {
             this.send(load, { type: 'request.resolved', requestId: event.payload.requestId, decision: event.payload.decision });
           }
         }
-        if (!load.closed) this.deliverLive(load, event);
+        const load = this.currentLoad(owned.ref);
+        if (load) this.receive(load, event);
       }
     } catch { failed = true; }
     if (failed) {
       try { await owned.runtime.failOwnedRun(owned.id, 'Conversation run failed'); } catch { /* A concurrent teardown may have reconciled ownership. */ }
-      this.markTurnFailed(load, owned.id);
-      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
+      const load = this.currentLoad(owned.ref);
+      if (load) { this.markTurnFailed(load, owned.id); this.send(load, { type: 'runtime.changed', runtime: 'failed' }); }
     }
     if (!failed) await owned.runtime.denyAll('Conversation run ended');
     try { await owned.run.dispose(); }
     catch {
       failed = true;
       if (owned.runtime.state !== 'failed') await owned.runtime.failOwnedRun(owned.id, 'Conversation run failed');
-      this.markTurnFailed(load, owned.id);
-      if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
+      const load = this.currentLoad(owned.ref);
+      if (load) { this.markTurnFailed(load, owned.id); this.send(load, { type: 'runtime.changed', runtime: 'failed' }); }
     }
     if (this.ownedRuns.get(key) !== owned) return;
     this.ownedRuns.delete(key);
-    await this.reconcileFailure(owned.ref, owned.runtime, owned.id, load);
+    await this.reconcileFailure(owned.ref, owned.runtime, owned.id);
   }
 
-  private async reconcileFailure(ref: ConversationRef, runtime: ConversationRuntimeController, runId: string, load: Load): Promise<void> {
+  private async reconcileFailure(ref: ConversationRef, runtime: ConversationRuntimeController, runId: string): Promise<void> {
     try {
       await this.registry.validate(ref);
       const loaded = await this.registry.resolve(ref).loadConversation(ref);
       if (conversationKey(loaded.summary.ref) !== conversationKey(ref) || loaded.summary.ref.projectPath !== ref.projectPath) return;
       for await (const event of loaded.events) {
         if (event.provider !== ref.provider) throw new Error('Mismatched conversation event provider');
-        if (!load.closed) this.deliverLive(load, event);
+        const load = this.currentLoad(ref);
+        if (load) this.receive(load, event);
       }
       if (loaded.summary.runtime !== 'idle') return;
       this.drafts.delete(conversationKey(ref));
       runtime.releaseOwnedRun(runId, 'idle');
-      if (!load.closed) {
+      const load = this.currentLoad(ref);
+      if (load) {
         this.send(load, { type: 'summary.updated', summary: loaded.summary });
         this.send(load, { type: 'runtime.changed', runtime: 'idle' });
       }
@@ -329,6 +338,7 @@ export class ConversationService {
       this.send(load, { type: 'history.complete' });
       this.drain(load);
       load.phase = 'live';
+      this.replayOwnedRun(load);
       const { title, updatedAt, createdAt, runtime, captureCompleteness } = loaded.summary;
       return {
         summary: { ref: summary.ref, title, updatedAt, runtime, captureCompleteness, ...(createdAt === undefined ? {} : { createdAt }) },
@@ -457,6 +467,22 @@ export class ConversationService {
 
   private send(load: Load, payload: StreamPayload): void {
     if (!load.closed) this.emit(structuredClone({ ...payload, ref: load.ref, loadId: load.loadId, seq: load.seq++ }));
+  }
+
+  private currentLoad(ref: ConversationRef): Load | undefined {
+    const load = this.loads.get(conversationKey(ref));
+    return load && !load.closed && load.ref.projectPath === ref.projectPath ? load : undefined;
+  }
+
+  private replayOwnedRun(load: Load): void {
+    const key = conversationKey(load.ref);
+    const starting = this.startingRuns.get(key);
+    if (starting) this.send(load, { type: 'runtime.changed', runtime: starting.runtime.state });
+    const owned = this.ownedRuns.get(key);
+    if (!owned || owned.ref.projectPath !== load.ref.projectPath) return;
+    for (const event of owned.events.values()) this.deliverLive(load, event, true);
+    for (const request of owned.requests.values()) this.send(load, { type: 'request.opened', request });
+    this.send(load, { type: 'runtime.changed', runtime: owned.runtime.state });
   }
 
   private fail(load: Load, message: string): void {
