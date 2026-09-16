@@ -23,7 +23,7 @@ function coerceTheme(value: unknown): ThemePreference {
  * synchronous and tiny: settings are read once at startup — before any window
  * exists, so the theme is right from the first frame — and on every change.
  *
- * Follows ConversationStore's conventions: atomic writes via temp+rename, and
+ * Uses atomic writes via temp+rename, and
  * parse errors rethrown with the path but without the parser's own message
  * (which would quote file contents back to whoever triggered the corruption).
  */

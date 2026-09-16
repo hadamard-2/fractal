@@ -12,6 +12,13 @@ import type {
   UserDecision,
 } from '@/shared/conversation-contract';
 
+export const CONVERSATION_CHANNELS = {
+  list: 'fractal:conversations:list', open: 'fractal:conversations:open',
+  close: 'fractal:conversations:close', create: 'fractal:conversations:create',
+  continue: 'fractal:conversations:continue', interrupt: 'fractal:conversations:interrupt',
+  resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
+} as const;
+
 const MAX_TEXT_LENGTH = 1_000_000;
 const MAX_DECISION_TEXT_LENGTH = 100_000;
 const MAX_SESSION_ID_LENGTH = 512;

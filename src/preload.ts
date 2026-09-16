@@ -3,8 +3,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ConversationApi } from '@/shared/conversation-contract';
-import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
-import { CONVERSATION_CHANNELS as CHANNELS } from '@/shared/agent-ipc-channels';
+import { CONVERSATION_CHANNELS as CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
   SETTINGS_INVOKE_CHANNEL,
   type FractalSettingsApi,

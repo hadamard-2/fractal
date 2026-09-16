@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { conversationReducer, initialConversationState } from '@/renderer/conversation-reducer';
 import { parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
-import type { Entry } from '@/shared/agent-contract';
 import type { ConversationRef, UserDecision } from '@/shared/conversation-contract';
 
 type ActiveLoad = { ref: ConversationRef; loadId: string; token: number };
@@ -10,11 +9,7 @@ function ignoreRejection(promise: Promise<unknown> | undefined): void {
   void Promise.resolve(promise).catch((): void => undefined);
 }
 
-export function useConversation(selectedRef: ConversationRef | string | null) {
-  // Execute's legacy panel still passes its pre-migration string selection.
-  // It receives an inert compatibility surface until Tasks 12–13 switch it
-  // to native refs; all transcript state below remains native-provider owned.
-  const ref = typeof selectedRef === 'string' ? null : selectedRef;
+export function useConversation(ref: ConversationRef | null) {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState);
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const generation = useRef(0);
@@ -134,13 +129,6 @@ export function useConversation(selectedRef: ConversationRef | string | null) {
     send,
     interrupt,
     resolveRequest,
-    // Transitional aliases keep the pre-native panel type-safe without
-    // synthesizing a transcript from optimistic renderer state.
-    entries: [] as Entry[],
-    missedEvents: state.sync === 'gap',
-    snapshotError: state.error,
-    status: 'ready' as const,
-    cancel: interrupt,
     reload,
   };
 }

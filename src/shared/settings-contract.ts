@@ -1,5 +1,5 @@
 // Shared settings IPC contract. Type-only (plus the channel name) — no I/O,
-// no Electron imports, no React. Same rules as agent-contract.ts: imported by
+// no Electron imports, no React. It is imported by
 // both the main and renderer processes; the single source of truth.
 
 export type ThemePreference = 'system' | 'light' | 'dark';

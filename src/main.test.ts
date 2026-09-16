@@ -22,7 +22,7 @@ vi.mock('electron', async () => {
 });
 vi.mock('electron-squirrel-startup', () => ({ default: false }));
 vi.mock('@/main/settings-ipc', () => ({ registerSettingsIpc: () => state.events.push('settings') }));
-vi.mock('@/main/agent-ipc', () => ({ registerConversationIpc: state.register, disposeConversationIpc: state.disposeIpc, registerAgentIpc: () => { throw new Error('Legacy IPC must not start'); } }));
+vi.mock('@/main/agent-ipc', () => ({ registerConversationIpc: state.register, disposeConversationIpc: state.disposeIpc }));
 vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { start: state.start } }));
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
 beforeEach(() => {

@@ -143,6 +143,7 @@ export class ConversationService {
       try { run = await this.registry.resolve(ref).continueConversation(ref, prompt); }
       catch {
         await runtime.failOwnedRun(id, 'Conversation continuation failed');
+        this.markTurnFailed(load, id);
         if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
         await this.reconcileFailure(ref, runtime, id, load);
         throw new Error('Conversation continuation failed');
@@ -221,6 +222,7 @@ export class ConversationService {
     } catch { failed = true; }
     if (failed) {
       try { await owned.runtime.failOwnedRun(owned.id, 'Conversation run failed'); } catch { /* A concurrent teardown may have reconciled ownership. */ }
+      this.markTurnFailed(load, owned.id);
       if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
     }
     if (!failed) await owned.runtime.denyAll('Conversation run ended');
@@ -228,6 +230,7 @@ export class ConversationService {
     catch {
       failed = true;
       if (owned.runtime.state !== 'failed') await owned.runtime.failOwnedRun(owned.id, 'Conversation run failed');
+      this.markTurnFailed(load, owned.id);
       if (!load.closed) this.send(load, { type: 'runtime.changed', runtime: 'failed' });
     }
     if (this.ownedRuns.get(key) !== owned) return;
@@ -240,7 +243,10 @@ export class ConversationService {
       await this.registry.validate(ref);
       const loaded = await this.registry.resolve(ref).loadConversation(ref);
       if (conversationKey(loaded.summary.ref) !== conversationKey(ref) || loaded.summary.ref.projectPath !== ref.projectPath) return;
-      for await (const event of loaded.events) if (event.provider !== ref.provider) throw new Error('Mismatched conversation event provider');
+      for await (const event of loaded.events) {
+        if (event.provider !== ref.provider) throw new Error('Mismatched conversation event provider');
+        if (!load.closed) this.deliverLive(load, event);
+      }
       if (loaded.summary.runtime !== 'idle') return;
       this.drafts.delete(conversationKey(ref));
       runtime.releaseOwnedRun(runId, 'idle');
@@ -249,6 +255,17 @@ export class ConversationService {
         this.send(load, { type: 'runtime.changed', runtime: 'idle' });
       }
     } catch { /* Fail closed until a later native discovery proves idle. */ }
+  }
+
+  private markTurnFailed(load: Load, runId: string): void {
+    if (load.closed || !load.currentTurnId || load.turns.get(load.currentTurnId)?.status !== 'active') return;
+    this.deliverLive(load, {
+      provider: load.ref.provider,
+      nativeId: `fractal:recovery:${runId}`,
+      nativeType: 'fractal-recovery',
+      observedAt: Date.now(),
+      payload: { kind: 'turn-finished', turnId: load.currentTurnId, status: 'failed' },
+    });
   }
 
   private async load(load: Load): Promise<OpenResult> {
