@@ -23,6 +23,16 @@ export function composerReadOnlyReason(runtime: ConversationRuntime): string | n
   }
 }
 
+function claudeCapabilityGap(summary: ConversationSummary, capabilities: HarnessCapabilities | null): string | null {
+  if (summary.ref.provider !== 'claude' || capabilities === null) return null;
+  const missing: string[] = [];
+  if (!capabilities.approvals) missing.push('approval');
+  if (!capabilities.questions) missing.push('question');
+  if (missing.length === 0) return null;
+  const subject = missing.length === 2 ? 'approval and question routing are' : `${missing[0]} routing is`;
+  return `Claude ${subject} unavailable. Fractal will not bypass native permissions.`;
+}
+
 function copy(value: string): void {
   try {
     void Promise.resolve(navigator.clipboard?.writeText(value)).catch((): void => undefined);
@@ -50,6 +60,7 @@ export function ConversationHeader({
   const previousNativeState = useRef({ conversationId, runtime });
   const canInterrupt = capabilities?.interrupt === true && runtime === 'active-in-fractal' && onInterrupt !== undefined;
   const readOnlyReason = composerReadOnlyReason(runtime);
+  const capabilityGap = claudeCapabilityGap(summary, capabilities);
   const interrupting = interruptAttempt?.conversationId === conversationId;
 
   useEffect(() => {
@@ -81,6 +92,7 @@ export function ConversationHeader({
         <h2 className="truncate font-medium text-sm">{summary.title}</h2>
         <p className="text-xs text-muted-foreground">{summary.ref.provider} · {runtime.replaceAll('-', ' ')} · {summary.captureCompleteness} capture</p>
         {readOnlyReason !== null && <p className="mt-1 text-xs text-muted-foreground">{readOnlyReason}</p>}
+        {capabilityGap !== null && <p className="mt-1 text-xs text-muted-foreground" role="status">{capabilityGap}</p>}
       </div>
       {canInterrupt && <Button aria-label="Interrupt session" disabled={interrupting} onClick={interrupt} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>}
       <DropdownMenu>

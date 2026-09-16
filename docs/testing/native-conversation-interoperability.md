@@ -13,8 +13,8 @@ provider:
 provider version:
 native session ID:
 date:
-approval exercised: yes | no | unsupported
-question exercised: yes | no | unsupported
+approval exercised: yes | inconclusive | unsupported
+question exercised: yes | inconclusive | unsupported
 external ownership enforced: pass | fail
 native resume after Fractal: pass | fail
 history entries present once: pass | fail
@@ -37,6 +37,7 @@ Example local setup (replace the directory shown by `mktemp -d` in later steps):
 SMOKE_REPO="$(mktemp -d)"
 git -C "$SMOKE_REPO" init
 printf '%s\n' 'harmless interoperability fixture' > "$SMOKE_REPO/fractal-smoke-fixture.txt"
+cd "$SMOKE_REPO"
 ```
 
 Delete the temporary repository after recording metadata, according to the local environment's normal cleanup policy.
@@ -61,14 +62,16 @@ While a turn is actively running in a separately launched Codex process, open th
 1. Record the installed version with `claude --version`.
 2. From the temporary repository, run `claude` and start a harmless conversation. Ask it to acknowledge the task without changing files. Note the native session ID, then wait until the run is idle before leaving the CLI.
 3. Start Fractal. Under the temporary project, open the Claude conversation with that exact native session ID. Confirm that the native user prompt and response each appear once.
-4. Check the capabilities Fractal reports for this installed Claude version:
-   - If approvals are supported, send a prompt that only asks Claude to read `fractal-smoke-fixture.txt`. Exercise one harmless read approval using allow-once. Do not approve writes, network access, or commands outside the temporary repository.
+4. Check the capabilities Fractal reports in the conversation header, directly below the provider/runtime/capture line. When routing is unavailable, this visible status names approval routing, question routing, or both and states that Fractal will not bypass native permissions.
+5. Exercise the capabilities reported for this installed Claude version:
+   - If approvals are supported, first inspect the installed CLI's current help and permission settings using the commands documented by that installed version. Record the original permission configuration outside the test log, configure a temporary-repository operation to require an approval, and restore the original configuration when the test ends. Provider versions differ, so this guide intentionally does not prescribe a universal permission flag.
+   - Ask Claude to perform that known approval-requiring operation: harmlessly create `claude-approval-fixture.txt` inside the temporary repository with non-sensitive disposable text. Exercise allow-once in Fractal. Do not approve deletion, network access, or any operation outside the temporary repository. If no approval is requested, record the approval check as `inconclusive`, recheck the installed CLI help/settings, safely configure the named operation to require approval, and retry; never count a no-request run as a pass.
    - If questions are supported, send a prompt that asks Claude to use `AskUserQuestion` for one harmless choice, answer it in Fractal, and confirm that the resolved question remains visible as an audit entry.
    - If either capability is unsupported, confirm that Fractal reports that exact capability gap and does not offer a bypass. Record the capability as `unsupported`; do not try to manufacture the missing interaction.
-5. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
-6. Exit Fractal so it no longer owns the run.
-7. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
-8. Record only the safe metadata listed above.
+6. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
+7. Exit Fractal so it no longer owns the run, then restore any permission configuration changed for the approval check.
+8. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
+9. Record only the safe metadata listed above.
 
 ### Claude external-ownership check
 

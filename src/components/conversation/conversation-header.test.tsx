@@ -23,7 +23,34 @@ const summaryFor = (nativeSessionId: string): ConversationSummary => ({
   ref: { ...summary.ref, nativeSessionId },
 });
 
+const claudeSummary: ConversationSummary = {
+  ...summary,
+  ref: { ...summary.ref, provider: 'claude' },
+};
+
 describe('ConversationHeader', () => {
+  test.each([
+    [{ ...capabilities, approvals: false }, 'Claude approval routing is unavailable. Fractal will not bypass native permissions.'],
+    [{ ...capabilities, questions: false }, 'Claude question routing is unavailable. Fractal will not bypass native permissions.'],
+    [{ ...capabilities, approvals: false, questions: false }, 'Claude approval and question routing are unavailable. Fractal will not bypass native permissions.'],
+  ] as const)('exposes Claude capability gaps as accessible status text', (limitedCapabilities, message) => {
+    render(<ConversationHeader capabilities={limitedCapabilities} summary={claudeSummary} />);
+
+    expect(screen.getByRole('status').textContent).toBe(message);
+  });
+
+  test('does not report capability gaps when Claude routing is supported', () => {
+    render(<ConversationHeader capabilities={capabilities} summary={claudeSummary} />);
+
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  test('does not interpret another provider capabilities as Claude routing gaps', () => {
+    render(<ConversationHeader capabilities={{ ...capabilities, approvals: false, questions: false }} summary={summary} />);
+
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   test('contains rejected clipboard promises', async () => {
     const user = userEvent.setup();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(() => Promise.reject(new Error('blocked'))) } });
