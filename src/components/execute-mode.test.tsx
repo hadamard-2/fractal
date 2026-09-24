@@ -25,6 +25,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   await user.click(await screen.findByRole('button', { name: /Review native history/ }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
   expect(await screen.findByText('Native panel title')).toBeTruthy();
+  expect(screen.getByText('(Codex · Status unknown)')).toBeTruthy();
 });
 
 test('refreshes breadcrumb metadata when the same native ref is selected again', async () => {
@@ -32,8 +33,9 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   const listeners = new Set<(event: ConversationStreamEvent) => void>();
   let title = 'Fix parser';
   let project = 'Fractal';
+  let runtime: 'unknown' | 'waiting-for-user' = 'unknown';
   const api: ConversationApi = {
-    list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: project, conversations: [{ ref, title, updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }] }], providers: [] }),
+    list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: project, conversations: [{ ref, title, updatedAt: 1, runtime, captureCompleteness: 'partial' }] }], providers: [] }),
     open: async () => ({ summary: { ref, title: 'Native details', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities }),
     close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -45,10 +47,12 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   await user.click(await screen.findByText('Fix parser'));
   title = 'Fix parser again';
   project = 'Fractal next';
-  act(() => { for (const listener of listeners) listener({ type: 'summary.updated', ref, loadId: 'history-list-refresh', seq: 0, summary: { ref, title, updatedAt: 2, runtime: 'unknown', captureCompleteness: 'partial' } }); });
+  runtime = 'waiting-for-user';
+  act(() => { for (const listener of listeners) listener({ type: 'summary.updated', ref, loadId: 'history-list-refresh', seq: 0, summary: { ref, title, updatedAt: 2, runtime, captureCompleteness: 'partial' } }); });
   await user.click(await screen.findByText('Fix parser again'));
   expect(screen.getByText('Fractal next', { selector: '[data-slot="breadcrumb-item"]' })).toBeTruthy();
   expect(screen.getByText('Fix parser again', { selector: '[data-slot="breadcrumb-page"]' })).toBeTruthy();
+  expect(await screen.findByText('(Codex · Waiting for you)')).toBeTruthy();
   expect(screen.queryByText('Fix parser')).toBeNull();
 });
 

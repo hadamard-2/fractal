@@ -30,7 +30,7 @@ test('searches conversations in a dialog and selects the native conversation', a
   expect(screen.getByRole('button', { name: /Fix parser/ })).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Review IPC/ })).toBeNull();
   await user.click(screen.getByRole('button', { name: /Fix parser/ }));
-  expect(onSelect).toHaveBeenCalledWith({ ref: groups[0].conversations[1].ref, title: 'Fix parser', section: 'Fractal' });
+  expect(onSelect).toHaveBeenCalledWith({ ref: groups[0].conversations[1].ref, title: 'Fix parser', section: 'Fractal', runtime: 'idle' });
   expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 

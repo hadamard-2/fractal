@@ -4,7 +4,7 @@ import { ConversationPanel } from '@/components/conversation-panel';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
-import type { NavSelection } from '@/components/sidebar-03/nav-main';
+import { providerName, runtimeLabel, type NavSelection } from '@/components/sidebar-03/nav-main';
 import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
 import {
   Breadcrumb,
@@ -52,7 +52,7 @@ export function ExecuteMode({
   onOpenSettings: () => void;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
-  const { providers, loading, error } = useConversationHistory();
+  const { projects, providers, loading, error } = useConversationHistory();
   // Selection lives here, not in the sidebar: the header below shows the
   // picked item's title, and only this component renders both.
   const [selectedItem, setSelectedItem] = useState<NavSelection | null>(null);
@@ -63,6 +63,10 @@ export function ExecuteMode({
     by the length of its own transition.
   */
   const [resizing, setResizing] = useState(false);
+  const currentSummary = selectedRef && projects
+    .flatMap((project) => project.conversations)
+    .find((conversation) => conversationKey(conversation.ref) === conversationKey(selectedRef));
+  const selectedRuntime = currentSummary?.runtime ?? selectedItem?.runtime;
 
   return (
     <SidebarProvider
@@ -136,18 +140,23 @@ export function ExecuteMode({
                 orientation="vertical"
                 className="mr-2 data-[orientation=vertical]:h-4"
               />
-              <Breadcrumb>
-                <BreadcrumbList>
+              <Breadcrumb className="min-w-0">
+                <BreadcrumbList className="min-w-0 flex-nowrap">
                   {selectedItem.section && (
                     <>
                       <BreadcrumbItem>{selectedItem.section}</BreadcrumbItem>
                       <BreadcrumbSeparator />
                     </>
                   )}
-                  <BreadcrumbItem>
-                    <BreadcrumbPage className="font-medium">
+                  <BreadcrumbItem className="min-w-0">
+                    <BreadcrumbPage className="min-w-0 truncate font-medium">
                       {selectedItem.title}
                     </BreadcrumbPage>
+                    {selectedRuntime && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        ({providerName(selectedItem.ref.provider)} · {runtimeLabel(selectedRuntime)})
+                      </span>
+                    )}
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>

@@ -82,7 +82,7 @@ export function SearchDialog({
                   className="flex w-full items-center gap-3 rounded-md px-2.5 py-2.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                   key={`${conversation.ref.provider}:${conversation.ref.nativeSessionId}:${conversation.ref.projectPath}`}
                   onClick={() => {
-                    onSelect({ ref: conversation.ref, title: conversation.title, section: group.displayName });
+                    onSelect({ ref: conversation.ref, title: conversation.title, section: group.displayName, runtime: conversation.runtime });
                     changeOpen(false);
                   }}
                   type="button"

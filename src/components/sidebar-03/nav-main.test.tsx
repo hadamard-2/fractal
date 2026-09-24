@@ -92,8 +92,8 @@ describe('NavMain', () => {
     expect(screen.getByText('Fix parser')).toBeTruthy();
     expect(screen.getByText('Review IPC')).toBeTruthy();
     expect(screen.getAllByTestId('project-group')).toHaveLength(1);
-    expect(screen.getByLabelText('Claude Code conversation')).toBeTruthy();
-    expect(screen.getByLabelText('Codex conversation')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fix parser, Claude Code conversation, Working elsewhere' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review IPC, Codex conversation, Waiting for you' })).toBeTruthy();
   });
 
   test('preserves main ordering and returns the exact native ref on click', async () => {
@@ -108,6 +108,20 @@ describe('NavMain', () => {
     await user.click(screen.getByRole('button', { name: 'Fractal' }));
     await user.click(screen.getByRole('button', { name: /Fix parser/ }));
     expect(onSelect.mock.calls[0][0].ref).toBe(fractalGroup.conversations[0].ref);
+  });
+
+  test('keeps chat titles neutral and uses trailing provider markers without status icons', async () => {
+    renderNav();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
+
+    const claudeChat = screen.getByRole('button', { name: 'Fix parser, Claude Code conversation, Working elsewhere' });
+    const codexChat = screen.getByRole('button', { name: 'Review IPC, Codex conversation, Waiting for you' });
+    expect(claudeChat.textContent).toBe('Fix parser');
+    expect(codexChat.textContent).toBe('Review IPC');
+    expect(claudeChat.querySelector('[title="Working elsewhere"]')).toBeNull();
+    expect(codexChat.querySelector('[title="Waiting for you"]')).toBeNull();
+    expect(claudeChat.querySelector('[title="Claude Code"]')).toBeTruthy();
+    expect(codexChat.querySelector('[title="Codex"]')).toBeTruthy();
   });
 
   test('keeps an explicitly collapsed project closed when its summaries refresh', async () => {
@@ -143,6 +157,7 @@ describe('NavMain', () => {
     renderNav([fractalGroup], { ...fractalGroup.conversations[0].ref });
     expect(screen.getByRole('button', { name: /Fix parser/ }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('button', { name: /Review IPC/ }).getAttribute('aria-current')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Fractal' }).getAttribute('data-active')).toBe('false');
   });
 
   test('keeps inactive projects closed when one is selected', () => {

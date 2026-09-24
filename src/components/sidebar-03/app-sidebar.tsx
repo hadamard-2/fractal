@@ -27,11 +27,11 @@ import { SearchDialog } from '@/components/conversation/search-dialog';
 
 /*
  * Widths for the drag-to-resize handle, in px. The sidebar's own geometry is
- * CSS-var driven (`--sidebar-width`, 16rem default), so a chosen size is
+ * CSS-var driven (`--sidebar-width`, 18.4rem default), so a chosen size is
  * injected as a pixel value and every consumer — gap, fixed container, inset
  * margin — follows.
  */
-const SIDEBAR_DEFAULT_WIDTH = 256;
+const SIDEBAR_DEFAULT_WIDTH = 294.4;
 const SIDEBAR_MAX_WIDTH = 480;
 // Released narrower than this, the drag ends in a collapse instead of a size.
 const SIDEBAR_COLLAPSE_BELOW = 200;
@@ -179,10 +179,7 @@ export function DashboardSidebar({
 
   return (
     <Sidebar
-      className={cn(
-        '[&_[data-slot=sidebar-inner]]:transition-colors hover:[&_[data-slot=sidebar-inner]]:border-r-sidebar-foreground/20',
-        className
-      )}
+      className={className}
       collapsible="icon"
       variant="floating"
       {...props}
@@ -250,7 +247,7 @@ export function DashboardSidebar({
         */}
         <SidebarGroup className="min-h-0 flex-1 px-0 py-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupContent className="scrollbar-minimal min-h-0 flex-1 overflow-y-auto">
+          <SidebarGroupContent className="scrollbar-minimal min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pr-1">
             <NavMain
               onCreated={(ref) => onConversationCreated?.(ref)}
               onSelect={onItemSelect}
