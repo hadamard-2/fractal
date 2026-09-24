@@ -1,13 +1,12 @@
 'use client';
 
 import { CircleAlert, CircleHelp, CirclePause, Folder, FolderOpen, Radio } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { Input } from '@/components/ui/input';
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -54,59 +53,28 @@ export default function NavMain({
   onSelect: (item: NavSelection) => void;
 }) {
   const { state } = useSidebar();
-  const [query, setQuery] = useState('');
-  const [openProjects, setOpenProjects] = useState<Set<string>>(() => new Set());
-  const seenProjects = useRef(new Set<string>());
+  const [openProjects, setOpenProjects] = useState<Set<string>>(() =>
+    new Set(selected ? [selected.projectPath] : [])
+  );
   const isCollapsed = state === 'collapsed';
-  const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
     const projectPaths = new Set(groups.map((group) => group.projectPath));
-    setOpenProjects((open) => {
-      const next = new Set([...open].filter((path) => projectPaths.has(path)));
-      for (const path of projectPaths) {
-        if (!seenProjects.current.has(path)) next.add(path);
-      }
-      return next;
-    });
-    seenProjects.current = projectPaths;
+    setOpenProjects((open) => new Set([...open].filter((path) => projectPaths.has(path))));
   }, [groups]);
 
-  const filteredGroups = useMemo(() => groups.flatMap((group) => {
-    const projectMatches = [group.displayName, group.projectPath]
-      .some((value) => value.toLowerCase().includes(normalizedQuery));
-    const conversations = projectMatches
-      ? group.conversations
-      : group.conversations.filter((conversation) => [
-        conversation.title,
-        providerName(conversation.ref.provider),
-        conversation.ref.nativeSessionId,
-      ].some((value) => value.toLowerCase().includes(normalizedQuery)));
-    return conversations.length ? [{ ...group, conversations }] : [];
-  }), [groups, normalizedQuery]);
+  useEffect(() => {
+    if (selected) {
+      setOpenProjects((open) => new Set(open).add(selected.projectPath));
+    }
+  }, [selected]);
 
   if (isCollapsed) return null;
 
   return (
     <SidebarMenu>
-      <SidebarMenuItem>
-        <Input
-          aria-label="Search conversations"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search conversations"
-          type="search"
-          value={query}
-        />
-      </SidebarMenuItem>
-      {normalizedQuery && filteredGroups.length === 0 && (
-        <SidebarMenuItem>
-          <p className="px-2 py-1 text-muted-foreground text-xs" role="status">
-            No conversations found.
-          </p>
-        </SidebarMenuItem>
-      )}
-      {filteredGroups.map((group) => {
-        const isOpen = normalizedQuery.length > 0 || openProjects.has(group.projectPath);
+      {groups.map((group) => {
+        const isOpen = openProjects.has(group.projectPath);
         const isSelectedProject = selected?.projectPath === group.projectPath;
 
         return (

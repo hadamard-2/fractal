@@ -20,7 +20,9 @@ test('explains no selection and opens native sidebar refs while identifying unav
   expect(screen.getByText('Select a conversation')).toBeTruthy();
   await screen.findByText(/claude.*unavailable/i);
   const user = userEvent.setup();
-  await user.click(await screen.findByText('Review native history'));
+  await user.click(screen.getByRole('button', { name: 'Search' }));
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  await user.click(await screen.findByRole('button', { name: /Review native history/ }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
   expect(await screen.findByText('Native panel title')).toBeTruthy();
 });
@@ -39,6 +41,7 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
   const user = userEvent.setup();
   render(<ExecuteMode onOpenSettings={() => undefined} />);
+  await user.click(await screen.findByRole('button', { name: 'Fractal' }));
   await user.click(await screen.findByText('Fix parser'));
   title = 'Fix parser again';
   project = 'Fractal next';

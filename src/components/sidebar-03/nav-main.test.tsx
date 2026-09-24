@@ -83,37 +83,15 @@ function renderNav(
 }
 
 describe('NavMain', () => {
-  test('renders mixed providers beneath one project', () => {
+  test('starts projects closed and opens one when clicked', async () => {
     renderNav();
+    expect(screen.queryByText('Fix parser')).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
     expect(screen.getByText('Fix parser')).toBeTruthy();
     expect(screen.getByText('Review IPC')).toBeTruthy();
     expect(screen.getAllByTestId('project-group')).toHaveLength(1);
     expect(screen.getByLabelText('Claude Code conversation')).toBeTruthy();
     expect(screen.getByLabelText('Codex conversation')).toBeTruthy();
-  });
-
-  test('filters by project title, conversation title, provider, and native ID', async () => {
-    const user = userEvent.setup();
-    renderNav();
-    const search = screen.getByRole('searchbox');
-    await user.type(search, 'FRACTAL');
-    expect(screen.getByText('Fix parser')).toBeTruthy();
-    expect(screen.getByText('Review IPC')).toBeTruthy();
-    await user.clear(search);
-    await user.type(search, '/WORK/FRACTAL');
-    expect(screen.getByText('Fix parser')).toBeTruthy();
-    await user.clear(search);
-    await user.type(search, 'FIX PARSER');
-    expect(screen.getByText('Fix parser')).toBeTruthy();
-    expect(screen.queryByText('Review IPC')).toBeNull();
-    await user.clear(search);
-    await user.type(search, 'CLAUDE CODE');
-    expect(screen.getByText('Fix parser')).toBeTruthy();
-    expect(screen.queryByText('Review IPC')).toBeNull();
-    await user.clear(search);
-    await user.type(search, 'CLAUDE-SESSION-1');
-    expect(screen.getByText('Fix parser')).toBeTruthy();
-    expect(screen.queryByText('Review IPC')).toBeNull();
   });
 
   test('preserves main ordering and returns the exact native ref on click', async () => {
@@ -125,6 +103,7 @@ describe('NavMain', () => {
       expect.stringContaining('Fractal'),
     ]);
 
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
     await user.click(screen.getByRole('button', { name: /Fix parser/ }));
     expect(onSelect.mock.calls[0][0].ref).toBe(fractalGroup.conversations[0].ref);
   });
@@ -139,6 +118,7 @@ describe('NavMain', () => {
         fractalGroup.conversations[1],
       ],
     };
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
     await user.click(screen.getByRole('button', { name: 'Fractal' }));
     expect(screen.queryByText('Fix parser')).toBeNull();
 
@@ -161,10 +141,9 @@ describe('NavMain', () => {
     expect(screen.getByRole('button', { name: /Review IPC/ }).getAttribute('aria-current')).toBeNull();
   });
 
-  test('announces when a search matches no conversations', async () => {
-    const user = userEvent.setup();
-    renderNav();
-    await user.type(screen.getByRole('searchbox'), 'not-a-conversation');
-    expect(screen.getByRole('status').textContent).toBe('No conversations found.');
+  test('keeps inactive projects closed when one is selected', () => {
+    renderNav([atlasGroup, fractalGroup], fractalGroup.conversations[0].ref);
+    expect(screen.getByText('Fix parser')).toBeTruthy();
+    expect(screen.queryByText('Map routes')).toBeNull();
   });
 });

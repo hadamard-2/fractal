@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageCirclePlus } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { SidebarMenuButton } from '@/components/ui/sidebar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import type { ConversationRef, HarnessStatus, ProviderId } from '@/shared/conversation-contract';
 
@@ -34,10 +34,10 @@ export function NewConversationMenu({ providers, onCreated }: { providers: Harne
   };
   return <>
     <DropdownMenu>
-      <DropdownMenuTrigger asChild><Button aria-busy={pending !== null} aria-label="New conversation" className="h-8 w-full justify-start px-2 font-normal" disabled={available.length === 0 || pending !== null} variant="ghost"><MessageCirclePlus /><span>New conversation</span></Button></DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild><SidebarMenuButton aria-busy={pending !== null} aria-label="New chat" disabled={available.length === 0 || pending !== null} tooltip="New chat"><MessageCirclePlus /><span className="group-data-[collapsible=icon]:hidden">New chat</span></SidebarMenuButton></DropdownMenuTrigger>
       <DropdownMenuContent align="start">{available.map((provider) => <DropdownMenuItem disabled={pending !== null} key={provider.provider} onSelect={() => void create(provider.provider)}>{LABELS[provider.provider]}</DropdownMenuItem>)}</DropdownMenuContent>
     </DropdownMenu>
-    {pending && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Creating {LABELS[pending]} conversation…</p>}
-    {error && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">{error}</p>}
+    {pending && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">Creating {LABELS[pending]} conversation…</p>}
+    {error && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">{error}</p>}
   </>;
 }

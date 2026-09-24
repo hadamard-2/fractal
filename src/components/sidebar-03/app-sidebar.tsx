@@ -2,7 +2,7 @@
 
 import { motion } from 'motion/react';
 import { Blocks, FolderPlus, Search } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +24,7 @@ import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import type { ConversationRef } from '@/shared/conversation-contract';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
+import { SearchDialog } from '@/components/conversation/search-dialog';
 
 /*
  * Widths for the drag-to-resize handle, in px. The sidebar's own geometry is
@@ -175,6 +176,7 @@ export function DashboardSidebar({
   const { state } = useSidebar();
   const { projects, providers, error } = useConversationHistory();
   const isCollapsed = state === 'collapsed';
+  const [searchOpen, setSearchOpen] = useState(false);
 
   return (
     <Sidebar
@@ -222,13 +224,10 @@ export function DashboardSidebar({
           key={isCollapsed ? 'header-collapsed' : 'header-expanded'}
           transition={{ duration: 0.8 }}
         >
-          {/*
-            Placeholder for search — a command palette lives here eventually.
-            size-4 to match the nav items' icon treatment below.
-          */}
           <Button
             aria-label="Search"
             className="rounded-full"
+            onClick={() => setSearchOpen(true)}
             size="icon"
             title="Search"
             variant="ghost"
@@ -242,18 +241,15 @@ export function DashboardSidebar({
           surfaces (see index.css). */}
       <SidebarContent className="scrollbar-minimal gap-4 px-2 py-4">
         {/*
-          Quick actions above the navigation. New Chat is wired to real
-          conversation creation via `onNewChat` from ExecuteMode; New
-          Project is still a placeholder, same as the search button
-          upstairs. The menu-button primitive handles the collapsed rail on
-          its own: label truncates away, icon centres, and the tooltip
-          carries the name.
+          Quick actions above the navigation. New chat is wired to real
+          conversation creation; New project is still a placeholder. Both
+          use the menu-button primitive for matching alignment and icon rail.
         */}
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="New Project">
+            <SidebarMenuButton tooltip="New project">
               <FolderPlus />
-              <span>New Project</span>
+              <span>New project</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -288,6 +284,12 @@ export function DashboardSidebar({
         onResizingChange={onResizingChange}
         onWidthChange={onWidthChange}
         width={width}
+      />
+      <SearchDialog
+        groups={projects}
+        onOpenChange={setSearchOpen}
+        onSelect={(item) => onItemSelect?.(item)}
+        open={searchOpen}
       />
     </Sidebar>
   );
