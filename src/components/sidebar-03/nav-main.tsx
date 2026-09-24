@@ -2,7 +2,7 @@
 
 import { PointerActivationConstraints, PointerSensor } from '@dnd-kit/dom';
 import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react';
-import { isSortable, useSortable } from '@dnd-kit/react/sortable';
+import { isSortable, useSortable, type UseSortableInput } from '@dnd-kit/react/sortable';
 import { Folder, FolderOpen } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
@@ -60,7 +60,7 @@ function SortableRow({
   id: string;
   index: number;
   group: string;
-  disabled: boolean;
+  disabled: UseSortableInput['disabled'];
   children: (sortable: ReturnType<typeof useSortable>) => ReactNode;
 }) {
   const sortable = useSortable({ id, index, group, type: group, accept: group, disabled, transition: sortableTransition });
@@ -147,7 +147,7 @@ export default function NavMain({
         const visibleConversations = showAll ? group.conversations : group.conversations.slice(0, 5);
 
         return (
-          <SortableRow disabled={!onMoveProject} group="projects" id={`project:${group.projectPath}`} index={projectIndex} key={group.projectPath}>
+          <SortableRow disabled={!onMoveProject || (isOpen && { draggable: true })} group="projects" id={`project:${group.projectPath}`} index={projectIndex} key={group.projectPath}>
           {({ ref, handleRef, isDragging, isDropTarget }) => (
           <SidebarMenuItem
             data-testid="project-group"
@@ -175,8 +175,8 @@ export default function NavMain({
             >
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton
-                  className={cn('pr-9 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && 'cursor-grab touch-none active:cursor-grabbing', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
-                  ref={handleRef}
+                  className={cn('pr-9 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
+                  ref={onMoveProject && !isOpen ? handleRef : undefined}
                   type="button"
                 >
                   {isOpen ? <FolderOpen /> : <Folder />}
@@ -197,7 +197,7 @@ export default function NavMain({
                       >
                         <SidebarMenuSubButton asChild isActive={isSelected}>
                           <button
-                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'cursor-grab touch-none active:cursor-grabbing', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]')}
+                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]')}
                             aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(conversation.runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
                             ref={chatHandleRef}
@@ -220,9 +220,9 @@ export default function NavMain({
                   })}
                   {!showAll && group.conversations.length > 5 && (
                     <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
+                      <SidebarMenuSubButton asChild className="hover:bg-transparent">
                         <button
-                          className="w-full px-4 py-1.5 text-left text-sidebar-foreground/55 text-sm hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:text-sidebar-foreground"
+                          className="w-full px-4 py-1.5 text-left text-sidebar-foreground/55 text-sm hover:text-sidebar-foreground focus-visible:text-sidebar-foreground"
                           onClick={() => setExpandedProjects((expanded) => new Set(expanded).add(group.projectPath))}
                           type="button"
                         >
@@ -234,6 +234,8 @@ export default function NavMain({
                 </SidebarMenuSub>
               </CollapsibleContent>
             </Collapsible>
+            {/* A disabled sortable handle gets aria-disabled, which blocks clicks on SidebarMenuButton. */}
+            {(!onMoveProject || isOpen) && <span aria-hidden="true" className="hidden" ref={handleRef} />}
             <NewConversationMenu
               onCreated={onCreated}
               projectName={group.displayName}

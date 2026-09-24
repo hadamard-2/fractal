@@ -250,7 +250,7 @@ export function DashboardSidebar({
         */}
         <SidebarGroup className="min-h-0 flex-1 px-0 py-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupContent className="scrollbar-minimal min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pr-1">
+          <SidebarGroupContent className="sidebar-projects-fade scrollbar-minimal min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pb-10 pr-1">
             {orderReady && <NavMain
               onCreated={(ref) => onConversationCreated?.(ref)}
               onMoveChat={moveChat}
@@ -269,7 +269,7 @@ export function DashboardSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="px-2">
+      <SidebarFooter className="px-2 pt-1">
         <NavSettings onOpenSettings={onOpenSettings} />
       </SidebarFooter>
       <SidebarResizeHandle

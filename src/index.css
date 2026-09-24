@@ -186,6 +186,12 @@
   background-color: var(--muted-foreground);
 }
 
+/* Soften project rows as they scroll beneath the footer. The scroll area's
+ * bottom padding lets the last row move above the fade at the end. */
+.sidebar-projects-fade {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+}
+
 /*
  * Drag-resize mode for the execute sidebar. While the handle is held,
  * ExecuteMode hangs `data-sidebar-resizing` on the sidebar wrapper. The gap

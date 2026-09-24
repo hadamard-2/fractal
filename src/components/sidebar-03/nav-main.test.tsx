@@ -128,10 +128,10 @@ describe('NavMain', () => {
       </SidebarProvider>
     );
     expect(screen.queryByRole('button', { name: /Move Atlas|Move Fractal/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Fractal' }).className).toContain('cursor-grab');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
     expect(screen.queryByRole('button', { name: /Move Review IPC|Move Fix parser/ })).toBeNull();
-    expect(screen.getByRole('button', { name: /Review IPC/ }).className).toContain('cursor-grab');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
+    expect(screen.getByRole('button', { name: 'Fractal' }).getAttribute('aria-expanded')).toBe('false');
   });
 
   test('keeps chat titles neutral and uses trailing provider markers without status icons', async () => {
