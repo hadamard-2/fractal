@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FractalSettings, ThemePreference } from '@/shared/settings-contract';
+import type { FractalSettings, SidebarOrder, ThemePreference } from '@/shared/settings-contract';
 
-const DEFAULTS: FractalSettings = { theme: 'system' };
+const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
+const defaults = (): FractalSettings => ({ theme: 'system', sidebarOrder: emptySidebarOrder() });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 
@@ -15,7 +16,23 @@ const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 function coerceTheme(value: unknown): ThemePreference {
   return typeof value === 'string' && THEME_VALUES.includes(value)
     ? (value as ThemePreference)
-    : DEFAULTS.theme;
+    : 'system';
+}
+
+function coerceStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === 'string' && item.length > 0))]
+    : [];
+}
+
+function coerceSidebarOrder(value: unknown): SidebarOrder {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return emptySidebarOrder();
+  const order = value as Record<string, unknown>;
+  const rawChats = order.chatsByProject;
+  const chatsByProject: Record<string, string[]> = typeof rawChats === 'object' && rawChats !== null && !Array.isArray(rawChats)
+    ? Object.fromEntries(Object.entries(rawChats).filter(([projectPath]) => projectPath.length > 0).map(([projectPath, ids]) => [projectPath, coerceStrings(ids)]))
+    : {};
+  return { projects: coerceStrings(order.projects), chatsByProject };
 }
 
 /**
@@ -36,7 +53,7 @@ export class SettingsStore {
   }
 
   load(): FractalSettings {
-    if (!existsSync(this.filePath)) return { ...DEFAULTS };
+    if (!existsSync(this.filePath)) return defaults();
     const raw = readFileSync(this.filePath, 'utf8');
     let parsed: unknown;
     try {
@@ -44,15 +61,13 @@ export class SettingsStore {
     } catch {
       throw new Error(`Settings file ${this.filePath} is corrupt or truncated.`);
     }
-    const theme =
-      typeof parsed === 'object' && parsed !== null
-        ? (parsed as Record<string, unknown>).theme
-        : undefined;
-    return { theme: coerceTheme(theme) };
+    const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : {};
+    return { theme: coerceTheme(record.theme), sidebarOrder: coerceSidebarOrder(record.sidebarOrder) };
   }
 
   save(settings: FractalSettings): FractalSettings {
-    const validated: FractalSettings = { theme: coerceTheme(settings.theme) };
+    const validated: FractalSettings = { theme: coerceTheme(settings.theme), sidebarOrder: coerceSidebarOrder(settings.sidebarOrder) };
     const tmpPath = `${this.filePath}.tmp`;
     writeFileSync(tmpPath, JSON.stringify(validated, null, 2));
     renameSync(tmpPath, this.filePath);

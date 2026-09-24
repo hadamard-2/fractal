@@ -1,9 +1,10 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Square } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
-import { ConversationHeader } from '@/components/conversation/conversation-header';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
+import { Button } from '@/components/ui/button';
 import { useConversation } from '@/renderer/use-conversation';
 import { conversationKey, type ConversationRef, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
@@ -14,11 +15,13 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const pendingSend = useRef<object | null>(null);
   useLayoutEffect(() => {
     pendingSend.current = null;
     setSending(false);
+    setStopping(false);
     setActionError(null);
     return () => { pendingSend.current = null; };
   }, [state.loadId]);
@@ -72,13 +75,15 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
     catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
   };
   const stop = async () => {
+    if (stopping) return;
+    setStopping(true);
     try { await interrupt(); }
-    catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
+    catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setStopping(false); }
   };
 
   return (
     <div className="relative flex size-full flex-col overflow-hidden">
-      {state.summary && <ConversationHeader capabilities={state.capabilities} onInterrupt={stop} runtime={state.runtime} summary={state.summary} />}
       {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
       {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
       {loading && <p className="shrink-0 px-4 py-2 text-sm text-muted-foreground" role="status">Loading conversation…</p>}
@@ -90,7 +95,12 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
         {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
         <PromptInput onSubmit={handleSubmit}>
           <PromptInputBody><PromptInputTextarea aria-label="Message" className="scrollbar-minimal" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
-          <PromptInputFooter className="justify-end"><PromptInputSubmit disabled={!eligible || sending || !input.trim()} status={sending ? 'submitted' : 'ready'} /></PromptInputFooter>
+          <PromptInputFooter className="justify-end">
+            {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
+              <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
+            )}
+            <PromptInputSubmit disabled={!eligible || sending || !input.trim()} status={sending ? 'submitted' : 'ready'} />
+          </PromptInputFooter>
         </PromptInput>
       </div>
     </div>

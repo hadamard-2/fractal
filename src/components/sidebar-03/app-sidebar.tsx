@@ -24,6 +24,7 @@ import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import type { ConversationRef } from '@/shared/conversation-contract';
 import { SearchDialog } from '@/components/conversation/search-dialog';
+import { useSidebarOrder } from '@/components/sidebar-03/use-sidebar-order';
 
 /*
  * Widths for the drag-to-resize handle, in px. The sidebar's own geometry is
@@ -174,6 +175,7 @@ export function DashboardSidebar({
 }) {
   const { state } = useSidebar();
   const { projects, providers, error } = useConversationHistory();
+  const { orderedProjects, ready: orderReady, error: orderError, moveProject, moveChat } = useSidebarOrder(projects);
   const isCollapsed = state === 'collapsed';
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -187,14 +189,15 @@ export function DashboardSidebar({
       <SidebarHeader
         className={cn(
           'flex md:pt-3.5',
-          // Collapsed rail: drop the wordmark and centre what's left, so the
-          // logo mark lines up with the icon column below it.
+          // Collapsed rail: centre the logo on the app bar's trigger row.
+          // The 19px subtracts the floating rail's 8px inset, 1px border,
+          // and half of the logo's 20px height.
           //
           // Expanded: the header's own p-2 gives 8px, but the nav icons below
           // sit at 16px (SidebarContent px-2 + button px-2), so bump the
           // header to pl-4 to line the logo mark up with them.
           isCollapsed
-            ? 'flex-row items-center justify-center gap-y-4 md:flex-col'
+            ? 'flex-row items-center justify-center gap-y-6 md:flex-col md:pt-[calc(var(--app-bar-offset)+var(--app-bar-height)/2-19px)]'
             : 'flex-row items-center justify-between pl-4'
         )}
       >
@@ -232,7 +235,7 @@ export function DashboardSidebar({
           </Button>
         </motion.div>
       </SidebarHeader>
-      <SidebarContent className="gap-4 overflow-hidden px-2 py-4">
+      <SidebarContent className="gap-4 overflow-hidden px-2 py-4 group-data-[collapsible=icon]:pt-2.5">
         <SidebarMenu className="shrink-0">
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="New project">
@@ -248,13 +251,16 @@ export function DashboardSidebar({
         <SidebarGroup className="min-h-0 flex-1 px-0 py-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
           <SidebarGroupContent className="scrollbar-minimal min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pr-1">
-            <NavMain
+            {orderReady && <NavMain
               onCreated={(ref) => onConversationCreated?.(ref)}
+              onMoveChat={moveChat}
+              onMoveProject={moveProject}
               onSelect={onItemSelect}
-              groups={projects}
+              groups={orderedProjects}
               providers={providers}
               selected={selected ?? null}
-            />
+            />}
+            {orderError && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Sidebar order could not be loaded or saved.</p>}
             {error && projects.length === 0 && (
               <p className="px-2 py-1 text-muted-foreground text-xs">
                 Could not load conversation history.
@@ -273,7 +279,7 @@ export function DashboardSidebar({
         width={width}
       />
       <SearchDialog
-        groups={projects}
+        groups={orderedProjects}
         onOpenChange={setSearchOpen}
         onSelect={(item) => onItemSelect?.(item)}
         open={searchOpen}

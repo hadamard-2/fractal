@@ -11,6 +11,7 @@ let loadId = '';
 let seq = 0;
 function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['continue'] = async () => undefined) {
   seq = 0;
+  loadId = '';
   const api: ConversationApi = {
     list: async () => ({ projects: [], providers: [] }), create: async () => null,
     open: async (selected, id) => {
@@ -24,7 +25,7 @@ function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['c
   return api;
 }
 async function ready() {
-  await screen.findByText('Fix parser');
+  await waitFor(() => expect(loadId).not.toBe(''));
   act(() => emit({ ref, loadId, seq: seq++, type: 'history.complete' }));
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -34,6 +35,7 @@ test('uses native loading state, then enables the empty conversation composer', 
   render(<ConversationPanel conversationRef={ref} />);
   expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
   await ready();
+  expect(screen.queryByLabelText('Conversation details')).toBeNull();
   expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
   expect(screen.getByText('No messages yet')).toBeTruthy();
 });
@@ -88,7 +90,7 @@ test('shows requests read-only when the session is active externally', async () 
   expect(api.resolveRequest).not.toHaveBeenCalled();
 });
 
-test('pins the highest-priority unresolved request and forwards decisions and interruption', async () => {
+test('pins the highest-priority unresolved request and forwards decisions and interruption from the composer', async () => {
   const api = install('active-in-fractal');
   render(<ConversationPanel conversationRef={ref} />);
   await ready();

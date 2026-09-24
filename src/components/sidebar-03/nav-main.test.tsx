@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
 import { SidebarProvider } from '@/components/ui/sidebar';
-import NavMain, { type NavSelection } from './nav-main';
+import NavMain, { sidebarMoveAtIndices, type NavSelection } from './nav-main';
 
 const fractalGroup: ProjectConversationGroup = {
   projectPath: '/work/fractal',
@@ -108,6 +108,30 @@ describe('NavMain', () => {
     await user.click(screen.getByRole('button', { name: 'Fractal' }));
     await user.click(screen.getByRole('button', { name: /Fix parser/ }));
     expect(onSelect.mock.calls[0][0].ref).toBe(fractalGroup.conversations[0].ref);
+  });
+
+  test('maps sortable positions to project and chat moves within their own lists', () => {
+    expect(sidebarMoveAtIndices([fractalGroup, atlasGroup], 'projects', 1, 0)).toEqual({
+      kind: 'project', source: '/work/atlas', target: '/work/fractal',
+    });
+    expect(sidebarMoveAtIndices([fractalGroup, atlasGroup], 'chat:/work/fractal', 1, 0)).toEqual({
+      kind: 'chat', projectPath: '/work/fractal', source: 'codex:codex-thread-1', target: 'claude:claude-session-1',
+    });
+    expect(sidebarMoveAtIndices([fractalGroup, atlasGroup], 'chat:/work/atlas', 1, 0)).toBeNull();
+    expect(sidebarMoveAtIndices([fractalGroup, atlasGroup], 'projects', 0, 0)).toBeNull();
+  });
+
+  test('uses the project and chat rows as drag targets without leading handles', async () => {
+    render(
+      <SidebarProvider>
+        <NavMain groups={[fractalGroup, atlasGroup]} onCreated={vi.fn()} onMoveProject={vi.fn()} onMoveChat={vi.fn()} onSelect={vi.fn()} providers={[codex]} selected={null} />
+      </SidebarProvider>
+    );
+    expect(screen.queryByRole('button', { name: /Move Atlas|Move Fractal/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Fractal' }).className).toContain('cursor-grab');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
+    expect(screen.queryByRole('button', { name: /Move Review IPC|Move Fix parser/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Review IPC/ }).className).toContain('cursor-grab');
   });
 
   test('keeps chat titles neutral and uses trailing provider markers without status icons', async () => {

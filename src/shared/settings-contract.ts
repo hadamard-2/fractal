@@ -4,8 +4,14 @@
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
+export interface SidebarOrder {
+  projects: string[];
+  chatsByProject: Record<string, string[]>;
+}
+
 export interface FractalSettings {
   theme: ThemePreference;
+  sidebarOrder: SidebarOrder;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';

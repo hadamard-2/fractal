@@ -4,9 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ExecuteMode } from './execute-mode';
 import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
+import type { SidebarOrder } from '@/shared/settings-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-choice', projectPath: '/work/fractal' };
 const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
+const emptyOrder: SidebarOrder = { projects: [], chatsByProject: {} };
+const settings = { get: async () => ({ theme: 'system' as const, sidebarOrder: emptyOrder }), set: async () => ({ theme: 'system' as const, sidebarOrder: emptyOrder }) };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 test('explains no selection and opens native sidebar refs while identifying unavailable providers', async () => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
@@ -15,7 +18,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
     open: vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Native panel title', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities })),
     close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
-  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   render(<ExecuteMode onOpenSettings={() => undefined} />);
   expect(screen.getByText('Select a conversation')).toBeTruthy();
   await screen.findByText(/claude.*unavailable/i);
@@ -24,7 +27,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   expect(screen.getByRole('dialog')).toBeTruthy();
   await user.click(await screen.findByRole('button', { name: /Review native history/ }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
-  expect(await screen.findByText('Native panel title')).toBeTruthy();
+  expect(screen.queryByLabelText('Conversation details')).toBeNull();
   expect(screen.getByText('(Codex · Status unknown)')).toBeTruthy();
 });
 
@@ -40,7 +43,7 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
     close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
-  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   const user = userEvent.setup();
   render(<ExecuteMode onOpenSettings={() => undefined} />);
   await user.click(await screen.findByRole('button', { name: 'Fractal' }));
@@ -65,7 +68,7 @@ test('creates a chat from a project row and opens its native reference', async (
     list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [{ provider: 'codex', availability: 'available', capabilities: { ...capabilities, create: true } }] }),
     open, create, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
-  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   render(<ExecuteMode onOpenSettings={() => undefined} />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'New chat in Fractal' }));

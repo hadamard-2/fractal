@@ -1,7 +1,10 @@
 'use client';
 
+import { PointerActivationConstraints, PointerSensor } from '@dnd-kit/dom';
+import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react';
+import { isSortable, useSortable } from '@dnd-kit/react/sortable';
 import { Folder, FolderOpen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
@@ -13,11 +16,12 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarMenuItem as SidebarMenuSubItem,
+  SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
 import { conversationKey, type ConversationRef, type ConversationRuntime, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
+import { cn } from '@/lib/utils';
 
 export type NavSelection = {
   ref: ConversationRef;
@@ -40,18 +44,61 @@ export function runtimeLabel(runtime: ConversationRuntime): string {
   }
 }
 
+const sortableTransition = {
+  duration: 190,
+  easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  idle: true,
+};
+
+function SortableRow({
+  id,
+  index,
+  group,
+  disabled,
+  children,
+}: {
+  id: string;
+  index: number;
+  group: string;
+  disabled: boolean;
+  children: (sortable: ReturnType<typeof useSortable>) => ReactNode;
+}) {
+  const sortable = useSortable({ id, index, group, type: group, accept: group, disabled, transition: sortableTransition });
+  return children(sortable);
+}
+
+export function sidebarMoveAtIndices(groups: ProjectConversationGroup[], groupId: string, fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) return null;
+  if (groupId === 'projects') {
+    const from = groups[fromIndex];
+    const to = groups[toIndex];
+    return from && to ? { kind: 'project' as const, source: from.projectPath, target: to.projectPath } : null;
+  }
+
+  const group = groups.find((item) => `chat:${item.projectPath}` === groupId);
+  const from = group?.conversations[fromIndex];
+  const to = group?.conversations[toIndex];
+  return group && from && to
+    ? { kind: 'chat' as const, projectPath: group.projectPath, source: conversationKey(from.ref), target: conversationKey(to.ref) }
+    : null;
+}
+
 export default function NavMain({
   groups,
   providers,
   selected,
   onSelect,
   onCreated,
+  onMoveProject,
+  onMoveChat,
 }: {
   groups: ProjectConversationGroup[];
   providers: HarnessStatus[];
   selected: ConversationRef | null;
   onSelect: (item: NavSelection) => void;
   onCreated: (ref: ConversationRef) => void;
+  onMoveProject?: (source: string, target: string) => void;
+  onMoveChat?: (projectPath: string, source: string, target: string) => void;
 }) {
   const { state } = useSidebar();
   const [openProjects, setOpenProjects] = useState<Set<string>>(() =>
@@ -59,6 +106,14 @@ export default function NavMain({
   );
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   const isCollapsed = state === 'collapsed';
+
+  const handleDragEnd = ({ canceled, operation }: DragEndEvent) => {
+    const source = operation.source;
+    if (canceled || !isSortable(source) || source.initialGroup !== source.group || source.initialIndex === source.index) return;
+    const move = sidebarMoveAtIndices(groups, String(source.group), source.initialIndex, source.index);
+    if (move?.kind === 'project') onMoveProject?.(move.source, move.target);
+    if (move?.kind === 'chat') onMoveChat?.(move.projectPath, move.source, move.target);
+  };
 
   useEffect(() => {
     const projectPaths = new Set(groups.map((group) => group.projectPath));
@@ -74,14 +129,31 @@ export default function NavMain({
   if (isCollapsed) return null;
 
   return (
+    <DragDropProvider
+      onDragEnd={handleDragEnd}
+      sensors={(defaults) => [
+        ...defaults.filter((sensor) => sensor !== PointerSensor),
+        PointerSensor.configure({
+          activationConstraints: (event) => event.pointerType === 'touch'
+            ? [new PointerActivationConstraints.Delay({ value: 250, tolerance: 5 })]
+            : [new PointerActivationConstraints.Distance({ value: 5 })],
+        }),
+      ]}
+    >
     <SidebarMenu>
-      {groups.map((group) => {
+      {groups.map((group, projectIndex) => {
         const isOpen = openProjects.has(group.projectPath);
         const showAll = expandedProjects.has(group.projectPath);
         const visibleConversations = showAll ? group.conversations : group.conversations.slice(0, 5);
 
         return (
-          <SidebarMenuItem data-testid="project-group" key={group.projectPath}>
+          <SortableRow disabled={!onMoveProject} group="projects" id={`project:${group.projectPath}`} index={projectIndex} key={group.projectPath}>
+          {({ ref, handleRef, isDragging, isDropTarget }) => (
+          <SidebarMenuItem
+            data-testid="project-group"
+            ref={ref}
+            className={cn(isDragging && 'z-20')}
+          >
             <Collapsible
               className="w-full"
               onOpenChange={(open) => {
@@ -102,22 +174,33 @@ export default function NavMain({
               open={isOpen}
             >
               <CollapsibleTrigger asChild>
-                <SidebarMenuButton className="pr-9" type="button">
+                <SidebarMenuButton
+                  className={cn('pr-9 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && 'cursor-grab touch-none active:cursor-grabbing', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
+                  ref={handleRef}
+                  type="button"
+                >
                   {isOpen ? <FolderOpen /> : <Folder />}
                   <span>{group.displayName}</span>
                 </SidebarMenuButton>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <SidebarMenuSub className="my-1 ml-3.5 mr-0 pr-0">
-                  {visibleConversations.map((conversation) => {
+                  {visibleConversations.map((conversation, chatIndex) => {
                     const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
+                    const chatId = conversationKey(conversation.ref);
                     return (
-                      <SidebarMenuSubItem className="h-auto" key={conversationKey(conversation.ref)}>
+                      <SortableRow disabled={!onMoveChat} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
+                      {({ ref: chatRef, handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget }) => (
+                      <SidebarMenuSubItem
+                        className={cn('h-auto', isChatDragging && 'z-20')}
+                        ref={chatRef}
+                      >
                         <SidebarMenuSubButton asChild isActive={isSelected}>
                           <button
-                            className="flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-foreground"
+                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'cursor-grab touch-none active:cursor-grabbing', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]')}
                             aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(conversation.runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
+                            ref={chatHandleRef}
                             onClick={() => onSelect({
                               ref: conversation.ref,
                               title: conversation.title,
@@ -131,6 +214,8 @@ export default function NavMain({
                           </button>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
+                      )}
+                      </SortableRow>
                     );
                   })}
                   {!showAll && group.conversations.length > 5 && (
@@ -156,8 +241,11 @@ export default function NavMain({
               providers={providers}
             />
           </SidebarMenuItem>
+          )}
+          </SortableRow>
         );
       })}
     </SidebarMenu>
+    </DragDropProvider>
   );
 }

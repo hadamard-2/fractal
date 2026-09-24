@@ -5,7 +5,10 @@ import { SETTINGS_INVOKE_CHANNEL } from '@/shared/settings-contract';
 
 /** IPC payloads are untrusted: keep only keys we know. Values are normalized by the store. */
 function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings> {
-  return patch.theme !== undefined ? { theme: patch.theme } : {};
+  return {
+    ...(patch.theme !== undefined ? { theme: patch.theme } : {}),
+    ...(patch.sidebarOrder !== undefined ? { sidebarOrder: patch.sidebarOrder } : {}),
+  };
 }
 
 /**

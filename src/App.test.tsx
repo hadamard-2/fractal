@@ -5,9 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import App from './App';
 import type { ConversationApi, ConversationRef } from '@/shared/conversation-contract';
+import type { SidebarOrder } from '@/shared/settings-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
 const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
+const emptyOrder: SidebarOrder = { projects: [], chatsByProject: {} };
 
 beforeAll(() => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
@@ -21,11 +23,11 @@ test('keeps the selected Execute conversation loaded across mode switches', asyn
     list, open, close: async () => undefined, create: async () => null, continue: async () => undefined,
     interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
-  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => ({ theme: 'system', sidebarOrder: emptyOrder }) } } });
   const user = userEvent.setup();
   render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Fractal' }));
-  await user.click(screen.getByRole('button', { name: /Existing chat/ }));
+  await user.click(screen.getByRole('button', { name: /Existing chat, Codex conversation/ }));
   await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   const listCalls = list.mock.calls.length;
   expect(listCalls).toBeGreaterThan(0);
