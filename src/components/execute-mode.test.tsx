@@ -51,3 +51,21 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   expect(screen.getByText('Fix parser again', { selector: '[data-slot="breadcrumb-page"]' })).toBeTruthy();
   expect(screen.queryByText('Fix parser')).toBeNull();
 });
+
+test('creates a chat from a project row and opens its native reference', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  window.ResizeObserver = class { observe(): void { return undefined; } unobserve(): void { return undefined; } disconnect(): void { return undefined; } };
+  const create = vi.fn<ConversationApi['create']>(async () => ref);
+  const open = vi.fn<ConversationApi['open']>(async () => ({ summary: { ref, title: 'New chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }));
+  const api: ConversationApi = {
+    list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [{ provider: 'codex', availability: 'available', capabilities: { ...capabilities, create: true } }] }),
+    open, create, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'New chat in Fractal' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+  expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
+  await waitFor(() => expect(open).toHaveBeenCalledWith(ref, expect.any(String)));
+});

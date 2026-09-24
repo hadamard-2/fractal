@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { realpath } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import type { ConversationService } from '@/main/conversation-service';
 import { canonicalizeProjectPath } from '@/main/harness/project-path';
 import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
@@ -134,8 +135,16 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       return async () => { forget(load); await service.close(ref); };
     });
     invoke(CHANNELS.create, 1, ([input], owner, window) => {
-      const provider = parseProvider(input);
+      const { provider, projectPath: requestedProjectPath } = parseCreateInput(input);
       return async () => {
+        if (requestedProjectPath !== undefined) {
+          const projectPath = await canonicalizeProjectPath(requestedProjectPath, realpath);
+          assertLive(owner);
+          const { projects } = await service.list();
+          assertLive(owner);
+          if (!projects.some((project) => project.projectPath === projectPath)) throw new Error('Project is not available');
+          return parseConversationRef(await service.create(provider, projectPath));
+        }
         const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
         assertLive(owner);
         if (result.canceled || !result.filePaths[0]) return null;
@@ -165,9 +174,13 @@ export function registerConversationIpc(service: ConversationService, getWindow:
 
 export async function disposeConversationIpc(): Promise<void> { await activeRegistration?.registration.dispose(); }
 
-function parseProvider(input: unknown): ProviderId {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input)) || Object.keys(input).length !== 1 || !('provider' in input) || (input.provider !== 'codex' && input.provider !== 'claude')) throw new Error('Invalid conversation provider');
-  return input.provider;
+function parseCreateInput(input: unknown): { provider: ProviderId; projectPath?: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input)) || !('provider' in input) || (input.provider !== 'codex' && input.provider !== 'claude')) throw new Error('Invalid conversation provider');
+  const keys = Object.keys(input);
+  if (!keys.every((key) => key === 'provider' || key === 'projectPath') || keys.length < 1 || keys.length > 2) throw new Error('Invalid conversation provider');
+  if (!('projectPath' in input)) return { provider: input.provider };
+  if (typeof input.projectPath !== 'string' || input.projectPath.trim().length === 0 || input.projectPath.length > 32_768 || !isAbsolute(input.projectPath)) throw new Error('Invalid conversation project');
+  return { provider: input.provider, projectPath: input.projectPath };
 }
 
 function parseRequestId(input: unknown): string {

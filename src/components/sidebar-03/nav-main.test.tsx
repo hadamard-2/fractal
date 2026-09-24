@@ -3,7 +3,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ConversationRef, ProjectConversationGroup } from '@/shared/conversation-contract';
+import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import NavMain, { type NavSelection } from './nav-main';
 
@@ -51,6 +51,7 @@ const atlasGroup: ProjectConversationGroup = {
     captureCompleteness: 'complete',
   }],
 };
+const codex: HarnessStatus = { provider: 'codex', availability: 'available', capabilities: { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: false } };
 
 beforeAll(() => {
   Object.defineProperty(window, 'matchMedia', {
@@ -73,11 +74,12 @@ afterEach(cleanup);
 function renderNav(
   groups: ProjectConversationGroup[] = [fractalGroup],
   selected: ConversationRef | null = null,
-  onSelect: (item: NavSelection) => void = vi.fn()
+  onSelect: (item: NavSelection) => void = vi.fn(),
+  onCreated: (ref: ConversationRef) => void = vi.fn()
 ) {
   return render(
     <SidebarProvider>
-      <NavMain groups={groups} selected={selected} onSelect={onSelect} />
+      <NavMain groups={groups} onCreated={onCreated} onSelect={onSelect} providers={[codex]} selected={selected} />
     </SidebarProvider>
   );
 }
@@ -126,8 +128,10 @@ describe('NavMain', () => {
       <SidebarProvider>
         <NavMain
           groups={[refreshedGroup]}
+          onCreated={vi.fn()}
           selected={null}
           onSelect={vi.fn()}
+          providers={[codex]}
         />
       </SidebarProvider>
     );
@@ -145,5 +149,43 @@ describe('NavMain', () => {
     renderNav([atlasGroup, fractalGroup], fractalGroup.conversations[0].ref);
     expect(screen.getByText('Fix parser')).toBeTruthy();
     expect(screen.queryByText('Map routes')).toBeNull();
+  });
+
+  test('offers a new chat action on a closed project without expanding it', async () => {
+    const user = userEvent.setup();
+    const create = vi.fn(async () => fractalGroup.conversations[0].ref);
+    const onCreated = vi.fn();
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create } } });
+    renderNav([fractalGroup], null, vi.fn(), onCreated);
+
+    const project = screen.getByRole('button', { name: 'Fractal' });
+    expect(project.getAttribute('aria-expanded')).toBe('false');
+    await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
+    expect(project.getAttribute('aria-expanded')).toBe('false');
+    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
+    expect(onCreated).toHaveBeenCalledWith(fractalGroup.conversations[0].ref);
+  });
+
+  test('shows five chats, reveals the rest, and resets after closing the project', async () => {
+    const user = userEvent.setup();
+    const group: ProjectConversationGroup = {
+      ...fractalGroup,
+      conversations: Array.from({ length: 7 }, (_, index) => ({
+        ...fractalGroup.conversations[0],
+        ref: { ...fractalGroup.conversations[0].ref, nativeSessionId: `session-${index + 1}` },
+        title: `Chat ${index + 1}`,
+      })),
+    };
+    renderNav([group]);
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
+    expect(screen.getByRole('button', { name: /Chat 5/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Chat 6/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByRole('button', { name: /Chat 7/ })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
+    await user.click(screen.getByRole('button', { name: 'Fractal' }));
+    expect(screen.queryByRole('button', { name: /Chat 6/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy();
   });
 });

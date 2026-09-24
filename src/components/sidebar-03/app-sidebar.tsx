@@ -23,7 +23,6 @@ import type { NavSelection } from '@/components/sidebar-03/nav-main';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import type { ConversationRef } from '@/shared/conversation-contract';
-import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 import { SearchDialog } from '@/components/conversation/search-dialog';
 
 /*
@@ -236,36 +235,27 @@ export function DashboardSidebar({
           </Button>
         </motion.div>
       </SidebarHeader>
-      {/* scrollbar-minimal: same thin-thumb treatment as the conversation
-          panel — the OS default reads as a heavy grey slab against these
-          surfaces (see index.css). */}
-      <SidebarContent className="scrollbar-minimal gap-4 px-2 py-4">
-        {/*
-          Quick actions above the navigation. New chat is wired to real
-          conversation creation; New project is still a placeholder. Both
-          use the menu-button primitive for matching alignment and icon rail.
-        */}
-        <SidebarMenu>
+      <SidebarContent className="gap-4 overflow-hidden px-2 py-4">
+        <SidebarMenu className="shrink-0">
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="New project">
               <FolderPlus />
               <span>New project</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          <SidebarMenuItem>
-            <NewConversationMenu providers={providers} onCreated={(ref) => onConversationCreated?.(ref)} />
-          </SidebarMenuItem>
         </SidebarMenu>
         {/*
           px-0: the group's own p-2 would stack on SidebarContent's px-2 and
           push the item icons past the 16px inset the logo header matches.
         */}
-        <SidebarGroup className="px-0">
+        <SidebarGroup className="min-h-0 flex-1 px-0 py-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="scrollbar-minimal min-h-0 flex-1 overflow-y-auto">
             <NavMain
+              onCreated={(ref) => onConversationCreated?.(ref)}
               onSelect={onItemSelect}
               groups={projects}
+              providers={providers}
               selected={selected ?? null}
             />
             {error && projects.length === 0 && (

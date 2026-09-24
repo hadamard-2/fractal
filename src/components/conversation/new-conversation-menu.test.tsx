@@ -23,7 +23,7 @@ function install(create: ConversationApi['create']) {
 }
 
 function renderMenu(providers: HarnessStatus[], onCreated: (ref: ConversationRef) => void) {
-  return render(<SidebarProvider><NewConversationMenu providers={providers} onCreated={onCreated} /></SidebarProvider>);
+  return render(<SidebarProvider><NewConversationMenu onCreated={onCreated} projectName="Fractal" projectPath="/work/fractal" providers={providers} /></SidebarProvider>);
 }
 
 describe('NewConversationMenu', () => {
@@ -32,23 +32,23 @@ describe('NewConversationMenu', () => {
     const onCreated = vi.fn(); install(create);
     renderMenu([codex, claude], onCreated);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     expect(screen.getByRole('menuitem', { name: 'Codex' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Claude Code' })).toBeNull();
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
-    expect(create).toHaveBeenCalledWith({ provider: 'codex' });
+    expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
     expect(onCreated).toHaveBeenCalledWith(ref);
   });
 
-  test('keeps selection unchanged when directory selection is cancelled', async () => {
+  test('keeps selection unchanged when creation returns no reference', async () => {
     const create = vi.fn<ConversationApi['create']>().mockResolvedValueOnce(null).mockResolvedValueOnce(ref);
     const onCreated = vi.fn(); install(create);
     renderMenu([codex], onCreated);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect(onCreated).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect(create).toHaveBeenCalledTimes(2);
     expect(onCreated).toHaveBeenCalledWith(ref);
@@ -58,7 +58,7 @@ describe('NewConversationMenu', () => {
     const onCreated = vi.fn(); install(vi.fn(async () => { throw new Error('/private/provider secret'); }));
     renderMenu([codex], onCreated);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect((await screen.findByRole('status')).textContent).toBe('Codex could not create a conversation.');
     expect(screen.queryByText(/private|secret/i)).toBeNull();
@@ -71,7 +71,7 @@ describe('NewConversationMenu', () => {
     const onCreated = vi.fn(); install(create);
     const view = renderMenu([codex, { ...codex, provider: 'claude' }], onCreated);
     const user = userEvent.setup();
-    const trigger = screen.getByRole('button', { name: 'New chat' });
+    const trigger = screen.getByRole('button', { name: 'New chat in Fractal' });
     await user.click(trigger);
     await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
     expect(trigger.getAttribute('aria-busy')).toBe('true');

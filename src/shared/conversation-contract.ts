@@ -124,7 +124,7 @@ export interface ConversationApi {
   list(): Promise<{ projects: ProjectConversationGroup[]; providers: HarnessStatus[] }>;
   open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities }>;
   close(ref: ConversationRef): Promise<void>;
-  create(input: { provider: ProviderId }): Promise<ConversationRef | null>;
+  create(input: { provider: ProviderId; projectPath?: string }): Promise<ConversationRef | null>;
   continue(ref: ConversationRef, prompt: { text: string }): Promise<void>;
   interrupt(ref: ConversationRef): Promise<void>;
   resolveRequest(requestId: string, decision: UserDecision): Promise<void>;

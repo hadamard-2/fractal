@@ -16,7 +16,8 @@ import {
   SidebarMenuItem as SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { conversationKey, type ConversationRef, type ConversationRuntime, type ProjectConversationGroup } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ConversationRuntime, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
+import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 
 export type NavSelection = {
   ref: ConversationRef;
@@ -45,17 +46,22 @@ function RuntimeMark({ runtime }: { runtime: ConversationRuntime }) {
 
 export default function NavMain({
   groups,
+  providers,
   selected,
   onSelect,
+  onCreated,
 }: {
   groups: ProjectConversationGroup[];
+  providers: HarnessStatus[];
   selected: ConversationRef | null;
   onSelect: (item: NavSelection) => void;
+  onCreated: (ref: ConversationRef) => void;
 }) {
   const { state } = useSidebar();
   const [openProjects, setOpenProjects] = useState<Set<string>>(() =>
     new Set(selected ? [selected.projectPath] : [])
   );
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   const isCollapsed = state === 'collapsed';
 
   useEffect(() => {
@@ -76,28 +82,39 @@ export default function NavMain({
       {groups.map((group) => {
         const isOpen = openProjects.has(group.projectPath);
         const isSelectedProject = selected?.projectPath === group.projectPath;
+        const showAll = expandedProjects.has(group.projectPath);
+        const visibleConversations = showAll ? group.conversations : group.conversations.slice(0, 5);
 
         return (
           <SidebarMenuItem data-testid="project-group" key={group.projectPath}>
             <Collapsible
               className="w-full"
-              onOpenChange={(open) => setOpenProjects((previous) => {
-                const next = new Set(previous);
-                if (open) next.add(group.projectPath);
-                else next.delete(group.projectPath);
-                return next;
-              })}
+              onOpenChange={(open) => {
+                setOpenProjects((previous) => {
+                  const next = new Set(previous);
+                  if (open) next.add(group.projectPath);
+                  else next.delete(group.projectPath);
+                  return next;
+                });
+                if (!open) {
+                  setExpandedProjects((expanded) => {
+                    const remaining = new Set(expanded);
+                    remaining.delete(group.projectPath);
+                    return remaining;
+                  });
+                }
+              }}
               open={isOpen}
             >
               <CollapsibleTrigger asChild>
-                <SidebarMenuButton isActive={isSelectedProject} type="button">
+                <SidebarMenuButton className="pr-9" isActive={isSelectedProject} type="button">
                   {isOpen ? <FolderOpen /> : <Folder />}
                   <span>{group.displayName}</span>
                 </SidebarMenuButton>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <SidebarMenuSub className="my-1 ml-3.5">
-                  {group.conversations.map((conversation) => {
+                  {visibleConversations.map((conversation) => {
                     const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
                     return (
                       <SidebarMenuSubItem className="h-auto" key={conversationKey(conversation.ref)}>
@@ -122,9 +139,28 @@ export default function NavMain({
                       </SidebarMenuSubItem>
                     );
                   })}
+                  {!showAll && group.conversations.length > 5 && (
+                    <SidebarMenuSubItem>
+                      <SidebarMenuSubButton asChild>
+                        <button
+                          className="w-full px-4 py-1.5 text-left text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-foreground"
+                          onClick={() => setExpandedProjects((expanded) => new Set(expanded).add(group.projectPath))}
+                          type="button"
+                        >
+                          <span className="ml-6">Show more</span>
+                        </button>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  )}
                 </SidebarMenuSub>
               </CollapsibleContent>
             </Collapsible>
+            <NewConversationMenu
+              onCreated={onCreated}
+              projectName={group.displayName}
+              projectPath={group.projectPath}
+              providers={providers}
+            />
           </SidebarMenuItem>
         );
       })}

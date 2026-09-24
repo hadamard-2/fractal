@@ -67,7 +67,8 @@ describe('conversation IPC', () => {
     ['close', [null], 'Invalid conversation reference'],
     ['interrupt', [{ ...ref, projectPath: 'relative' }], 'Invalid conversation reference'],
     ['create', [{ provider: 'bad' }], 'Invalid conversation provider'],
-    ['create', [{ provider: 'codex', projectPath: '/hostile' }], 'Invalid conversation provider'],
+    ['create', [{ provider: 'codex', projectPath: 42 }], 'Invalid conversation project'],
+    ['create', [{ provider: 'codex', projectPath: '/repo', extra: true }], 'Invalid conversation provider'],
     ['resolve-request', ['', { kind: 'allow-once' }], 'Invalid request id'],
     ['resolve-request', ['request', { kind: 'allow-always' }], 'Invalid decision'],
     ['list', ['unexpected'], 'Invalid conversation arguments'],
@@ -173,6 +174,17 @@ describe('conversation IPC', () => {
     const pending = deferred<{ canceled: boolean; filePaths: string[] }>(); electron.picker.mockReturnValue(pending.promise);
     const creating = f.invoke('create', { provider: 'codex' }); const failed = expect(creating).rejects.toThrow('Conversation operation failed');
     f.sender.destroy(); pending.resolve({ canceled: false, filePaths: ['/tmp'] }); await failed;
+    expect(f.service.create).toHaveBeenCalledTimes(1);
+  });
+
+  test('creates directly in a listed project and rejects a path outside the project list', async () => {
+    const f = fixture();
+    f.service.list.mockResolvedValue({ projects: [{ projectPath: '/tmp', displayName: 'tmp', conversations: [] }], providers: [] });
+    await f.invoke('create', { provider: 'codex', projectPath: '/tmp/../tmp' });
+    expect(f.service.create).toHaveBeenCalledWith('codex', '/tmp');
+    expect(electron.picker).not.toHaveBeenCalled();
+
+    await expect(f.invoke('create', { provider: 'codex', projectPath: '/other' })).rejects.toThrow('Conversation operation failed');
     expect(f.service.create).toHaveBeenCalledTimes(1);
   });
 

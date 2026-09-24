@@ -21,8 +21,9 @@ import {
 } from '@/components/ui/sidebar';
 
 /**
- * Execute mode's shell: the blocks-so sidebar-03 sidebar, mounted only while
- * this mode is active so map and explain keep the whole window.
+ * Execute mode's shell: the blocks-so sidebar-03 sidebar. It stays mounted
+ * while another mode is visible so native history and the selected session
+ * remain loaded when the user returns.
  *
  * The sidebar sits *below* the title bar rather than running to the top edge.
  * That needs an override: `Sidebar`'s desktop container is `position: fixed`
@@ -34,14 +35,15 @@ import {
  * equal-specificity `top` rules whose winner depends on stylesheet order.
  */
 export function ExecuteMode({
+  active = true,
   sidebarOpen,
   onSidebarOpenChange,
   sidebarWidth,
   onSidebarWidthChange,
   onOpenSettings,
 }: {
-  // Controlled by App so the open/collapsed state outlives this component,
-  // which unmounts entirely whenever another mode is showing.
+  active?: boolean;
+  // Controlled by App so the open/collapsed state remains stable.
   sidebarOpen?: boolean;
   onSidebarOpenChange?: (open: boolean) => void;
   // Same outlives-the-mode treatment for the chosen width. Null = default.
@@ -69,9 +71,10 @@ export function ExecuteMode({
       open={sidebarOpen}
       onOpenChange={onSidebarOpenChange}
       style={
-        (sidebarWidth
-          ? { '--sidebar-width': `${sidebarWidth}px` }
-          : {}) as CSSProperties
+        {
+          ...(sidebarWidth ? { '--sidebar-width': `${sidebarWidth}px` } : {}),
+          display: active ? undefined : 'none',
+        } as CSSProperties
       }
     >
       <DashboardSidebar
@@ -158,7 +161,7 @@ export function ExecuteMode({
             /*
               No conversation yet. The mark is the same Blocks glyph the
               sidebar's wordmark uses — a quiet centrepiece rather than a
-              call to action; starting one lives on the sidebar's New Chat.
+              call to action; starting one lives on a project's plus action.
             */
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
               <ConversationEmptyState className="h-auto" icon={<Blocks aria-hidden className="size-10 text-muted-foreground/50" />} title="Select a conversation" description="Open native conversation history from the sidebar to read the transcript and see its session status." />

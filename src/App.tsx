@@ -7,12 +7,9 @@ import { TitleBar } from '@/components/title-bar';
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('execute');
-  // Held here, not inside ExecuteMode: leaving execute unmounts the whole
-  // sidebar shell, so state owned down there would reset to open on every
-  // return trip.
+  // Held here so the sidebar keeps its state across mode changes.
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Chosen sidebar width in px; null means the 16rem default. Same
-  // outlives-the-mode reasoning as sidebarOpen above.
+  // Chosen sidebar width in px; null means the 16rem default.
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
   // Settings live at the app level, not in the sidebar: the dialog must be
   // reachable from every mode (Cmd+, works even where the sidebar — and thus
@@ -81,17 +78,15 @@ export default function App() {
         className="flex h-full flex-col"
         style={{ paddingTop: 'var(--titlebar-height)' }}
       >
-        {mode === 'execute' ? (
-          <ExecuteMode
-            sidebarOpen={sidebarOpen}
-            onSidebarOpenChange={setSidebarOpen}
-            sidebarWidth={sidebarWidth}
-            onSidebarWidthChange={setSidebarWidth}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
-        ) : (
-          <main className="flex flex-1 items-center justify-center" />
-        )}
+        <ExecuteMode
+          active={mode === 'execute'}
+          sidebarOpen={sidebarOpen}
+          onSidebarOpenChange={setSidebarOpen}
+          sidebarWidth={sidebarWidth}
+          onSidebarWidthChange={setSidebarWidth}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+        {mode !== 'execute' && <main className="flex flex-1 items-center justify-center" />}
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
