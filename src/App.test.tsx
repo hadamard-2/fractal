@@ -23,7 +23,7 @@ test('keeps the selected Execute conversation loaded across mode switches', asyn
     list, open, close: async () => undefined, create: async () => null, continue: async () => undefined,
     interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
-  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => ({ theme: 'system', sidebarOrder: emptyOrder }) } } });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => ({ theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: emptyOrder }) } } });
   const user = userEvent.setup();
   render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Fractal' }));

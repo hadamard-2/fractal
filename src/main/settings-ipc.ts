@@ -7,6 +7,7 @@ import { SETTINGS_INVOKE_CHANNEL } from '@/shared/settings-contract';
 function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings> {
   return {
     ...(patch.theme !== undefined ? { theme: patch.theme } : {}),
+    ...(patch.defaultCodingAgent !== undefined ? { defaultCodingAgent: patch.defaultCodingAgent } : {}),
     ...(patch.sidebarOrder !== undefined ? { sidebarOrder: patch.sidebarOrder } : {}),
   };
 }

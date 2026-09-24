@@ -3,6 +3,8 @@
 // both the main and renderer processes; the single source of truth.
 
 export type ThemePreference = 'system' | 'light' | 'dark';
+export type DefaultCodingAgent = 'codex' | 'claude' | 'ask';
+export const DEFAULT_CODING_AGENT: DefaultCodingAgent = 'claude';
 
 export interface SidebarOrder {
   projects: string[];
@@ -11,6 +13,7 @@ export interface SidebarOrder {
 
 export interface FractalSettings {
   theme: ThemePreference;
+  defaultCodingAgent: DefaultCodingAgent;
   sidebarOrder: SidebarOrder;
 }
 

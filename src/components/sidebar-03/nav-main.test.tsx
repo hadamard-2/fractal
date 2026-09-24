@@ -4,6 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
+import type { FractalSettings } from '@/shared/settings-contract';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import NavMain, { sidebarMoveAtIndices, type NavSelection } from './nav-main';
 
@@ -194,7 +195,7 @@ describe('NavMain', () => {
     const user = userEvent.setup();
     const create = vi.fn(async () => fractalGroup.conversations[0].ref);
     const onCreated = vi.fn();
-    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create } } });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} } }) } } });
     renderNav([fractalGroup], null, vi.fn(), onCreated);
 
     const project = screen.getByRole('button', { name: 'Fractal' });

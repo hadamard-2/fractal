@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FractalSettings, SidebarOrder, ThemePreference } from '@/shared/settings-contract';
+import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
 
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
-const defaults = (): FractalSettings => ({ theme: 'system', sidebarOrder: emptySidebarOrder() });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder() });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
+const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
 
 /**
  * Settings files are user-editable JSON (and may come from a newer Fractal),
@@ -17,6 +18,12 @@ function coerceTheme(value: unknown): ThemePreference {
   return typeof value === 'string' && THEME_VALUES.includes(value)
     ? (value as ThemePreference)
     : 'system';
+}
+
+function coerceDefaultCodingAgent(value: unknown): DefaultCodingAgent {
+  return typeof value === 'string' && CODING_AGENT_VALUES.includes(value)
+    ? (value as DefaultCodingAgent)
+    : DEFAULT_CODING_AGENT;
 }
 
 function coerceStrings(value: unknown): string[] {
@@ -63,11 +70,11 @@ export class SettingsStore {
     }
     const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? parsed as Record<string, unknown> : {};
-    return { theme: coerceTheme(record.theme), sidebarOrder: coerceSidebarOrder(record.sidebarOrder) };
+    return { theme: coerceTheme(record.theme), defaultCodingAgent: coerceDefaultCodingAgent(record.defaultCodingAgent), sidebarOrder: coerceSidebarOrder(record.sidebarOrder) };
   }
 
   save(settings: FractalSettings): FractalSettings {
-    const validated: FractalSettings = { theme: coerceTheme(settings.theme), sidebarOrder: coerceSidebarOrder(settings.sidebarOrder) };
+    const validated: FractalSettings = { theme: coerceTheme(settings.theme), defaultCodingAgent: coerceDefaultCodingAgent(settings.defaultCodingAgent), sidebarOrder: coerceSidebarOrder(settings.sidebarOrder) };
     const tmpPath = `${this.filePath}.tmp`;
     writeFileSync(tmpPath, JSON.stringify(validated, null, 2));
     renameSync(tmpPath, this.filePath);

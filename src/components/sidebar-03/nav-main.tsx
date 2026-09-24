@@ -175,7 +175,7 @@ export default function NavMain({
             >
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton
-                  className={cn('pr-9 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
+                  className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
                   ref={onMoveProject && !isOpen ? handleRef : undefined}
                   type="button"
                 >

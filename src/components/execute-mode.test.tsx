@@ -9,7 +9,7 @@ import type { SidebarOrder } from '@/shared/settings-contract';
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-choice', projectPath: '/work/fractal' };
 const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
 const emptyOrder: SidebarOrder = { projects: [], chatsByProject: {} };
-const settings = { get: async () => ({ theme: 'system' as const, sidebarOrder: emptyOrder }), set: async () => ({ theme: 'system' as const, sidebarOrder: emptyOrder }) };
+const settings = { get: async () => ({ theme: 'system' as const, defaultCodingAgent: 'ask' as const, sidebarOrder: emptyOrder }), set: async () => ({ theme: 'system' as const, defaultCodingAgent: 'ask' as const, sidebarOrder: emptyOrder }) };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 test('explains no selection and opens native sidebar refs while identifying unavailable providers', async () => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
