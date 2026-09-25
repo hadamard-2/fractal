@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { detectClaudeRuntime, probeClaude, type ClaudeExec } from './claude-probe';
+import { detectClaudeRuntime, probeClaude, type ClaudeExec, type ClaudeExecResult } from './claude-probe';
 
 const ref = { provider: 'claude' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
 
@@ -56,6 +56,51 @@ describe('probeClaude', () => {
 });
 
 describe('detectClaudeRuntime', () => {
+  test('shares one in-flight agent query across a large history while classifying each session separately', async () => {
+    let finish!: (result: ClaudeExecResult) => void;
+    const exec = vi.fn<ClaudeExec>(() => new Promise((resolve) => { finish = resolve; }));
+    const dependencies = { hasOwnedProcess: () => false, exec };
+    const reads = Array.from({ length: 456 }, (_, index) => detectClaudeRuntime({ ...ref, nativeSessionId: `session-${index}` }, dependencies));
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith('claude', ['agents', '--json'], { timeoutMs: 5_000 });
+    finish({ exitCode: 0, stdout: '[{"sessionId":"session-1","cwd":"/work/fractal","status":"running"}]' });
+    const states = await Promise.all(reads);
+    expect(states[1]).toBe('active-externally');
+    expect(states.filter((state) => state === 'idle')).toHaveLength(455);
+
+    // Once the query settles, a later check must use fresh native evidence.
+    const next = detectClaudeRuntime(ref, dependencies);
+    expect(exec).toHaveBeenCalledTimes(2);
+    finish({ exitCode: 0, stdout: '[]' });
+    await expect(next).resolves.toBe('idle');
+  });
+
+  test('shares query failures conservatively and retries instead of caching unavailable evidence', async () => {
+    let fail!: (error: Error) => void;
+    const exec = vi.fn<ClaudeExec>(() => new Promise((_resolve, reject) => { fail = reject; }));
+    const dependencies = { hasOwnedProcess: () => false, exec };
+    const reads = [detectClaudeRuntime(ref, dependencies), detectClaudeRuntime(ref, dependencies)];
+    expect(exec).toHaveBeenCalledTimes(1);
+    fail(new Error('Cannot spawn Claude'));
+    await expect(Promise.all(reads)).resolves.toEqual(['unknown', 'unknown']);
+    exec.mockResolvedValueOnce({ exitCode: 0, stdout: '[]' });
+    await expect(detectClaudeRuntime(ref, dependencies)).resolves.toBe('idle');
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not share in-flight evidence between different executables or execution backends', async () => {
+    const exec = fakeExec({ 'agents --json': { exitCode: 0, stdout: '[]' } });
+    const otherExec = fakeExec({});
+    const states = await Promise.all([
+      detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, executable: '/one/claude' }),
+      detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec, executable: '/two/claude' }),
+      detectClaudeRuntime(ref, { hasOwnedProcess: () => false, exec: otherExec, executable: '/one/claude' }),
+    ]);
+    expect(states).toEqual(['idle', 'idle', 'unknown']);
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(otherExec).toHaveBeenCalledTimes(1);
+  });
+
   test('owned registry wins over external discovery', async () => {
     await expect(detectClaudeRuntime(ref, { hasOwnedProcess: () => true, exec: fakeExec({}) })).resolves.toBe('active-in-fractal');
   });

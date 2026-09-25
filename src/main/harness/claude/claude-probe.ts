@@ -65,9 +65,27 @@ export interface ClaudeRuntimeDependencies {
   transcriptGrew?(ref: ConversationRef): Promise<boolean>;
 }
 
+// History discovery checks many sessions concurrently, but agents --json
+// returns the same process-wide evidence for all of them. Share only pending
+// work; later continuation checks must not reuse a cached idle result.
+const pendingAgentQueries = new WeakMap<ClaudeExec, Map<string, Promise<ClaudeExecResult>>>();
+
+function queryAgents(exec: ClaudeExec, executable: string): Promise<ClaudeExecResult> {
+  let queries = pendingAgentQueries.get(exec);
+  if (!queries) {
+    queries = new Map();
+    pendingAgentQueries.set(exec, queries);
+  }
+  const existing = queries.get(executable);
+  if (existing) return existing;
+  const pending = safeExec(exec, executable, ['agents', '--json']).finally(() => queries.delete(executable));
+  queries.set(executable, pending);
+  return pending;
+}
+
 export async function detectClaudeRuntime(ref: ConversationRef, dependencies: ClaudeRuntimeDependencies): Promise<ConversationRuntime> {
   if (dependencies.hasOwnedProcess(ref)) return 'active-in-fractal';
-  const result = await safeExec(dependencies.exec, dependencies.executable ?? 'claude', ['agents', '--json']);
+  const result = await queryAgents(dependencies.exec, dependencies.executable ?? 'claude');
   const document = result.exitCode === 0 ? parseJson(result.stdout) : undefined;
   const agents = parseAgents(Array.isArray(document) ? document : objectValue(document)?.agents);
   const matchingActiveAgent = agents?.some((agent) =>
