@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { SidebarMenuAction } from '@/components/ui/sidebar';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { ConversationRef, HarnessStatus, ProviderId } from '@/shared/conversation-contract';
 import { DEFAULT_CODING_AGENT } from '@/shared/settings-contract';
 
@@ -11,7 +12,7 @@ export function NewConversationMenu({ projectName, projectPath, providers, onCre
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<ProviderId | null>(null);
   const [resolvingDefault, setResolvingDefault] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(false);
   const pendingRequest = useRef<symbol | null>(null);
   const resolvingRequest = useRef(false);
   const mounted = useRef(true);
@@ -46,12 +47,12 @@ export function NewConversationMenu({ projectName, projectPath, providers, onCre
       const defaultCodingAgent = savedAgent ?? DEFAULT_CODING_AGENT;
       if (!mounted.current) return;
       if (defaultCodingAgent === 'ask' || !available.some((provider) => provider.provider === defaultCodingAgent)) {
-        setMenuOpen(true);
+        setChooserOpen(true);
       } else {
         await create(defaultCodingAgent);
       }
     } catch {
-      if (mounted.current) setMenuOpen(true);
+      if (mounted.current) setChooserOpen(true);
     } finally {
       resolvingRequest.current = false;
       if (mounted.current) setResolvingDefault(false);
@@ -60,11 +61,16 @@ export function NewConversationMenu({ projectName, projectPath, providers, onCre
 
   const busy = pending !== null || resolvingDefault;
   return <>
-    <SidebarMenuAction aria-busy={busy} aria-label={`New chat in ${projectName}`} className="right-10 text-sidebar-foreground/45 hover:text-sidebar-foreground" disabled={available.length === 0 || busy} onClick={() => void createWithDefault()} showOnHover title={`New chat in ${projectName}`}><Plus /></SidebarMenuAction>
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-      <DropdownMenuTrigger asChild><SidebarMenuAction aria-label={`Choose coding agent for ${projectName}`} className="text-sidebar-foreground/45 hover:text-sidebar-foreground" disabled={available.length === 0 || busy} showOnHover title={`Choose coding agent for ${projectName}`}><ChevronDown /></SidebarMenuAction></DropdownMenuTrigger>
-      <DropdownMenuContent align="end">{available.map((provider) => <DropdownMenuItem disabled={pending !== null} key={provider.provider} onSelect={() => void create(provider.provider)}>{LABELS[provider.provider]}</DropdownMenuItem>)}</DropdownMenuContent>
-    </DropdownMenu>
+    <SidebarMenuAction aria-busy={busy} aria-label={`New chat in ${projectName}`} className="text-sidebar-foreground/45 hover:text-sidebar-foreground" disabled={available.length === 0 || busy} onClick={() => void createWithDefault()} showOnHover title={`New chat in ${projectName}`}><Plus /></SidebarMenuAction>
+    <Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
+      <DialogContent className="rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-2xl sm:max-w-sm" overlayClassName="bg-black/45 backdrop-blur-sm">
+        <DialogHeader>
+          <DialogTitle>Choose a coding agent</DialogTitle>
+          <DialogDescription>Start a new chat in {projectName}.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>{available.map((provider) => <Button disabled={pending !== null} key={provider.provider} onClick={() => { setChooserOpen(false); void create(provider.provider); }} variant="outline">{LABELS[provider.provider]}</Button>)}</DialogFooter>
+      </DialogContent>
+    </Dialog>
     {pending && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">Creating {LABELS[pending]} conversation…</p>}
     {error && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">{error}</p>}
   </>;

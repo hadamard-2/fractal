@@ -202,7 +202,7 @@ describe('NavMain', () => {
     expect(project.getAttribute('aria-expanded')).toBe('false');
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     expect(project.getAttribute('aria-expanded')).toBe('false');
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
     expect(onCreated).toHaveBeenCalledWith(fractalGroup.conversations[0].ref);
   });

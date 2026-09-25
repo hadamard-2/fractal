@@ -72,7 +72,7 @@ test('creates a chat from a project row and opens its native reference', async (
   render(<ExecuteMode onOpenSettings={() => undefined} />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'New chat in Fractal' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+  await user.click(screen.getByRole('button', { name: 'Codex' }));
   expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
   await waitFor(() => expect(open).toHaveBeenCalledWith(ref, expect.any(String)));
 });

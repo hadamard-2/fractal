@@ -33,7 +33,7 @@ function renderMenu(providers: HarnessStatus[], onCreated: (ref: ConversationRef
 }
 
 describe('NewConversationMenu', () => {
-  test('creates with the saved agent and keeps an explicit agent chooser', async () => {
+  test('creates with the saved agent without an agent dropdown', async () => {
     const create = vi.fn<ConversationApi['create']>(async ({ provider }) => ({ ...ref, provider }));
     const onCreated = vi.fn(); install(create, 'claude');
     renderMenu([codex, availableClaude], onCreated);
@@ -42,10 +42,7 @@ describe('NewConversationMenu', () => {
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
     await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'claude', projectPath: '/work/fractal' }));
     expect(onCreated).toHaveBeenCalledWith({ ...ref, provider: 'claude' });
-
-    await user.click(screen.getByRole('button', { name: 'Choose coding agent for Fractal' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
-    expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
+    expect(screen.queryByRole('button', { name: 'Choose coding agent for Fractal' })).toBeNull();
   });
 
   test('opens the chooser when the saved agent cannot create a chat', async () => {
@@ -54,7 +51,7 @@ describe('NewConversationMenu', () => {
     renderMenu([codex, claude], vi.fn());
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    expect(await screen.findByRole('menuitem', { name: 'Codex' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Codex' })).toBeTruthy();
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -85,7 +82,7 @@ describe('NewConversationMenu', () => {
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     defaultCodingAgent = 'ask';
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    expect(await screen.findByRole('menuitem', { name: 'Codex' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Codex' })).toBeTruthy();
     expect(create).toHaveBeenCalledTimes(1);
   });
 
@@ -95,9 +92,9 @@ describe('NewConversationMenu', () => {
     renderMenu([codex, claude], onCreated);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    expect(screen.getByRole('menuitem', { name: 'Codex' })).toBeTruthy();
-    expect(screen.queryByRole('menuitem', { name: 'Claude Code' })).toBeNull();
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    expect(screen.getByRole('button', { name: 'Codex' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Claude Code' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
     expect(onCreated).toHaveBeenCalledWith(ref);
   });
@@ -108,10 +105,10 @@ describe('NewConversationMenu', () => {
     renderMenu([codex], onCreated);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect(onCreated).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect(create).toHaveBeenCalledTimes(2);
     expect(onCreated).toHaveBeenCalledWith(ref);
   });
@@ -121,7 +118,7 @@ describe('NewConversationMenu', () => {
     renderMenu([codex], onCreated);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'New chat in Fractal' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect((await screen.findByRole('status')).textContent).toBe('Codex could not create a conversation.');
     expect(screen.queryByText(/private|secret/i)).toBeNull();
     expect(onCreated).not.toHaveBeenCalled();
@@ -135,7 +132,7 @@ describe('NewConversationMenu', () => {
     const user = userEvent.setup();
     const trigger = screen.getByRole('button', { name: 'New chat in Fractal' });
     await user.click(trigger);
-    await user.click(screen.getByRole('menuitem', { name: 'Codex' }));
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
     expect(trigger.getAttribute('aria-busy')).toBe('true');
     expect(trigger).toHaveProperty('disabled', true);
     expect(screen.getByRole('status').textContent).toBe('Creating Codex conversation…');
