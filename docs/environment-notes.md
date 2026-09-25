@@ -20,6 +20,7 @@ A few versions are deliberate rather than incidental; changing them tends to bre
 - **`@vitejs/plugin-react` is pinned to 4.x.** Version 6 requires Vite 8 and is ESM-only, which Vite 5 cannot load from a CommonJS config.
 - **The renderer config is `.mts`, not `.ts`.** Tailwind v4's Vite plugin is ESM-only with no CommonJS build. The `.mts` extension makes Vite load the config as ESM. The main and preload configs stay `.ts`.
 - **TypeScript is 5.9, not the template's 4.5.** React 19's types need a modern compiler.
+- **The terminal's `node-pty` package must stay external to the main Vite bundle.** Its JavaScript loads a native `.node` file and a helper relative to the package directory; bundling the JavaScript into `.vite/build/main.js` leaves those files behind. `vite.main.config.ts` externalizes `node-pty`, and `forge.config.ts` copies `node-pty` plus its build-time `node-addon-api` dependency into the package and unpacks the PTY directory. A successful Vite build alone does not verify this boundary; run `pnpm package` and check a terminal from the packaged files.
 
 ## pnpm 11 reads its settings from pnpm-workspace.yaml only
 

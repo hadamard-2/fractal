@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import App from './App';
+vi.mock('@/components/terminal-view', () => ({ TerminalView: (): null => null }));
 import type { ConversationApi, ConversationRef } from '@/shared/conversation-contract';
 import type { SidebarOrder } from '@/shared/settings-contract';
 

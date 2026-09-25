@@ -6,6 +6,8 @@ const state = vi.hoisted(() => ({
   app: undefined as unknown as EventEmitter & { quit: ReturnType<typeof vi.fn> },
   start: vi.fn(), disposeServer: vi.fn(async () => undefined), disposeService: vi.fn(async () => undefined),
   register: vi.fn(() => ({ emit: vi.fn() })), disposeIpc: vi.fn(async () => undefined),
+  registerTerminal: vi.fn(() => ({ dispose: () => { state.events.push('terminal-ipc-dispose'); } })),
+  disposeTerminalService: vi.fn(() => { state.events.push('terminal-service-dispose'); }),
 }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
@@ -23,6 +25,9 @@ vi.mock('electron', async () => {
 vi.mock('electron-squirrel-startup', () => ({ default: false }));
 vi.mock('@/main/settings-ipc', () => ({ registerSettingsIpc: () => state.events.push('settings') }));
 vi.mock('@/main/agent-ipc', () => ({ registerConversationIpc: state.register, disposeConversationIpc: state.disposeIpc }));
+vi.mock('@/main/terminal-ipc', () => ({ registerTerminalIpc: state.registerTerminal }));
+vi.mock('@/main/terminal-service', () => ({ TerminalService: class { dispose = state.disposeTerminalService; } }));
+vi.mock('@/main/terminal-pty', () => ({ createNativePty: vi.fn() }));
 vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { start: state.start } }));
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
 beforeEach(() => {
@@ -41,11 +46,14 @@ describe('main conversation lifecycle', () => {
     started({ dispose: state.disposeServer });
     await vi.waitFor(() => expect(state.windows[0].loadFile).toHaveBeenCalledTimes(1));
     expect(state.register).toHaveBeenCalledTimes(1);
+    expect(state.registerTerminal).toHaveBeenCalledTimes(1);
     expect(state.windows[0].options.webPreferences).toMatchObject({ contextIsolation: true, nodeIntegration: false });
     const event = { preventDefault: vi.fn() }; state.app.emit('before-quit', event);
     await vi.waitFor(() => expect(state.app.quit).toHaveBeenCalledTimes(1));
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(state.disposeIpc).toHaveBeenCalledTimes(1); expect(state.disposeService).toHaveBeenCalledTimes(1); expect(state.disposeServer).toHaveBeenCalledTimes(1);
+    expect(state.events).toContain('terminal-ipc-dispose');
+    expect(state.disposeTerminalService).toHaveBeenCalledTimes(1);
     state.app.emit('before-quit', { preventDefault: vi.fn(() => { throw new Error('Final quit must proceed'); }) });
   });
   test('shutdown during server startup disposes the eventual process without registering or loading a renderer', async () => {

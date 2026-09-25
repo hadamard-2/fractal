@@ -3,6 +3,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ConversationApi } from '@/shared/conversation-contract';
+import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
 import { CONVERSATION_CHANNELS as CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
   SETTINGS_INVOKE_CHANNEL,
@@ -37,4 +38,18 @@ const settings: FractalSettingsApi = {
   openDataFolder: () => invokeSettings({ method: 'openDataFolder' }),
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, settings });
+const terminals: TerminalApi = {
+  create: (input) => ipcRenderer.invoke(TERMINAL_CHANNELS.invoke, { method: 'create', ...input }),
+  write: (id, data) => ipcRenderer.invoke(TERMINAL_CHANNELS.invoke, { method: 'write', id, data }),
+  resize: (id, cols, rows) => ipcRenderer.invoke(TERMINAL_CHANNELS.invoke, { method: 'resize', id, cols, rows }),
+  close: (id) => ipcRenderer.invoke(TERMINAL_CHANNELS.invoke, { method: 'close', id }),
+  onEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      try { listener(parseTerminalEvent(payload)); } catch { /* Drop invalid native events. */ }
+    };
+    ipcRenderer.on(TERMINAL_CHANNELS.event, handler);
+    return () => { ipcRenderer.removeListener(TERMINAL_CHANNELS.event, handler); };
+  },
+};
+
+contextBridge.exposeInMainWorld('fractal', { conversations, settings, terminals });

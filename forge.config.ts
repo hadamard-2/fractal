@@ -9,7 +9,12 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: { unpackDir: 'node_modules/node-pty' },
+    // Vite's default copy filter keeps only .vite. The external native PTY
+    // also needs its JS, compiled addon, and spawn helper at runtime.
+    ignore: (file) => Boolean(file) && !file.startsWith('/.vite') &&
+      file !== '/node_modules' && !file.startsWith('/node_modules/node-pty') &&
+      !file.startsWith('/node_modules/node-addon-api'),
     // Electron Packager selects icon.ico on Windows and icon.icns on macOS.
     icon: 'assets/icon',
     // The Vite plugin packages only its build output. Ship the runtime PNG

@@ -12,6 +12,9 @@ import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
 import { registerSettingsIpc } from '@/main/settings-ipc';
+import { registerTerminalIpc } from '@/main/terminal-ipc';
+import { TerminalService } from '@/main/terminal-service';
+import { createNativePty } from '@/main/terminal-pty';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -132,6 +135,8 @@ let conversationStartup: Promise<void> = Promise.resolve();
 const conversationStartupController = new AbortController();
 let quitting = false;
 let shutdown: Promise<void> | undefined;
+let terminalService: TerminalService | undefined;
+let terminalRegistration: { dispose(): void } | undefined;
 
 const createWindow = () => {
   /*
@@ -203,6 +208,8 @@ app.on('ready', () => {
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
   registerSettingsIpc();
+  terminalService = new TerminalService(createNativePty);
+  terminalRegistration = registerTerminalIpc(terminalService, () => mainWindowRef);
   const window = createWindow();
   conversationStartup = (async () => {
     codexServer = await CodexAppServer.start(undefined, conversationStartupController.signal);
@@ -233,6 +240,8 @@ app.on('before-quit', (event) => {
   if (shutdown) return;
   shutdown = (async () => {
     conversationStartupController.abort();
+    terminalRegistration?.dispose();
+    terminalService?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();

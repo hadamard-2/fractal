@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ExecuteMode } from './execute-mode';
+vi.mock('./terminal-view', () => ({ TerminalView: (): null => null }));
 import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
 import type { SidebarOrder } from '@/shared/settings-contract';
 

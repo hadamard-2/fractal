@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { Blocks } from 'lucide-react';
 import { ConversationPanel } from '@/components/conversation-panel';
+import { RightWorkspace } from '@/components/right-workspace';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
@@ -52,6 +53,7 @@ export function ExecuteMode({
   onOpenSettings: () => void;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
+  const [rightOpen, setRightOpen] = useState(false);
   const { projects, providers, loading, error } = useConversationHistory();
   // Selection lives here, not in the sidebar: the header below shows the
   // picked item's title, and only this component renders both.
@@ -106,6 +108,7 @@ export function ExecuteMode({
         width={sidebarWidth}
       />
       <SidebarInset className="min-h-0 overflow-hidden">
+        <RightWorkspace active={active} open={rightOpen} onOpenChange={setRightOpen} projectPath={selectedRef?.projectPath ?? null}>
         {/*
           The row's height comes from `--app-bar-height`, the same token the
           mode toggle's strip uses. App renders that toggle once and never
@@ -180,6 +183,7 @@ export function ExecuteMode({
             </div>
           )}
         </div>
+        </RightWorkspace>
       </SidebarInset>
     </SidebarProvider>
   );
