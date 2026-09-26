@@ -45,3 +45,5 @@ export function useConversationHistory() {
 
   return { projects, providers, loading, error, refresh };
 }
+
+export type ConversationHistory = ReturnType<typeof useConversationHistory>;

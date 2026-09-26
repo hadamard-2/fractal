@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { PanelRight } from 'lucide-react';
+import { AppShell } from '@/components/app-shell';
 import { ExecuteMode } from '@/components/execute-mode';
+import { ExplainMode } from '@/components/explain-mode';
+import { MapMode } from '@/components/map-mode';
 import { ModeToggle, type Mode } from '@/components/mode-toggle';
 import { RightWorkspace } from '@/components/right-workspace';
 import { SettingsDialog } from '@/components/settings-dialog';
@@ -26,7 +29,7 @@ export default function App() {
   const [rightResizing, setRightResizing] = useState(false);
   // Execute's selected project; new terminals start there in any mode.
   const [projectPath, setProjectPath] = useState<string | null>(null);
-  const executeInsetRef = useRef<HTMLElement>(null);
+  const shellInsetRef = useRef<HTMLElement>(null);
 
   // Cmd+, (Ctrl+, elsewhere) — the canonical application-settings shortcut.
   // Matched on `code` like main.ts's window shortcuts, so it survives
@@ -96,15 +99,15 @@ export default function App() {
       </div>
 
       {/*
-        Each mode owns its own layout below the title bar. Execute brings the
-        sidebar shell; the others get a bare canvas until they grow one.
+        One shell frames every mode. Execute stays mounted (hidden) outside
+        its own mode so a running session survives a mode switch.
       */}
       <div
         className="flex h-full flex-col"
         style={{ paddingTop: 'var(--titlebar-height)' }}
       >
         <RightWorkspace
-          leftInsetRef={mode === 'execute' ? executeInsetRef : undefined}
+          leftInsetRef={shellInsetRef}
           onOpenChange={setRightOpen}
           onResizingChange={setRightResizing}
           onWidthChange={setRightWidth}
@@ -112,17 +115,23 @@ export default function App() {
           projectPath={projectPath}
           width={rightWidth}
         >
-          <ExecuteMode
-            active={mode === 'execute'}
-            insetRef={executeInsetRef}
+          <AppShell
+            insetRef={shellInsetRef}
             onProjectPathChange={setProjectPath}
             sidebarOpen={sidebarOpen}
             onSidebarOpenChange={setSidebarOpen}
             sidebarWidth={sidebarWidth}
             onSidebarWidthChange={setSidebarWidth}
             onOpenSettings={() => setSettingsOpen(true)}
-          />
-          {mode !== 'execute' && <main className="flex flex-1 items-center justify-center" />}
+          >
+            {(shell) => (
+              <>
+                <ExecuteMode active={mode === 'execute'} {...shell} />
+                {mode === 'map' && <MapMode />}
+                {mode === 'explain' && <ExplainMode />}
+              </>
+            )}
+          </AppShell>
         </RightWorkspace>
       </div>
 

@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
+import { AppShell } from './app-shell';
 import { ExecuteMode } from './execute-mode';
 vi.mock('./terminal-view', () => ({ TerminalView: (): null => null }));
 import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
@@ -21,7 +22,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   const onProjectPathChange = vi.fn();
-  render(<ExecuteMode onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange} />);
+  render(<AppShell onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
   expect(onProjectPathChange).toHaveBeenLastCalledWith(null);
   expect(screen.getByText('Select a conversation')).toBeTruthy();
   await screen.findByText(/claude.*unavailable/i);
@@ -49,7 +50,7 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   const user = userEvent.setup();
-  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
   await user.click(await screen.findByRole('button', { name: 'Fractal' }));
   await user.click(await screen.findByText('Fix parser'));
   title = 'Fix parser again';
@@ -73,7 +74,7 @@ test('creates a chat from a project row and opens its native reference', async (
     open, create, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
-  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'New chat in Fractal' }));
   await user.click(screen.getByRole('button', { name: 'Codex' }));
