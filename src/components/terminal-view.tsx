@@ -4,15 +4,22 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Button } from '@/components/ui/button';
 
-export function TerminalView({ id, cwd, visible, onShellReady }: {
+export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, onExitedChange }: {
   id: string;
   cwd: string | null;
   visible: boolean;
-  onShellReady: (shell: string) => void;
+  // Bumped by the panel to ask for keyboard focus; each value is honoured once.
+  focusToken?: number;
+  onShellReady: (started: { shell: string; cwd: string }) => void;
+  onExitedChange?: (exited: boolean) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const visibleRef = useRef(visible);
   const onShellReadyRef = useRef(onShellReady);
+  const onExitedChangeRef = useRef(onExitedChange);
+  onExitedChangeRef.current = onExitedChange;
+  const terminalRef = useRef<Terminal | null>(null);
+  const handledFocus = useRef(0);
   const fitRef = useRef<(() => void) | null>(null);
   const [generation, setGeneration] = useState(0);
   const [state, setState] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
@@ -34,12 +41,13 @@ export function TerminalView({ id, cwd, visible, onShellReady }: {
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
+    terminalRef.current = terminal;
 
     const applyTheme = () => {
       const style = getComputedStyle(host);
       terminal.options.theme = {
-        background: style.getPropertyValue('--sidebar').trim() || '#171717',
-        foreground: style.getPropertyValue('--sidebar-foreground').trim() || '#fafafa',
+        background: style.getPropertyValue('--background').trim() || '#0a0a0a',
+        foreground: style.getPropertyValue('--foreground').trim() || '#fafafa',
       };
     };
     applyTheme();
@@ -75,10 +83,10 @@ export function TerminalView({ id, cwd, visible, onShellReady }: {
     setState('starting');
     setExitCode(null);
     const creating = window.fractal.terminals.create({ id, cwd: cwd ?? undefined, cols: 80, rows: 24 });
-    void creating.then(({ shell }) => {
+    void creating.then(({ shell, cwd: startedIn }) => {
       if (disposed) { void window.fractal.terminals.close(id).catch((): void => undefined); return; }
       started = true;
-      onShellReadyRef.current(shell);
+      onShellReadyRef.current({ shell, cwd: startedIn });
       if (!exited) setState('running');
       fitNow();
     }).catch(() => { if (!disposed) setState('error'); });
@@ -87,6 +95,7 @@ export function TerminalView({ id, cwd, visible, onShellReady }: {
     return () => {
       disposed = true;
       fitRef.current = null;
+      terminalRef.current = null;
       observer?.disconnect();
       media?.removeEventListener('change', onThemeChange);
       off();
@@ -98,13 +107,23 @@ export function TerminalView({ id, cwd, visible, onShellReady }: {
 
   useEffect(() => { if (visible) fitRef.current?.(); }, [visible]);
 
+  useEffect(() => { onExitedChangeRef.current?.(state === 'exited'); }, [state]);
+
+  // Declared after the main effect so, on a tab's first mount, the terminal
+  // exists by the time a focus request is honoured.
+  useEffect(() => {
+    if (!visible || focusToken === handledFocus.current) return;
+    handledFocus.current = focusToken;
+    terminalRef.current?.focus();
+  }, [focusToken, visible]);
+
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-sidebar">
-      <div className="min-h-0 flex-1 overflow-hidden p-3">
-        <div aria-label="Terminal" className="h-full w-full" ref={hostRef} />
+    <div className="relative flex h-full min-h-0 flex-col bg-background">
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        <div aria-label="Terminal" className="h-full w-full" data-slot="terminal" ref={hostRef} />
       </div>
-      {state === 'exited' && <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-md border bg-sidebar px-3 py-2 text-xs" role="status"><span>Shell exited with code {exitCode}.</span><Button aria-label="Restart terminal" onClick={() => setGeneration((value) => value + 1)} size="xs" variant="outline">Restart</Button></div>}
-      {state === 'error' && <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-md border bg-sidebar px-3 py-2 text-xs" role="status"><span>Terminal could not start.</span><Button aria-label="Retry terminal" onClick={() => setGeneration((value) => value + 1)} size="xs" variant="outline">Retry</Button></div>}
+      {state === 'exited' && <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-md border bg-background px-3 py-2 text-xs" role="status"><span>Shell exited with code {exitCode}.</span><Button aria-label="Restart terminal" onClick={() => setGeneration((value) => value + 1)} size="xs" variant="outline">Restart</Button></div>}
+      {state === 'error' && <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-md border bg-background px-3 py-2 text-xs" role="status"><span>Terminal could not start.</span><Button aria-label="Retry terminal" onClick={() => setGeneration((value) => value + 1)} size="xs" variant="outline">Retry</Button></div>}
     </div>
   );
 }

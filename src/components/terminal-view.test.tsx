@@ -6,12 +6,12 @@ import type { TerminalApi, TerminalEvent } from '@/shared/terminal-contract';
 import { TerminalView } from './terminal-view';
 
 const mocks = vi.hoisted(() => ({
-  write: vi.fn(), fit: vi.fn(), resize: vi.fn(), open: vi.fn(), dispose: vi.fn(),
+  write: vi.fn(), fit: vi.fn(), resize: vi.fn(), open: vi.fn(), dispose: vi.fn(), focus: vi.fn(),
   onData: undefined as undefined | ((data: string) => void),
 }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options: Record<string, unknown> = {};
-  write = mocks.write; open = mocks.open; dispose = mocks.dispose;
+  write = mocks.write; open = mocks.open; dispose = mocks.dispose; focus = mocks.focus;
   loadAddon = vi.fn();
   onData(listener: (data: string) => void) { mocks.onData = listener; return { dispose: vi.fn() }; }
 } }));
@@ -42,7 +42,7 @@ test('receives output emitted before create resolves and writes typed input', as
   const onShellReady = vi.fn();
   render(<TerminalView id="one" cwd="/repo" visible onShellReady={onShellReady} />);
   await waitFor(() => expect(mocks.write).toHaveBeenCalledWith('$ '));
-  expect(onShellReady).toHaveBeenCalledWith('/bin/sh');
+  expect(onShellReady).toHaveBeenCalledWith({ shell: '/bin/sh', cwd: '/repo' });
   act(() => mocks.onData?.('pwd\r'));
   expect(write).toHaveBeenCalledWith('one', 'pwd\r');
 });
@@ -76,4 +76,27 @@ test('shows a retry action when a shell cannot start', async () => {
   expect(screen.queryByText('private native error')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Retry terminal' }));
   expect(create).toHaveBeenCalledTimes(2);
+});
+
+test('focuses once per request, and only while visible', () => {
+  const view = render(<TerminalView id="one" cwd="/repo" visible={false} focusToken={1} onShellReady={vi.fn()} />);
+  expect(mocks.focus).not.toHaveBeenCalled();
+  view.rerender(<TerminalView id="one" cwd="/repo" visible focusToken={1} onShellReady={vi.fn()} />);
+  expect(mocks.focus).toHaveBeenCalledTimes(1);
+  view.rerender(<TerminalView id="one" cwd="/repo" visible={false} focusToken={1} onShellReady={vi.fn()} />);
+  view.rerender(<TerminalView id="one" cwd="/repo" visible focusToken={1} onShellReady={vi.fn()} />);
+  expect(mocks.focus).toHaveBeenCalledTimes(1);
+  view.rerender(<TerminalView id="one" cwd="/repo" visible focusToken={2} onShellReady={vi.fn()} />);
+  expect(mocks.focus).toHaveBeenCalledTimes(2);
+});
+
+test('reports when its shell exits and when it restarts', async () => {
+  const user = userEvent.setup();
+  const onExitedChange = vi.fn();
+  render(<TerminalView id="one" cwd="/repo" visible onShellReady={vi.fn()} onExitedChange={onExitedChange} />);
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  act(() => listener?.({ type: 'exit', id: 'one', exitCode: 0 }));
+  expect(onExitedChange).toHaveBeenLastCalledWith(true);
+  await user.click(screen.getByRole('button', { name: 'Restart terminal' }));
+  await waitFor(() => expect(onExitedChange).toHaveBeenLastCalledWith(false));
 });

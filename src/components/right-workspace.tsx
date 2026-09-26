@@ -124,7 +124,7 @@ export function RightWorkspace({ open, active, projectPath, onOpenChange, childr
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-hidden">
-              {tabs.map((tab) => <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel"><TerminalView cwd={tab.cwd} id={tab.id} onShellReady={(shell) => setTabs((previous) => previous.map((item) => item.id === tab.id ? { ...item, shell: shell.split(/[\\/]/).pop() || undefined } : item))} visible={open && active && selectedId === tab.id} /></div>)}
+              {tabs.map((tab) => <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel"><TerminalView cwd={tab.cwd} id={tab.id} onShellReady={({ shell }) => setTabs((previous) => previous.map((item) => item.id === tab.id ? { ...item, shell: shell.split(/[\\/]/).pop() || undefined } : item))} visible={open && active && selectedId === tab.id} /></div>)}
             </div>
           )}
         </div>
