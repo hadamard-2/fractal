@@ -13,6 +13,13 @@ function applySavedOrder<T>(items: T[], saved: string[], key: (item: T) => strin
   });
 }
 
+// Child conversations (spawned by another conversation) aren't sidebar rows.
+export function topLevelConversations(groups: ProjectConversationGroup[]): ProjectConversationGroup[] {
+  return groups
+    .map((group) => ({ ...group, conversations: group.conversations.filter((item) => item.parentId === undefined) }))
+    .filter((group) => group.conversations.length > 0);
+}
+
 export function applySidebarOrder(groups: ProjectConversationGroup[], order: SidebarOrder): ProjectConversationGroup[] {
   return applySavedOrder(groups, order.projects, (group) => group.projectPath).map((group) => ({
     ...group,

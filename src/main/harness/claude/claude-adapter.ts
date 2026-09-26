@@ -72,7 +72,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const newSession = draft?.projectPath === ref.projectPath;
     const status = await this.ensureStatus();
     if (status.availability !== 'available') throw new Error('Claude conversation continuation is not available');
-    if (!newSession && !this.validatedSessions.has(ref.nativeSessionId)) await this.find(ref);
+    if (!newSession && !this.validatedSessions.has(ref.nativeSessionId) && (await this.find(ref)).summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     if (!newSession && await this.runtime(ref) !== 'idle') throw new Error('Conversation is not idle');
 
     const queue = new NativeEventQueue(); const pending = new Map<string, PendingDecision>();

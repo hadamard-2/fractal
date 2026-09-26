@@ -198,7 +198,7 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
     const last = scanRecords(lastBytes, lastStart === 0, true);
     const firstRecord = first.records[0];
     const lastRecord = last.records.at(-1) ?? firstRecord;
-    const sessionId = stringAt(first.records, 'sessionId') ?? stringAt(last.records, 'sessionId') ?? path.basename(filePath, '.jsonl');
+    const identity = conversationIdentity(filePath);
     const projectPath = stringAt(first.records, 'cwd') ?? stringAt(last.records, 'cwd');
     if (!projectPath) return undefined;
     const createdAt = timestampAt(firstRecord) ?? fileStat.birthtimeMs;
@@ -207,15 +207,27 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
     const captureCompleteness: CaptureCompleteness = first.incomplete || last.incomplete || first.malformed || last.malformed || first.unsupported || last.unsupported
       ? 'partial'
       : fileStat.size > SUMMARY_SCAN_BYTES * 2 ? 'unknown' : 'complete';
-    const ref: ConversationRef = { provider: 'claude', nativeSessionId: sessionId, projectPath };
+    const ref: ConversationRef = { provider: 'claude', nativeSessionId: identity.id, projectPath };
     return {
       ref,
       filePath,
-      summary: { ref, title, createdAt, updatedAt, runtime: 'unknown', captureCompleteness },
+      summary: { ref, title, createdAt, updatedAt, runtime: 'unknown', captureCompleteness, ...(identity.parentId === undefined ? {} : { parentId: identity.parentId }) },
     };
   } finally {
     await handle.close();
   }
+}
+
+// Claude Code names a transcript after its session and keeps a subagent's transcript at
+// <session>/subagents/<agent>.jsonl. Records can carry another session's ID (a continued
+// session starts with the original's records; a subagent repeats its parent's), so
+// identity comes from the path rather than the records.
+function conversationIdentity(filePath: string): { id: string; parentId?: string } {
+  const stem = path.basename(filePath, '.jsonl');
+  const directory = path.dirname(filePath);
+  if (path.basename(directory) !== 'subagents') return { id: stem };
+  const parentId = path.basename(path.dirname(directory));
+  return { id: `${parentId}/${stem}`, parentId };
 }
 
 async function readSlice(handle: Awaited<ReturnType<typeof fs.open>>, position: number, length: number): Promise<Uint8Array> {

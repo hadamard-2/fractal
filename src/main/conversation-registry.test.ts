@@ -23,6 +23,15 @@ describe('ConversationRegistry', () => {
     expect((await registry.validate({ provider: 'codex', projectPath: '/repo', nativeSessionId: 'codex' })).ref.projectPath).toBe('/repo');
   });
 
+  test('keeps the parent link on a child conversation', async () => {
+    const claude = adapter('claude');
+    vi.mocked(claude.listConversations).mockResolvedValue([
+      { ref: { provider: 'claude', projectPath: '/repo', nativeSessionId: 'parent/agent-a1' }, title: 'child', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete', parentId: 'parent' },
+    ]);
+    const result = await new ConversationRegistry([claude], realpath).list();
+    expect(result.projects[0].conversations[0].parentId).toBe('parent');
+  });
+
   test.each(['probe', 'listConversations'] as const)('isolates a rejected %s and clears stale provider summaries', async (method) => {
     const codex = adapter('codex');
     const registry = new ConversationRegistry([codex, adapter('claude')], realpath);

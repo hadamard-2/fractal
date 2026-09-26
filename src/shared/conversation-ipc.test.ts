@@ -101,6 +101,9 @@ describe('native conversation event validation', () => {
       type: 'summary.updated',
       summary,
     });
+    const child = { ...summary, parentId: 'parent-session' };
+    expect(parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'summary.updated', summary: child })).toMatchObject({ summary: child });
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'summary.updated', summary: { ...summary, parentId: ' ' } })).toThrow('Invalid conversation stream event');
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.resolved', requestId: 'request-1', decision: { kind: 'answer', answers: { field: 'ok' } } })).not.toThrow();
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.resolved', requestId: 'request-1', decision: { kind: 'answer', answers: { field: 'x'.repeat(100_001) } } })).toThrow('Invalid conversation stream event');
   });

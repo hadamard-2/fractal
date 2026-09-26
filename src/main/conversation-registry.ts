@@ -74,7 +74,7 @@ export class ConversationRegistry {
           if (ref.provider !== provider) throw new Error('Mismatched conversation provider');
           ref.projectPath = await canonicalizeProjectPath(ref.projectPath, this.realpath);
           // Cache summaries only; adapter-owned file/thread locators never cross this boundary.
-          summaries.push({ ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }) });
+          summaries.push({ ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }), ...(item.parentId === undefined ? {} : { parentId: item.parentId }) });
         }
       }
       this.summaries.set(provider, summaries);

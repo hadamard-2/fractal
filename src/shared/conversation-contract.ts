@@ -12,6 +12,7 @@ export type CaptureCompleteness = 'complete' | 'partial' | 'unknown';
 
 export interface ConversationRef {
   provider: ProviderId;
+  /** Owned by the provider's adapter: unique per provider, opaque everywhere else. */
   nativeSessionId: string;
   projectPath: string;
 }
@@ -41,6 +42,8 @@ export interface ConversationSummary {
   createdAt?: number;
   runtime: ConversationRuntime;
   captureCompleteness: CaptureCompleteness;
+  /** Set when another conversation spawned this one; the parent's `ref.nativeSessionId` under the same provider. */
+  parentId?: string;
 }
 
 export interface ProjectConversationGroup {

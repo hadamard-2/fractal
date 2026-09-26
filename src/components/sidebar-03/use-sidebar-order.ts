@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { conversationKey, type ProjectConversationGroup } from '@/shared/conversation-contract';
 import type { SidebarOrder } from '@/shared/settings-contract';
-import { applySidebarOrder, moveInOrder } from './sidebar-order';
+import { applySidebarOrder, moveInOrder, topLevelConversations } from './sidebar-order';
 
 const emptyOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 
@@ -27,7 +27,7 @@ export function useSidebarOrder(projects: ProjectConversationGroup[]) {
     return () => { active = false; };
   }, []);
 
-  const orderedProjects = useMemo(() => applySidebarOrder(projects, order), [projects, order]);
+  const orderedProjects = useMemo(() => applySidebarOrder(topLevelConversations(projects), order), [projects, order]);
 
   const save = (next: SidebarOrder) => {
     orderRef.current = next;

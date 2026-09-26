@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { createClaudeNormalizationContext, normalizeClaudeRecord, normalizeClaudeStreamRecord, type ClaudeHistoryRecord } from '@/main/harness/claude/claude-normalizer';
 
-const completeFixturePath = path.join(import.meta.dirname, '__fixtures__', 'complete-session.jsonl');
+const completeFixturePath = path.join(import.meta.dirname, '__fixtures__', 'claude-session-1.jsonl');
 
 async function completeRecords(): Promise<ClaudeHistoryRecord[]> {
   return (await readFile(completeFixturePath, 'utf8'))

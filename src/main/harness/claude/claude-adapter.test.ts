@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { describe, expect, test, vi } from 'vitest';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import type { NativeEvent } from '@/main/harness/reconciler';
@@ -51,6 +53,19 @@ describe('Claude adapter', () => {
     const adapter = new ClaudeAdapter(root, { realpath, probe });
     expect(await adapter.probe()).toMatchObject({ capabilities: { approvals: true, questions: false } });
     expect(adapter.capabilities()).toMatchObject({ approvals: true, questions: false });
+  });
+
+  test('loads a subagent transcript but refuses to continue it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-adapter-subagent-'));
+    await mkdir(path.join(directory, 'project', 'parent', 'subagents'), { recursive: true });
+    await writeFile(path.join(directory, 'project', 'parent', 'subagents', 'agent-a1.jsonl'), '{"type":"user","uuid":"c","isSidechain":true,"sessionId":"parent","cwd":"/work/fractal","message":{"role":"user","content":"Child"}}\n');
+    const runTurn = vi.fn();
+    const adapter = new ClaudeAdapter(directory, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn });
+    const child = { ...ref, nativeSessionId: 'parent/agent-a1' };
+    expect((await adapter.loadConversation(child)).summary.parentId).toBe('parent');
+    await expect(adapter.continueConversation(child, { text: 'continue' })).rejects.toThrow('Subagent conversations are read-only');
+    expect(runTurn).not.toHaveBeenCalled();
+    await rm(directory, { recursive: true, force: true });
   });
 
   test.each(['active-externally', 'unknown'] as const)('refuses continuation when runtime is %s', async (runtime) => {

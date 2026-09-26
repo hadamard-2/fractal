@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,7 @@ import { discoverClaudeConversations, readClaudeConversation, watchClaudeConvers
 import type { NativeEvent } from '@/main/harness/reconciler';
 
 const fixtureRoot = path.join(import.meta.dirname, '__fixtures__');
-const partialFixturePath = path.join(fixtureRoot, 'partial-and-unknown.jsonl');
+const partialFixturePath = path.join(fixtureRoot, 'partial-session.jsonl');
 
 async function collect(events: AsyncIterable<NativeEvent>): Promise<NativeEvent[]> {
   const result: NativeEvent[] = [];
@@ -30,6 +30,33 @@ describe('Claude native history', () => {
       },
     });
     expect(result.map((item) => item.summary.updatedAt)).toEqual([...result.map((item) => item.summary.updatedAt)].sort((a, b) => b - a));
+  });
+
+  test('identifies a session by its file name even when its first records carry an earlier session ID', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-identity-'));
+    const record = (sessionId: string, text: string) => `{"type":"user","uuid":"${sessionId}-${text}","sessionId":"${sessionId}","cwd":"/work/identity","message":{"role":"user","content":"${text}"}}\n`;
+    await writeFile(path.join(directory, 'original.jsonl'), record('original', 'Start'));
+    await writeFile(path.join(directory, 'continued.jsonl'), record('original', 'Start') + record('continued', 'Carry on'));
+
+    const ids = (await discoverClaudeConversations(directory)).map((item) => item.ref.nativeSessionId);
+    expect(ids.sort()).toEqual(['continued', 'original']);
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('lists a subagent transcript as a child of the session that spawned it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-subagent-'));
+    const project = path.join(directory, '-work-subagent');
+    await mkdir(path.join(project, 'parent', 'subagents'), { recursive: true });
+    await writeFile(path.join(project, 'parent.jsonl'), '{"type":"user","uuid":"p","sessionId":"parent","cwd":"/work/subagent","message":{"role":"user","content":"Parent"}}\n');
+    await writeFile(path.join(project, 'parent', 'subagents', 'agent-a1.jsonl'), '{"type":"user","uuid":"c","isSidechain":true,"agentId":"a1","sessionId":"parent","cwd":"/work/subagent","message":{"role":"user","content":"Child"}}\n');
+    await writeFile(path.join(project, 'parent', 'subagents', 'agent-a1.meta.json'), '{}');
+
+    const found = await discoverClaudeConversations(directory);
+    expect(found.map((item) => ({ id: item.ref.nativeSessionId, parentId: item.summary.parentId })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: 'parent', parentId: undefined },
+      { id: 'parent/agent-a1', parentId: 'parent' },
+    ]);
+    await rm(directory, { recursive: true, force: true });
   });
 
   test('streams valid UTF-8 records, continues after malformed lines, and marks a truncated tail partial', async () => {

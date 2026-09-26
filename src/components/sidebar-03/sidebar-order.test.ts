@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { applySidebarOrder, moveInOrder } from './sidebar-order';
+import { applySidebarOrder, moveInOrder, topLevelConversations } from './sidebar-order';
 import type { ProjectConversationGroup } from '@/shared/conversation-contract';
 
 const group = (projectPath: string, ids: string[]): ProjectConversationGroup => ({
@@ -29,4 +29,13 @@ test('moves an item without changing order on an invalid or same-item drop', () 
   expect(moveInOrder(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b']);
   expect(moveInOrder(['a', 'b', 'c'], 'c', 'missing')).toEqual(['a', 'b', 'c']);
   expect(moveInOrder(['a', 'b', 'c'], 'b', 'b')).toEqual(['a', 'b', 'c']);
+});
+
+test('lists only top-level conversations and drops projects left empty', () => {
+  const withChild = group('/repo', ['parent', 'parent/agent-a1']);
+  withChild.conversations[1].parentId = 'parent';
+  const onlyChild = group('/orphan', ['gone/agent-b2']);
+  onlyChild.conversations[0].parentId = 'gone';
+  const result = topLevelConversations([withChild, onlyChild]);
+  expect(result.map((item) => [item.projectPath, item.conversations.map((conversation) => conversation.title)])).toEqual([['/repo', ['parent']]]);
 });

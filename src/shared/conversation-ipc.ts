@@ -256,7 +256,7 @@ function cloneTurn(value: unknown): ConversationTurn {
 }
 
 function cloneSummary(value: unknown): ConversationSummary {
-  if (!plainObject(value) || !text(value.title) || !finiteNumber(value.updatedAt) || (value.createdAt !== undefined && !finiteNumber(value.createdAt)) || !runtime(value.runtime) || !completeness(value.captureCompleteness)) invalidEvent();
+  if (!plainObject(value) || !text(value.title) || !finiteNumber(value.updatedAt) || (value.createdAt !== undefined && !finiteNumber(value.createdAt)) || !runtime(value.runtime) || !completeness(value.captureCompleteness) || (value.parentId !== undefined && !nonblankText(value.parentId, MAX_SESSION_ID_LENGTH))) invalidEvent();
   return {
     ref: parseConversationRef(value.ref),
     title: value.title,
@@ -264,6 +264,7 @@ function cloneSummary(value: unknown): ConversationSummary {
     ...(value.createdAt === undefined ? {} : { createdAt: value.createdAt as number }),
     runtime: value.runtime,
     captureCompleteness: value.captureCompleteness,
+    ...(value.parentId === undefined ? {} : { parentId: value.parentId as string }),
   };
 }
 
