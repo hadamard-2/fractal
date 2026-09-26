@@ -20,7 +20,9 @@ test('explains no selection and opens native sidebar refs while identifying unav
     close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
-  render(<ExecuteMode onOpenSettings={() => undefined} />);
+  const onProjectPathChange = vi.fn();
+  render(<ExecuteMode onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange} />);
+  expect(onProjectPathChange).toHaveBeenLastCalledWith(null);
   expect(screen.getByText('Select a conversation')).toBeTruthy();
   await screen.findByText(/claude.*unavailable/i);
   const user = userEvent.setup();
@@ -28,6 +30,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   expect(screen.getByRole('dialog')).toBeTruthy();
   await user.click(await screen.findByRole('button', { name: /Review native history/ }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
+  expect(onProjectPathChange).toHaveBeenLastCalledWith('/work/fractal');
   expect(screen.queryByLabelText('Conversation details')).toBeNull();
   expect(screen.getByText('(Codex · Status unknown)')).toBeTruthy();
 });

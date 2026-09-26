@@ -212,3 +212,51 @@
   user-select: none;
   cursor: col-resize;
 }
+
+/*
+ * Right panel motion, matched to the left sidebar's 200ms linear
+ * expand/collapse (ui/sidebar.tsx). The panel keeps its width and slides;
+ * the gap beside it widens so the content narrows in step; the mode toggle
+ * and the header's reserved space move on the same curve, so a truncated
+ * title never meets the toggle mid-slide.
+ *
+ * Closing holds `visibility` until the slide ends. Opening shows the panel
+ * at once, so a terminal can take focus in the same frame.
+ */
+[data-slot='right-panel'] {
+  transition: transform 200ms linear, visibility 0s linear 200ms;
+}
+[data-slot='right-panel'][data-open] {
+  transition: transform 200ms linear;
+}
+[data-slot='right-panel-gap'] {
+  transition: width 200ms linear;
+}
+[data-slot='mode-toggle-shift'] {
+  transition: transform 200ms linear;
+}
+[data-slot='app-bar-reserve'] {
+  transition: padding-right 200ms linear;
+}
+
+/* A resize drag tracks the pointer 1:1, as the left sidebar's does. */
+[data-right-panel-resizing] [data-slot='right-panel-gap'],
+[data-right-panel-resizing] [data-slot='mode-toggle-shift'],
+[data-right-panel-resizing] [data-slot='app-bar-reserve'] {
+  transition: none;
+}
+[data-right-panel-resizing],
+[data-right-panel-resizing] * {
+  user-select: none;
+  cursor: col-resize;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot='right-panel'],
+  [data-slot='right-panel'][data-open],
+  [data-slot='right-panel-gap'],
+  [data-slot='mode-toggle-shift'],
+  [data-slot='app-bar-reserve'] {
+    transition: none;
+  }
+}

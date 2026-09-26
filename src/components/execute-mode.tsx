@@ -1,7 +1,6 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type Ref } from 'react';
 import { Blocks } from 'lucide-react';
 import { ConversationPanel } from '@/components/conversation-panel';
-import { RightWorkspace } from '@/components/right-workspace';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
@@ -42,6 +41,8 @@ export function ExecuteMode({
   sidebarWidth,
   onSidebarWidthChange,
   onOpenSettings,
+  insetRef,
+  onProjectPathChange,
 }: {
   active?: boolean;
   // Controlled by App so the open/collapsed state remains stable.
@@ -51,9 +52,13 @@ export function ExecuteMode({
   sidebarWidth?: number | null;
   onSidebarWidthChange?: (width: number | null) => void;
   onOpenSettings: () => void;
+  // Attached to the content beside the left sidebar, so the app-level right
+  // panel can tell where the space beside that sidebar begins.
+  insetRef?: Ref<HTMLElement>;
+  // The selected conversation's project, where new terminals start.
+  onProjectPathChange?: (path: string | null) => void;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
-  const [rightOpen, setRightOpen] = useState(false);
   const { projects, providers, loading, error } = useConversationHistory();
   // Selection lives here, not in the sidebar: the header below shows the
   // picked item's title, and only this component renders both.
@@ -69,6 +74,10 @@ export function ExecuteMode({
     .flatMap((project) => project.conversations)
     .find((conversation) => conversationKey(conversation.ref) === conversationKey(selectedRef));
   const selectedRuntime = currentSummary?.runtime ?? selectedItem?.runtime;
+
+  useEffect(() => {
+    onProjectPathChange?.(selectedRef?.projectPath ?? null);
+  }, [selectedRef?.projectPath, onProjectPathChange]);
 
   return (
     <SidebarProvider
@@ -107,24 +116,22 @@ export function ExecuteMode({
         }}
         width={sidebarWidth}
       />
-      <SidebarInset className="min-h-0 overflow-hidden">
-        <RightWorkspace active={active} open={rightOpen} onOpenChange={setRightOpen} projectPath={selectedRef?.projectPath ?? null}>
+      <SidebarInset className="min-h-0 overflow-hidden" ref={insetRef}>
         {/*
-          The row's height comes from `--app-bar-height`, the same token the
-          mode toggle's strip uses. App renders that toggle once and never
-          moves it, so it floats over this row's right-hand side already on
-          this row's baseline — `items-center` on both, one height between
-          them, no offset to keep in sync.
-
-          That right-hand space is spoken for: anything added here needs to
-          leave room for the toggle, or move it into the flow and accept that
-          it will then remount on every mode change.
+          The row's height comes from `--app-bar-height`, the same token App's
+          corner strip uses, so the mode and panel toggles float over this
+          row's right-hand side already on its baseline. `--app-bar-reserve`,
+          set by the right panel, is how much of that side they cover; the
+          title ellipsizes before it. index.css animates the padding on the
+          toggles' curve so the two never meet mid-slide.
         */}
         <header
-          className="flex shrink-0 items-center gap-2 px-4"
+          className="flex shrink-0 items-center gap-2 pl-4"
+          data-slot="app-bar-reserve"
           style={{
             height: 'var(--app-bar-height)',
             marginTop: 'var(--app-bar-offset)',
+            paddingRight: 'var(--app-bar-reserve, 1rem)',
           }}
         >
           {/*
@@ -183,7 +190,6 @@ export function ExecuteMode({
             </div>
           )}
         </div>
-        </RightWorkspace>
       </SidebarInset>
     </SidebarProvider>
   );
