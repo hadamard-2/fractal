@@ -38,6 +38,11 @@ const itemOffsets = MODES.reduce<number[]>((offsets, _, i) => {
   return offsets;
 }, []);
 
+// The toggle's rendered width: the last item's offset plus its own width,
+// plus the group's `p-1` on both sides. The right panel reads it to keep
+// header titles clear of the toggle.
+export const MODE_TOGGLE_WIDTH = itemOffsets[itemOffsets.length - 1] + ITEM_WIDTH + 8;
+
 // A divider renders in the middle of any gap that separates two different
 // groups (not the tight gap within one), so it only ever marks a real
 // boundary and moves automatically if the grouping changes.
