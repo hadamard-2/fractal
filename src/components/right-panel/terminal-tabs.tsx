@@ -5,7 +5,8 @@ export type TerminalTab = {
   id: string;
   // The directory requested at creation; null lets the main process choose.
   cwd: string | null;
-  // Creation order, never reused, so labels stay stable as tabs close.
+  // The lowest number free among open tabs when this one was created; it
+  // never changes while the tab is open, so labels don't shift as others close.
   number: number;
   // The shell's name, once it has started.
   shell?: string;
@@ -14,9 +15,16 @@ export type TerminalTab = {
   exited?: boolean;
 };
 
-export function terminalTabLabel(tab: TerminalTab): string {
-  const base = tab.shell ?? 'Terminal';
-  return tab.number > 1 ? `${base} ${tab.number}` : base;
+// A lone terminal needs no number; once there are several, each shows its own.
+export function terminalTabLabel(tab: TerminalTab, openCount: number): string {
+  return openCount > 1 ? `Terminal ${tab.number}` : 'Terminal';
+}
+
+export function nextTerminalNumber(tabs: TerminalTab[]): number {
+  const used = new Set(tabs.map((tab) => tab.number));
+  let number = 1;
+  while (used.has(number)) number++;
+  return number;
 }
 
 export function TerminalTabs({ tabs, selectedId, onSelect, onClose }: {
@@ -28,7 +36,7 @@ export function TerminalTabs({ tabs, selectedId, onSelect, onClose }: {
   return (
     <div aria-label="Right workspace tabs" className="scrollbar-minimal flex min-w-0 items-center gap-1 overflow-x-auto" role="tablist">
       {tabs.map((tab) => {
-        const label = terminalTabLabel(tab);
+        const label = terminalTabLabel(tab, tabs.length);
         const selected = selectedId === tab.id;
         return (
           <div

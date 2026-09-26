@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { Plus } from 'lucide-react';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
-import { TerminalTabs, type TerminalTab } from '@/components/right-panel/terminal-tabs';
+import { nextTerminalNumber, TerminalTabs, type TerminalTab } from '@/components/right-panel/terminal-tabs';
 import { TerminalView } from '@/components/terminal-view';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -63,7 +63,6 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const nextNumber = useRef(1);
   const nextFocus = useRef(1);
   const drag = useRef<{ x: number; width: number } | null>(null);
 
@@ -77,8 +76,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
   const addTerminal = () => {
     const id = crypto.randomUUID();
-    const number = nextNumber.current++;
-    setTabs((previous) => [...previous, { id, cwd: projectPath, number }]);
+    setTabs((previous) => [...previous, { id, cwd: projectPath, number: nextTerminalNumber(previous) }]);
     setSelectedId(id);
     focusTerminal(id);
   };
@@ -202,7 +200,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
           aria-valuemax={Math.round(layout.maxWidth)}
           aria-valuemin={PANEL_MIN_WIDTH}
           aria-valuenow={Math.round(width)}
-          className="absolute inset-y-2 left-0 z-30 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 hover:after:bg-sidebar-border focus-visible:after:bg-ring data-[dragging=true]:after:bg-sidebar-border"
+          className="absolute inset-y-2 left-0 z-30 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 focus-visible:after:bg-ring"
           data-dragging={dragging}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft') { event.preventDefault(); resize(width + 16); }
