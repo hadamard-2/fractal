@@ -1,7 +1,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
-import { ArrowDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { nextScrollAction, readingAnchor, restoreAnchor, type ReadingAnchor } from '@/renderer/timeline-scroll';
 import type { ConversationTurn as Turn, UserDecision } from '@/shared/conversation-contract';
 import { ConversationTurn } from './conversation-turn';
@@ -126,7 +127,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
           </div>)}
         </div>
       </div>
-      {newActivity && <Button className="absolute bottom-4 left-1/2 -translate-x-1/2" onClick={followBottom} size="sm" type="button" variant="outline"><ArrowDown aria-hidden className="size-4" />New activity</Button>}
+      {newActivity && <TooltipProvider><Tooltip><TooltipTrigger asChild><Button aria-label="New activity" className="absolute bottom-4 left-1/2 size-8 -translate-x-1/2 rounded-full border bg-background text-foreground shadow-md hover:bg-muted dark:bg-background dark:hover:bg-muted" onClick={followBottom} size="icon" type="button" variant="outline"><ChevronDown aria-hidden className="size-4" /></Button></TooltipTrigger><TooltipContent>Jump to new activity</TooltipContent></Tooltip></TooltipProvider>}
     </div>
   );
 }
