@@ -5,6 +5,7 @@ import { Blocks, FolderPlus, Search } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Sidebar,
   SidebarContent,
@@ -223,16 +224,20 @@ export function DashboardSidebar({
           key={isCollapsed ? 'header-collapsed' : 'header-expanded'}
           transition={{ duration: 0.8 }}
         >
-          <Button
-            aria-label="Search"
-            className="rounded-full"
-            onClick={() => setSearchOpen(true)}
-            size="icon"
-            title="Search"
-            variant="ghost"
-          >
-            <Search className="size-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Search"
+                className="rounded-full"
+                onClick={() => setSearchOpen(true)}
+                size="icon"
+                variant="ghost"
+              >
+                <Search className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Search</TooltipContent>
+          </Tooltip>
         </motion.div>
       </SidebarHeader>
       <SidebarContent className="gap-4 overflow-hidden px-2 py-4 group-data-[collapsible=icon]:pt-2.5">

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/sidebar';
 import { conversationKey, type ConversationRef, type ConversationRuntime, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 export type NavSelection = {
@@ -210,7 +211,12 @@ export default function NavMain({
                             type="button"
                           >
                             <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-                            <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${conversation.ref.provider === 'claude' ? 'bg-[#D97757]' : 'bg-[#3941FF]'}`} title={providerName(conversation.ref.provider)} />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${conversation.ref.provider === 'claude' ? 'bg-[#D97757]' : 'bg-[#3941FF]'}`} />
+                              </TooltipTrigger>
+                              <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
+                            </Tooltip>
                           </button>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>

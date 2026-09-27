@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarMenuAction } from '@/components/ui/sidebar';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ConversationRef, HarnessStatus, ProviderId } from '@/shared/conversation-contract';
 import { DEFAULT_CODING_AGENT } from '@/shared/settings-contract';
 
@@ -61,7 +62,12 @@ export function NewConversationMenu({ projectName, projectPath, providers, onCre
 
   const busy = pending !== null || resolvingDefault;
   return <>
-    <SidebarMenuAction aria-busy={busy} aria-label={`New chat in ${projectName}`} className="text-sidebar-foreground/45 hover:text-sidebar-foreground" disabled={available.length === 0 || busy} onClick={() => void createWithDefault()} showOnHover title={`New chat in ${projectName}`}><Plus /></SidebarMenuAction>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <SidebarMenuAction aria-busy={busy} aria-label={`New chat in ${projectName}`} className="text-sidebar-foreground/45 hover:text-sidebar-foreground" disabled={available.length === 0 || busy} onClick={() => void createWithDefault()} showOnHover><Plus /></SidebarMenuAction>
+      </TooltipTrigger>
+      <TooltipContent side="right">New chat in {projectName}</TooltipContent>
+    </Tooltip>
     <Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
       <DialogContent className="rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-2xl sm:max-w-sm" overlayClassName="bg-black/45 backdrop-blur-sm">
         <DialogHeader>

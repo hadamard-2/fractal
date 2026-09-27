@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
@@ -145,8 +145,11 @@ describe('NavMain', () => {
     expect(codexChat.textContent).toBe('Review IPC');
     expect(claudeChat.querySelector('[title="Working elsewhere"]')).toBeNull();
     expect(codexChat.querySelector('[title="Waiting for you"]')).toBeNull();
-    expect(claudeChat.querySelector('[title="Claude Code"]')).toBeTruthy();
-    expect(codexChat.querySelector('[title="Codex"]')).toBeTruthy();
+    const claudeMarker = claudeChat.querySelector('[data-slot="tooltip-trigger"]');
+    expect(claudeMarker).toBeTruthy();
+    expect(codexChat.querySelector('[data-slot="tooltip-trigger"]')).toBeTruthy();
+    fireEvent.pointerMove(claudeMarker as Element);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Claude Code');
   });
 
   test('keeps an explicitly collapsed project closed when its summaries refresh', async () => {

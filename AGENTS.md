@@ -51,6 +51,8 @@ The window is frameless. Chrome that would normally come from the OS titlebar li
 
 **Never show the OS default scrollbar, anywhere.** Every scrolling surface uses the thin, trackless thumb defined globally on `*::-webkit-scrollbar` in `src/index.css`. Don't add per-element scrollbar styling, and never set `scrollbar-width` or `scrollbar-color` on anything — Chromium drops the `::-webkit-scrollbar` rules on any element that sets either, which brings the default back.
 
+**Tooltips use `components/ui/tooltip.tsx`, never a native `title` attribute.** Its styling is the app's one tooltip look (a rounded pill on our popover tokens, no arrow). Restyle it there rather than per call site, and don't use `title` for hover hints, since the OS draws those in its own style.
+
 ## Gotchas
 
 Before touching the build config, read [docs/environment-notes.md](docs/environment-notes.md) — the version pins there are load-bearing and break in non-obvious ways. Most relevant: `vite.renderer.config.mts` is `.mts` deliberately (Tailwind v4's plugin is ESM-only), and `@vitejs/plugin-react` must stay on 4.x.
