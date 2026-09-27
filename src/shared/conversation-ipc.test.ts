@@ -128,4 +128,12 @@ describe('native conversation event validation', () => {
     const sparseChoices = new Array(1);
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'codex', prompt: 'Choose', fieldId: 'choice', choices: sparseChoices, allowFreeText: false, status: 'open' } })).toThrow('Invalid conversation stream event');
   });
+
+  test('accepts inline images on user messages and actions, and rejects unknown image types', () => {
+    const images = [{ mediaType: 'image/png' as const, data: 'AAA' }];
+    const withImages = { ...turn, userMessage: { ...turn.userMessage, images }, blocks: [{ ...turn.blocks[1], actions: [{ ...action, images }] }] };
+    expect(parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: withImages })).toMatchObject({ turn: withImages });
+    const svg = { ...turn, userMessage: { ...turn.userMessage, images: [{ mediaType: 'image/svg+xml', data: 'AAA' }] } };
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: svg })).toThrow('Invalid conversation stream event');
+  });
 });

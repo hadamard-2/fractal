@@ -1,15 +1,18 @@
-import type {
-  AgentAction,
-  BlockingRequest,
-  CaptureCompleteness,
-  ConversationRef,
-  ConversationRuntime,
-  ConversationStreamEvent,
-  ConversationSummary,
-  ConversationTurn,
-  ProviderId,
-  TurnBlock,
-  UserDecision,
+import {
+  CONVERSATION_IMAGE_TYPES,
+  MAX_CONVERSATION_IMAGE_DATA_LENGTH,
+  type AgentAction,
+  type BlockingRequest,
+  type CaptureCompleteness,
+  type ConversationImage,
+  type ConversationRef,
+  type ConversationRuntime,
+  type ConversationStreamEvent,
+  type ConversationSummary,
+  type ConversationTurn,
+  type ProviderId,
+  type TurnBlock,
+  type UserDecision,
 } from '@/shared/conversation-contract';
 
 export const CONVERSATION_CHANNELS = {
@@ -157,6 +160,17 @@ export function parseUserDecision(value: unknown): UserDecision {
   return cloneUserDecision(value);
 }
 
+function cloneImages(value: unknown): { images?: ConversationImage[] } {
+  if (value === undefined) return {};
+  if (!denseArray(value)) invalidEvent();
+  return {
+    images: mapDense(value, (image) => {
+      if (!plainObject(image) || !(CONVERSATION_IMAGE_TYPES as readonly unknown[]).includes(image.mediaType) || !nonblankText(image.data, MAX_CONVERSATION_IMAGE_DATA_LENGTH)) invalidEvent();
+      return { mediaType: image.mediaType as ConversationImage['mediaType'], data: image.data };
+    }),
+  };
+}
+
 function cloneAction(value: unknown): AgentAction {
   if (!plainObject(value) || !nonblankText(value.id) || !nonblankText(value.nativeId) || !provider(value.provider) || !text(value.status) || !completeness(value.captureCompleteness) || !['requested', 'awaiting-approval', 'running', 'completed', 'failed', 'denied', 'interrupted'].includes(value.status)) invalidEvent();
   const base = {
@@ -167,6 +181,7 @@ function cloneAction(value: unknown): AgentAction {
     captureCompleteness: value.captureCompleteness,
     ...(value.startedAt === undefined ? {} : finiteNumber(value.startedAt) ? { startedAt: value.startedAt } : invalidEvent()),
     ...(value.completedAt === undefined ? {} : finiteNumber(value.completedAt) ? { completedAt: value.completedAt } : invalidEvent()),
+    ...cloneImages(value.images),
   };
   switch (value.kind) {
     case 'file-read':
@@ -249,7 +264,7 @@ function cloneTurn(value: unknown): ConversationTurn {
   return {
     id: value.id,
     nativeId: value.nativeId,
-    userMessage: { id: value.userMessage.id as string, text: value.userMessage.text as string, ...(value.userMessage.createdAt === undefined ? {} : { createdAt: value.userMessage.createdAt as number }) },
+    userMessage: { id: value.userMessage.id as string, text: value.userMessage.text as string, ...(value.userMessage.createdAt === undefined ? {} : { createdAt: value.userMessage.createdAt as number }), ...cloneImages(value.userMessage.images) },
     blocks: mapDense(value.blocks, cloneTurnBlock),
     status: value.status as 'active' | 'completed' | 'interrupted' | 'failed',
     captureCompleteness: value.captureCompleteness,

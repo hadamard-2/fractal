@@ -2,6 +2,7 @@ import { ChevronRight, CircleAlert, CircleCheck, CirclePause, LoaderCircle } fro
 import { useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { ConversationImages } from './conversation-images';
 import { HighlightedCommand } from './highlighted-command';
 import type { AgentAction as AgentActionData, CaptureCompleteness, ProviderId } from '@/shared/conversation-contract';
 
@@ -87,6 +88,7 @@ export function AgentAction({ action }: { action: AgentActionData }) {
       </div>
       <div className="ml-5 space-y-2">
         <ActionDetails action={action} />
+        {action.images && <ConversationImages images={action.images} />}
         <CompletenessNotice completeness={action.captureCompleteness} />
       </div>
     </li>

@@ -2,16 +2,17 @@ import type {
   ActionStatus,
   BlockingRequest,
   CaptureCompleteness,
+  ConversationImage,
   ProviderId,
   UserDecision,
 } from '@/shared/conversation-contract';
 
 export type NativeEventPayload =
-  | { kind: 'turn-started'; turnId: string; userMessageId: string; text: string; createdAt?: number }
+  | { kind: 'turn-started'; turnId: string; userMessageId: string; text: string; createdAt?: number; images?: ConversationImage[] }
   // concludesTurn: the provider marked the message this text belongs to as the one that ended the turn.
   | { kind: 'assistant-text'; turnId: string; blockId?: string; text: string; final: boolean; concludesTurn?: true }
   | { kind: 'action-requested'; turnId: string; actionId: string; actionKind: 'file-read' | 'file-edit' | 'command' | 'search' | 'tool' | 'subagent'; label: string; parentActionId?: string; detail?: string }
-  | { kind: 'action-updated'; turnId: string; actionId: string; status: ActionStatus; output?: string; exitCode?: number; patch?: string }
+  | { kind: 'action-updated'; turnId: string; actionId: string; status: ActionStatus; output?: string; exitCode?: number; patch?: string; images?: ConversationImage[] }
   | { kind: 'request-opened'; turnId: string; request: BlockingRequest }
   | { kind: 'request-resolved'; turnId: string; requestId: string; decision: UserDecision }
   | { kind: 'turn-finished'; turnId: string; status: 'completed' | 'interrupted' | 'failed' }

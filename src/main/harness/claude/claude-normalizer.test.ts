@@ -285,4 +285,24 @@ describe('normalizeClaudeRecord', () => {
     normalizeClaudeStreamRecord({ type: 'assistant', uuid: 'r2', parentUuid: 'u1', message: { id: 'm2', role: 'assistant', stop_reason: null, content: [{ type: 'text', text: 'Running it.' }] } }, 2, context, 'u1');
     expect(stream({ type: 'message_delta', delta: { stop_reason: 'tool_use' } })).toEqual([]);
   });
+
+  test('keeps injected isMeta user text out of the transcript and in its parent turn', () => {
+    const context = createClaudeNormalizationContext();
+    normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Look at this' } }, 0, context);
+    const meta = normalizeClaudeRecord({ type: 'user', uuid: 'm1', parentUuid: 'u1', isMeta: true, message: { role: 'user', content: '[Image: original 2560x1540]' } }, 1, context);
+    const reply = normalizeClaudeRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'm1', message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'Seen.' }] } }, 2, context);
+    expect(meta).toEqual([]);
+    expect(reply).toMatchObject([{ payload: { kind: 'assistant-text', turnId: 'u1' } }]);
+  });
+
+  test('carries inline images on the user message and on the tool result', () => {
+    const context = createClaudeNormalizationContext();
+    const image = (data: string, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+    const user = normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: [image('AAA', 'image/webp'), { type: 'text', text: 'See?' }, { type: 'image', source: { type: 'url', url: 'https://x' } }] } }, 0, context);
+    expect(user[0]?.payload).toMatchObject({ kind: 'turn-started', text: 'See?', images: [{ mediaType: 'image/webp', data: 'AAA' }] });
+    expect(user.slice(1)).toMatchObject([{ payload: { kind: 'unsupported' } }]);
+
+    const result = normalizeClaudeRecord({ type: 'user', uuid: 't1', parentUuid: 'u1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-1', content: [image('BBB')] }] } }, 1, context);
+    expect(result).toMatchObject([{ payload: { kind: 'action-updated', actionId: 'read-1', status: 'completed', images: [{ mediaType: 'image/png', data: 'BBB' }] } }]);
+  });
 });

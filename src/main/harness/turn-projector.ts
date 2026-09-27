@@ -2,6 +2,7 @@ import type {
   ActionStatus,
   AgentAction,
   CaptureCompleteness,
+  ConversationImage,
   ConversationTurn,
   TurnBlock,
 } from '@/shared/conversation-contract';
@@ -14,6 +15,7 @@ type PendingActionResult = {
   output?: string;
   exitCode?: number;
   patch?: string;
+  images?: ConversationImage[];
   observedAt: number;
 };
 
@@ -161,6 +163,7 @@ export class TurnProjector {
         id: payload.userMessageId,
         text: payload.text,
         ...(payload.createdAt === undefined ? {} : { createdAt: payload.createdAt }),
+        ...(payload.images === undefined ? {} : { images: payload.images }),
       },
       blocks: unanchored.blocks,
       status: 'active',
@@ -288,6 +291,7 @@ export class TurnProjector {
       ...(event.payload.output === undefined ? {} : { output: event.payload.output }),
       ...(event.payload.exitCode === undefined ? {} : { exitCode: event.payload.exitCode }),
       ...(event.payload.patch === undefined ? {} : { patch: event.payload.patch }),
+      ...(event.payload.images === undefined ? {} : { images: event.payload.images }),
       observedAt: event.observedAt,
     };
   }
@@ -302,12 +306,14 @@ export class TurnProjector {
       ...(incoming.output === undefined && previous.output !== undefined ? { output: previous.output } : {}),
       ...(incoming.exitCode === undefined && previous.exitCode !== undefined ? { exitCode: previous.exitCode } : {}),
       ...(incoming.patch === undefined && previous.patch !== undefined ? { patch: previous.patch } : {}),
+      ...(incoming.images === undefined && previous.images !== undefined ? { images: previous.images } : {}),
     };
   }
 
   private applyActionResult(action: AgentAction, result: PendingActionResult): void {
     action.status = result.status;
     if (isTerminalAction(action.status)) action.completedAt = result.observedAt;
+    if (result.images !== undefined) action.images = result.images;
     if (action.kind === 'command') {
       if (result.output !== undefined) action.output = result.output;
       if (result.exitCode !== undefined) action.exitCode = result.exitCode;

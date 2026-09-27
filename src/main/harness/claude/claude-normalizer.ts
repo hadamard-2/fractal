@@ -1,4 +1,4 @@
-import type { BlockingRequest, UserDecision } from '@/shared/conversation-contract';
+import { CONVERSATION_IMAGE_TYPES, MAX_CONVERSATION_IMAGE_DATA_LENGTH, type BlockingRequest, type ConversationImage, type UserDecision } from '@/shared/conversation-contract';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
 
 export interface ClaudeHistoryRecord {
@@ -41,7 +41,8 @@ class NormalizationContext implements ClaudeNormalizationContext {
     const role = stringValue(message?.role);
     const content = message?.content;
     const isToolResultCarrier = role === 'user' && hasToolResult(content);
-    const ownTurn = type === 'user' && role === 'user' && !isToolResultCarrier ? uuid : undefined;
+    // An isMeta record is text the harness injected for the model, not a prompt, so it stays in its parent's turn.
+    const ownTurn = type === 'user' && role === 'user' && !isToolResultCarrier && record.isMeta !== true ? uuid : undefined;
     const turnId = ownTurn ?? (parentUuid ? this.turnByNativeId.get(parentUuid) : undefined);
 
     if (uuid && turnId) this.turnByNativeId.set(uuid, turnId);
@@ -272,6 +273,8 @@ function event(nativeId: string, nativeType: string, observedAt: number, payload
   return { provider: 'claude', nativeId, nativeType, observedAt, payload };
 }
 
+// A user record Claude Code flags isMeta is text it injected for the model (skill instructions,
+// image scaling notes, command caveats), so it is dropped along with the types below.
 // Record types Claude Code writes to a transcript that carry no conversation content:
 // session state, titles, cost, file-history checkpoints. Observed in real transcripts,
 // not documented, so a new type still surfaces as unsupported until it is listed here.
@@ -297,6 +300,7 @@ function isClaudeBookkeepingRecord(record: ClaudeHistoryRecord): boolean {
   const type = stringValue(record.type);
   if (type === undefined) return false;
   if (BOOKKEEPING_RECORD_TYPES.has(type)) return true;
+  if (type === 'user' && record.isMeta === true) return true;
   if (type === 'attachment') return BOOKKEEPING_ATTACHMENT_TYPES.has(stringValue(objectValue(record.attachment)?.type) ?? '');
   if (type === 'system') return BOOKKEEPING_SYSTEM_SUBTYPES.has(stringValue(record.subtype) ?? '');
   return false;
@@ -328,6 +332,16 @@ function unsupported(nativeId: string, nativeType: string, observedAt: number, s
   });
 }
 
+/** An inline base64 image block; anything else (a URL source, an unknown type, oversize data) is not one. */
+function imageValue(value: Record<string, unknown> | undefined): ConversationImage | undefined {
+  if (value?.type !== 'image') return undefined;
+  const source = objectValue(value.source);
+  const mediaType = CONVERSATION_IMAGE_TYPES.find((type) => type === source?.media_type);
+  const data = stringValue(source?.data);
+  if (source?.type !== 'base64' || !mediaType || !data || data.length > MAX_CONVERSATION_IMAGE_DATA_LENGTH) return undefined;
+  return { mediaType, data };
+}
+
 function isUserMessage(message: Record<string, unknown> | undefined): message is Record<string, unknown> & { content: unknown } {
   return stringValue(message?.role) === 'user' && message?.content !== undefined;
 }
@@ -352,11 +366,17 @@ function normalizeUserContent(
   }
 
   const text: string[] = [];
+  const images: ConversationImage[] = [];
   const unsupportedEvents: NativeEvent[] = [];
   for (let index = 0; index < content.length; index += 1) {
     const value = objectValue(content[index]);
     if (value?.type === 'text' && typeof value.text === 'string') {
       text.push(value.text);
+      continue;
+    }
+    const image = imageValue(value);
+    if (image) {
+      images.push(image);
       continue;
     }
     const blockType = stringValue(value?.type) ?? 'unknown-content';
@@ -366,6 +386,7 @@ function normalizeUserContent(
   return [event(uuid, nativeType, observedAt, {
     kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: text.join('\n'),
     ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
+    ...(images.length > 0 ? { images } : {}),
   }), ...unsupportedEvents];
 }
 
@@ -419,6 +440,9 @@ function toolResultEvents(
     const value = objectValue(part);
     return value?.type === 'text' && typeof value.text === 'string';
   }).length;
+  const images = content.map((part) => imageValue(objectValue(part))).filter((image) => image !== undefined);
+  // Images ride on the update that carries the final status.
+  const withImages = images.length > 0 ? { images } : {};
   const result: NativeEvent[] = [];
   const text: string[] = [];
   let textCount = 0;
@@ -433,15 +457,16 @@ function toolResultEvents(
         actionId,
         status: textCount === validTextCount ? (block?.is_error === true ? 'failed' : 'completed') : 'running',
         output: text.join('\n'),
+        ...(textCount === validTextCount ? withImages : {}),
       }));
-    } else {
+    } else if (!imageValue(value)) {
       const nativeType = stringValue(value?.type) ?? 'unknown-content';
       result.push(unsupported(`${uuid}:tool-result:${parentIndex}:${nativeType}:${index}`, nativeType, observedAt, value ?? {}, turnId));
     }
   }
   if (validTextCount === 0) {
     result.push(event(baseId, 'tool_result', observedAt, {
-      kind: 'action-updated', turnId, actionId, status: block?.is_error === true ? 'failed' : 'completed',
+      kind: 'action-updated', turnId, actionId, status: block?.is_error === true ? 'failed' : 'completed', ...withImages,
     }));
   }
   return result;

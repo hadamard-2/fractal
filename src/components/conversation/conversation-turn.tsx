@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type { ConversationTurn as ConversationTurnData, TurnBlock, UserDecision } from '@/shared/conversation-contract';
 import { AgentAction, UnsupportedActivity } from './agent-action';
 import { BlockingRequest } from './blocking-request';
+import { ConversationImages } from './conversation-images';
 import { WorkPacket, workPacketSummary } from './work-packet';
 
 type ResolveRequest = (requestId: string, decision: UserDecision) => void | Promise<void>;
@@ -68,7 +69,8 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
   return (
     <article aria-label="Conversation turn" className="space-y-4">
       <Message from="user">
-        <MessageContent className="font-medium leading-6">{turn.userMessage.text}</MessageContent>
+        {turn.userMessage.images && <ConversationImages className="justify-end" images={turn.userMessage.images} />}
+        {turn.userMessage.text && <MessageContent className="font-medium leading-6">{turn.userMessage.text}</MessageContent>}
       </Message>
       <div className="space-y-4" aria-label="Agent response">
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}

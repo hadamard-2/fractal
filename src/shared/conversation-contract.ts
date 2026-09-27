@@ -61,6 +61,16 @@ export type ActionStatus =
   | 'denied'
   | 'interrupted';
 
+export const CONVERSATION_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+/** Longest base64 payload carried inline; larger images are left out rather than rejected. */
+export const MAX_CONVERSATION_IMAGE_DATA_LENGTH = 8_000_000;
+
+export interface ConversationImage {
+  mediaType: (typeof CONVERSATION_IMAGE_TYPES)[number];
+  /** Base64 image bytes. */
+  data: string;
+}
+
 export interface ActionBase {
   id: string;
   nativeId: string;
@@ -69,6 +79,7 @@ export interface ActionBase {
   startedAt?: number;
   completedAt?: number;
   captureCompleteness: CaptureCompleteness;
+  images?: ConversationImage[];
 }
 
 export type AgentAction =
@@ -100,7 +111,7 @@ export type TurnBlock =
 export interface ConversationTurn {
   id: string;
   nativeId: string;
-  userMessage: { id: string; text: string; createdAt?: number };
+  userMessage: { id: string; text: string; createdAt?: number; images?: ConversationImage[] };
   blocks: TurnBlock[];
   status: 'active' | 'completed' | 'interrupted' | 'failed';
   captureCompleteness: CaptureCompleteness;
