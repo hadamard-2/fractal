@@ -114,7 +114,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div aria-label="Conversation transcript" aria-live="off" className="scrollbar-minimal min-h-0 flex-1 overflow-y-auto" onScroll={() => { remember(); if (position.current.distanceFromBottom <= 96) setNewActivity(false); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
+      <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto" onScroll={() => { remember(); if (position.current.distanceFromBottom <= 96) setNewActivity(false); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
         <div className="relative w-full" style={{ height: size }}>
           {virtualizer.getVirtualItems().map((item) => <div className={`absolute top-0 left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start}px)` }}>
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />

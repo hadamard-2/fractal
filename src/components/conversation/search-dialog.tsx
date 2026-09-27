@@ -71,7 +71,7 @@ export function SearchDialog({
             </button>
           )}
         </div>
-        <div className="scrollbar-minimal min-h-0 flex-1 overflow-y-auto px-3 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
           <p className="px-2 pb-2.5 text-sm text-muted-foreground">{query.trim() ? 'Results' : 'Recent chats'}</p>
           {results.length === 0 ? (
             <p className="px-2 py-7 text-center text-sm text-muted-foreground" role="status">No conversations found.</p>

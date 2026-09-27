@@ -34,7 +34,7 @@ export function TerminalTabs({ tabs, selectedId, onSelect, onClose }: {
   onClose: (id: string) => void;
 }) {
   return (
-    <div aria-label="Right workspace tabs" className="scrollbar-minimal flex min-w-0 items-center gap-1 overflow-x-auto" role="tablist">
+    <div aria-label="Right workspace tabs" className="flex min-w-0 items-center gap-1 overflow-x-auto" role="tablist">
       {tabs.map((tab) => {
         const label = terminalTabLabel(tab, tabs.length);
         const selected = selectedId === tab.id;

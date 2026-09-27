@@ -47,6 +47,10 @@ src/
 
 The window is frameless. Chrome that would normally come from the OS titlebar lives in `components/title-bar.tsx`, and anything draggable needs explicit `-webkit-app-region` handling.
 
+## UI conventions
+
+**Never show the OS default scrollbar, anywhere.** Every scrolling surface uses the thin, trackless thumb defined globally on `*::-webkit-scrollbar` in `src/index.css`. Don't add per-element scrollbar styling, and never set `scrollbar-width` or `scrollbar-color` on anything — Chromium drops the `::-webkit-scrollbar` rules on any element that sets either, which brings the default back.
+
 ## Gotchas
 
 Before touching the build config, read [docs/environment-notes.md](docs/environment-notes.md) — the version pins there are load-bearing and break in non-obvious ways. Most relevant: `vite.renderer.config.mts` is `.mts` deliberately (Tailwind v4's plugin is ESM-only), and `@vitejs/plugin-react` must stay on 4.x.

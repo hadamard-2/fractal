@@ -94,7 +94,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
         {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}
         {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
         <PromptInput onSubmit={handleSubmit}>
-          <PromptInputBody><PromptInputTextarea aria-label="Message" className="scrollbar-minimal" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
+          <PromptInputBody><PromptInputTextarea aria-label="Message" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
           <PromptInputFooter className="justify-end">
             {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
               <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>

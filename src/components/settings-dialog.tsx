@@ -81,7 +81,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="scrollbar-minimal flex max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-[880px] flex-col gap-0 overflow-y-auto bg-card p-0 sm:min-h-[min(420px,calc(100vh-2rem))] sm:max-w-[880px]" showCloseButton={false}>
+      <DialogContent className="flex max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-[880px] flex-col gap-0 overflow-y-auto bg-card p-0 sm:min-h-[min(420px,calc(100vh-2rem))] sm:max-w-[880px]" showCloseButton={false}>
         <DialogHeader className="flex-row items-center justify-between py-4 pr-6 pl-6 text-left sm:pr-8">
           <DialogTitle className="text-xl font-medium">Settings</DialogTitle>
           <DialogDescription className="sr-only">
