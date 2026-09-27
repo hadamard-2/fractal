@@ -91,7 +91,7 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
     <article aria-label="Conversation turn" className="space-y-4">
       <Message from="user">
         {turn.userMessage.images && <ConversationImages className="justify-end" images={turn.userMessage.images} />}
-        {turn.userMessage.text && <MessageContent className="font-medium leading-6">{turn.userMessage.text}</MessageContent>}
+        {turn.userMessage.text && <MessageContent><MessageResponse className="max-w-none text-sm leading-6">{turn.userMessage.text}</MessageResponse></MessageContent>}
       </Message>
       <div className="space-y-4" aria-label="Agent response">
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
