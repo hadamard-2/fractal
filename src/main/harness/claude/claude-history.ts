@@ -203,7 +203,7 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
     if (!projectPath) return undefined;
     const createdAt = timestampAt(firstRecord) ?? fileStat.birthtimeMs;
     const updatedAt = timestampAt(lastRecord) ?? fileStat.mtimeMs;
-    const title = titleFrom(first.records) ?? 'Claude conversation';
+    const title = namedTitle([...first.records, ...last.records]) ?? titleFrom(first.records) ?? 'Claude conversation';
     const captureCompleteness: CaptureCompleteness = first.incomplete || last.incomplete || first.malformed || last.malformed || first.unsupported || last.unsupported
       ? 'partial'
       : fileStat.size > SUMMARY_SCAN_BYTES * 2 ? 'unknown' : 'complete';
@@ -251,6 +251,16 @@ function scanRecords(bytes: Uint8Array, startsAtBoundary: boolean, reachesEnd: b
     incomplete: reachesEnd && decoder.finish().kind === 'incomplete',
     unsupported: records.some((record) => classifyClaudeRecord(record) === 'unsupported'),
   };
+}
+
+// Claude Code appends a custom-title record when a session is renamed and an ai-title record
+// when it names one itself; the latest of each wins, and a rename beats a generated name.
+function namedTitle(records: ClaudeHistoryRecord[]): string | undefined {
+  const latest = (type: string, key: string) => records
+    .filter((record) => record.type === type)
+    .map((record) => record[key])
+    .findLast((value): value is string => typeof value === 'string' && value.trim() !== '');
+  return latest('custom-title', 'customTitle') ?? latest('ai-title', 'aiTitle');
 }
 
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {

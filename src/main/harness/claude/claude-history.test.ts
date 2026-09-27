@@ -236,6 +236,18 @@ describe('Claude native history', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  test('titles a conversation by its latest rename, then its generated name, then its first prompt', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-summary-named-'));
+    const user = (id: string) => `{"type":"user","uuid":"${id}-user","cwd":"/work/named","message":{"role":"user","content":"First prompt"}}\n`;
+    await writeFile(path.join(directory, 'renamed.jsonl'), `${user('renamed')}{"type":"ai-title","aiTitle":"Generated"}\n{"type":"custom-title","customTitle":"Old name"}\n{"type":"custom-title","customTitle":"New name"}\n`);
+    await writeFile(path.join(directory, 'generated.jsonl'), `${user('generated')}{"type":"ai-title","aiTitle":"Generated"}\n`);
+    await writeFile(path.join(directory, 'plain.jsonl'), user('plain'));
+
+    const titles = Object.fromEntries((await discoverClaudeConversations(directory)).map((item) => [item.ref.nativeSessionId, item.summary.title]));
+    expect(titles).toEqual({ renamed: 'New name', generated: 'Generated', plain: 'First prompt' });
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('lowers discovery completeness for well-formed unknown sampled records', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-summary-unknown-'));
     await writeFile(path.join(directory, 'unknown.jsonl'), '{"type":"user","uuid":"unknown-user","sessionId":"unknown-session","cwd":"/work/unknown","message":{"role":"user","content":"Known title"}}\n{"type":"future_event","uuid":"future"}\n');

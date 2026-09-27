@@ -89,6 +89,9 @@ export function normalizeClaudeRecord(
   const observedAt = timestampValue(record.timestamp, ordinal);
   const turnId = context.recordTurn(record, uuid) ?? stringValue(record.parentUuid) ?? uuid;
 
+  // After recordTurn: later records can name a bookkeeping record as their parent.
+  if (isClaudeBookkeepingRecord(record)) return [];
+
   if (nativeType === 'user' && isUserMessage(message) && !hasToolResult(message.content)) {
     return normalizeUserContent(message, uuid, nativeType, turnId, observedAt);
   }
@@ -145,6 +148,9 @@ function normalizeContent(
     }
     if (blockType === 'thinking') {
       const thinking = stringValue(block?.thinking);
+      // Claude Code can persist only the block's signature, without the reasoning text;
+      // such a block has nothing to show, and a placeholder would split the work packet.
+      if (thinking === '') continue;
       if (thinking !== undefined) {
         events.push(event(`${uuid}:thinking:${index}`, blockType, observedAt, {
           kind: 'assistant-text', turnId, blockId: `${uuid}:thinking:${index}`,
@@ -241,6 +247,36 @@ function normalizePermission(record: ClaudeHistoryRecord, turnId: string, uuid: 
 
 function event(nativeId: string, nativeType: string, observedAt: number, payload: NativeEventPayload): NativeEvent {
   return { provider: 'claude', nativeId, nativeType, observedAt, payload };
+}
+
+// Record types Claude Code writes to a transcript that carry no conversation content:
+// session state, titles, cost, file-history checkpoints. Observed in real transcripts,
+// not documented, so a new type still surfaces as unsupported until it is listed here.
+const BOOKKEEPING_RECORD_TYPES = new Set([
+  'agent-name', 'ai-title', 'artifact-autoreact-ledger', 'artifact-comment-monitor', 'atis-latch',
+  'bridge-session', 'cost-state', 'custom-title', 'file-history-delta', 'file-history-snapshot',
+  'frame-link', 'last-prompt', 'mode', 'permission-mode', 'pr-link', 'queue-operation', 'relocated',
+  'worktree-state',
+]);
+
+// Context Claude Code injects for the model (reminders, tool and skill listings, environment).
+// File, diagnostic, and queued-prompt attachments are left out: those can carry user content.
+const BOOKKEEPING_ATTACHMENT_TYPES = new Set([
+  'agent_listing_delta', 'auto_mode', 'auto_mode_exit', 'command_permissions', 'date', 'date_change',
+  'deferred_tools_delta', 'deferred_tools_record', 'environment', 'hook_additional_context', 'hook_success',
+  'instructions', 'mcp_instructions_delta', 'model', 'nested_memory', 'prompt_snapshot', 'remote_session_change',
+  'session_context', 'silent_turn_reminder', 'skill_listing', 'task_reminder', 'thinking_drop', 'total_tokens_reminder',
+]);
+
+const BOOKKEEPING_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration']);
+
+function isClaudeBookkeepingRecord(record: ClaudeHistoryRecord): boolean {
+  const type = stringValue(record.type);
+  if (type === undefined) return false;
+  if (BOOKKEEPING_RECORD_TYPES.has(type)) return true;
+  if (type === 'attachment') return BOOKKEEPING_ATTACHMENT_TYPES.has(stringValue(objectValue(record.attachment)?.type) ?? '');
+  if (type === 'system') return BOOKKEEPING_SYSTEM_SUBTYPES.has(stringValue(record.subtype) ?? '');
+  return false;
 }
 
 export function unsupportedClaudeRecord(ordinal: number, nativeType = 'malformed-json'): NativeEvent {

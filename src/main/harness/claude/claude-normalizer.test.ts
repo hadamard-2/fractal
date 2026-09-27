@@ -231,4 +231,34 @@ describe('normalizeClaudeRecord', () => {
     expect(JSON.stringify(events)).not.toContain('hidden');
     expect(normalizeClaudeRecord(record, 99, createClaudeNormalizationContext()).map((event) => event.nativeId)).toEqual(events.map((event) => event.nativeId));
   });
+
+  test('drops bookkeeping records but keeps unknown and content-bearing ones unsupported', () => {
+    const context = createClaudeNormalizationContext();
+    const bookkeeping = [
+      { type: 'custom-title', customTitle: 'Named', sessionId: 's' },
+      { type: 'cost-state', totalCostUSD: 1 },
+      { type: 'attachment', uuid: 'a1', attachment: { type: 'total_tokens_reminder' } },
+      { type: 'system', uuid: 's1', subtype: 'stop_hook_summary' },
+    ];
+    for (const [ordinal, record] of bookkeeping.entries()) expect(normalizeClaudeRecord(record, ordinal, context)).toEqual([]);
+    const kept = [
+      { type: 'future_event', uuid: 'f' },
+      { type: 'attachment', uuid: 'a2', attachment: { type: 'queued_command', prompt: 'hi' } },
+      { type: 'system', uuid: 's2', subtype: 'api_error' },
+    ];
+    for (const record of kept) expect(normalizeClaudeRecord(record, 9, context)).toMatchObject([{ payload: { kind: 'unsupported' } }]);
+  });
+
+  test('keeps the turn chain through a dropped bookkeeping record', () => {
+    const context = createClaudeNormalizationContext();
+    normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Hi' } }, 0, context);
+    normalizeClaudeRecord({ type: 'attachment', uuid: 'a1', parentUuid: 'u1', attachment: { type: 'date' } }, 1, context);
+    const reply = normalizeClaudeRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Hello' }] } }, 2, context);
+    expect(reply).toMatchObject([{ payload: { kind: 'assistant-text', turnId: 'u1' } }]);
+  });
+
+  test('drops thinking persisted without its text', () => {
+    const events = normalizeClaudeRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }] } }, 0, createClaudeNormalizationContext());
+    expect(events).toEqual([]);
+  });
 });
