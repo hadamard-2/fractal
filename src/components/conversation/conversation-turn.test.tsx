@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
-import { describe, expect, test } from 'vitest';
-import type { ConversationTurn, TurnBlock } from '@/shared/conversation-contract';
-import { splitTurnWork } from './conversation-turn';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, test } from 'vitest';
+import type { ConversationTurn as ConversationTurnData, TurnBlock } from '@/shared/conversation-contract';
+import { ConversationTurn, splitTurnWork } from './conversation-turn';
+
+afterEach(cleanup);
 
 const prose = (id: string, concludesTurn = false): TurnBlock => ({ id, kind: 'assistant-prose', text: id, provider: 'claude', ...(concludesTurn ? { concludesTurn: true as const } : {}) });
 const packet = (id: string): TurnBlock => ({ id, kind: 'work-packet', status: 'completed', actions: [] });
-const turn = (blocks: TurnBlock[], status: ConversationTurn['status'] = 'completed'): ConversationTurn => ({
+const turn = (blocks: TurnBlock[], status: ConversationTurnData['status'] = 'completed'): ConversationTurnData => ({
   id: 't', nativeId: 't', userMessage: { id: 'u', text: 'Go' }, blocks, status, captureCompleteness: 'complete',
 });
 const ids = (blocks: TurnBlock[]) => blocks.map((block) => block.id);
@@ -29,5 +32,19 @@ describe('splitTurnWork', () => {
     expect(splitTurnWork(turn(blocks, 'active')).work).toEqual([]);
     expect(splitTurnWork(turn([packet('p1'), prose('a1')], 'interrupted')).work).toEqual([]);
     expect(splitTurnWork(turn([prose('a1', true)])).work).toEqual([]);
+  });
+});
+
+describe('ConversationTurn copy button', () => {
+  const copyButton = () => screen.queryByRole('button', { name: /Copy response/ });
+
+  test('appears once an answer is recorded, even while the turn still reads as active', () => {
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([packet('p1'), prose('a1', true)], 'active')} />);
+    expect(copyButton()).toBeTruthy();
+  });
+
+  test('stays hidden on a running turn with no recorded answer', () => {
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([packet('p1'), prose('status')], 'active')} />);
+    expect(copyButton()).toBeNull();
   });
 });
