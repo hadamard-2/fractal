@@ -215,7 +215,8 @@ function cloneTurnBlock(value: unknown): TurnBlock {
   switch (value.kind) {
     case 'assistant-prose':
       if (!text(value.text) || !provider(value.provider)) invalidEvent();
-      return { id: value.id, kind: 'assistant-prose', text: value.text, provider: value.provider };
+      if (value.concludesTurn !== undefined && value.concludesTurn !== true) invalidEvent();
+      return { id: value.id, kind: 'assistant-prose', text: value.text, provider: value.provider, ...(value.concludesTurn ? { concludesTurn: true } : {}) };
     case 'work-packet':
       if (!['active', 'completed', 'failed'].includes(String(value.status)) || !denseArray(value.actions)) invalidEvent();
       if (value.startedAt !== undefined && !finiteNumber(value.startedAt)) invalidEvent();

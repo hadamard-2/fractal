@@ -261,4 +261,28 @@ describe('normalizeClaudeRecord', () => {
     const events = normalizeClaudeRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }] } }, 0, createClaudeNormalizationContext());
     expect(events).toEqual([]);
   });
+
+  test('marks text of a transcript message that ended the turn as concluding', () => {
+    const context = createClaudeNormalizationContext();
+    const record = (id: string, stopReason: string, content: unknown[]) => ({ type: 'assistant', uuid: `${id}-record`, parentUuid: 'u1', message: { id, role: 'assistant', stop_reason: stopReason, content } });
+    const working = normalizeClaudeRecord(record('m1', 'tool_use', [{ type: 'text', text: 'Checking.' }]), 0, context);
+    const answer = normalizeClaudeRecord(record('m2', 'end_turn', [{ type: 'text', text: 'Done.' }]), 1, context);
+    const thinking = normalizeClaudeRecord(record('m2', 'end_turn', [{ type: 'thinking', thinking: 'Hmm.' }]), 2, context);
+    expect(working[0]?.payload).not.toHaveProperty('concludesTurn');
+    expect(answer).toMatchObject([{ payload: { kind: 'assistant-text', text: 'Done.', concludesTurn: true } }]);
+    expect(thinking[0]?.payload).not.toHaveProperty('concludesTurn');
+  });
+
+  test('re-emits live text as concluding when its message_delta reports end_turn', () => {
+    const context = createClaudeNormalizationContext();
+    const stream = (event: unknown) => normalizeClaudeStreamRecord({ type: 'stream_event', event }, 0, context, 'u1');
+    stream({ type: 'message_start', message: { id: 'm1', role: 'assistant', content: [] } });
+    const text = normalizeClaudeStreamRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', stop_reason: null, content: [{ type: 'text', text: 'Done.' }] } }, 1, context, 'u1');
+    expect(text[0]?.payload).not.toHaveProperty('concludesTurn');
+    expect(stream({ type: 'message_delta', delta: { stop_reason: 'end_turn' } })).toMatchObject([{ nativeId: text[0]?.nativeId, payload: { text: 'Done.', concludesTurn: true } }]);
+
+    stream({ type: 'message_start', message: { id: 'm2', role: 'assistant', content: [] } });
+    normalizeClaudeStreamRecord({ type: 'assistant', uuid: 'r2', parentUuid: 'u1', message: { id: 'm2', role: 'assistant', stop_reason: null, content: [{ type: 'text', text: 'Running it.' }] } }, 2, context, 'u1');
+    expect(stream({ type: 'message_delta', delta: { stop_reason: 'tool_use' } })).toEqual([]);
+  });
 });

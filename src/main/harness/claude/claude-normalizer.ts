@@ -23,12 +23,15 @@ export interface ClaudeNormalizationContext {
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined;
   streamMessageId?: string;
   streamText?: Map<number, string>;
+  /** Final text of the streaming message, re-emitted as concluding once its stop reason arrives. */
+  streamFinalText?: NativeEvent[];
 }
 
 class NormalizationContext implements ClaudeNormalizationContext {
   private readonly turnByNativeId = new Map<string, string>();
   streamMessageId?: string;
   streamText = new Map<number, string>();
+  streamFinalText: NativeEvent[] = [];
 
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined {
     const uuid = nativeId;
@@ -63,7 +66,13 @@ export function normalizeClaudeStreamRecord(input: unknown, ordinal: number, con
     const id = stringValue(objectValue(streamEvent?.message)?.id);
     context.streamMessageId = id;
     context.streamText?.clear();
+    if (context.streamFinalText) context.streamFinalText.length = 0;
     return [];
+  }
+  // Live output carries a message's stop reason only here, after its text blocks.
+  if (type === 'message_delta') {
+    if (stringValue(objectValue(streamEvent?.delta)?.stop_reason) !== 'end_turn') return [];
+    return (context.streamFinalText ?? []).map(concluding);
   }
   if (type !== 'content_block_delta' || !context.streamMessageId || !Number.isSafeInteger(streamEvent?.index) || (streamEvent?.index as number) < 0) return [];
   const delta = objectValue(streamEvent.delta);
@@ -98,7 +107,16 @@ export function normalizeClaudeRecord(
 
   if ((nativeType === 'assistant' || nativeType === 'user') && message) {
     const content = arrayValue(message.content);
-    if (content) return normalizeContent(record, content, turnId, contentId, nativeType, observedAt);
+    if (content) {
+      const events = normalizeContent(record, content, turnId, contentId, nativeType, observedAt);
+      if (nativeType !== 'assistant') return events;
+      // A transcript records the stop reason on every record of the message; live output leaves it null.
+      if (stringValue(message.stop_reason) === 'end_turn') return events.map(concluding);
+      if (context.streamMessageId !== undefined && context.streamMessageId === stringValue(message.id)) {
+        context.streamFinalText?.push(...events.filter((event) => event.nativeType === 'text' && event.payload.kind === 'assistant-text'));
+      }
+      return events;
+    }
   }
 
   if (nativeType === 'question') {
@@ -243,6 +261,11 @@ function normalizePermission(record: ClaudeHistoryRecord, turnId: string, uuid: 
     }));
   }
   return events;
+}
+
+function concluding(native: NativeEvent): NativeEvent {
+  if (native.nativeType !== 'text' || native.payload.kind !== 'assistant-text') return native;
+  return { ...native, payload: { ...native.payload, concludesTurn: true } };
 }
 
 function event(nativeId: string, nativeType: string, observedAt: number, payload: NativeEventPayload): NativeEvent {

@@ -8,7 +8,8 @@ import type {
 
 export type NativeEventPayload =
   | { kind: 'turn-started'; turnId: string; userMessageId: string; text: string; createdAt?: number }
-  | { kind: 'assistant-text'; turnId: string; blockId?: string; text: string; final: boolean }
+  // concludesTurn: the provider marked the message this text belongs to as the one that ended the turn.
+  | { kind: 'assistant-text'; turnId: string; blockId?: string; text: string; final: boolean; concludesTurn?: true }
   | { kind: 'action-requested'; turnId: string; actionId: string; actionKind: 'file-read' | 'file-edit' | 'command' | 'search' | 'tool' | 'subagent'; label: string; parentActionId?: string; detail?: string }
   | { kind: 'action-updated'; turnId: string; actionId: string; status: ActionStatus; output?: string; exitCode?: number; patch?: string }
   | { kind: 'request-opened'; turnId: string; request: BlockingRequest }

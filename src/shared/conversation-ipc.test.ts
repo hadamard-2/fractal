@@ -24,6 +24,7 @@ const turn = {
   blocks: [
     { id: 'prose-1', kind: 'assistant-prose' as const, text: 'I will run them.', provider: 'codex' as const },
     { id: 'packet-1', kind: 'work-packet' as const, status: 'completed' as const, actions: [action], startedAt: 1, completedAt: 2 },
+    { id: 'prose-2', kind: 'assistant-prose' as const, text: 'Done.', provider: 'codex' as const, concludesTurn: true as const },
   ],
   status: 'completed' as const,
   captureCompleteness: 'complete' as const,

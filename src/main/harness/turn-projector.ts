@@ -207,6 +207,7 @@ export class TurnProjector {
     const existing = this.proseById.get(id);
     if (existing) {
       existing.text = event.payload.text;
+      if (event.payload.concludesTurn) existing.concludesTurn = true;
       return;
     }
 
@@ -215,6 +216,7 @@ export class TurnProjector {
       kind: 'assistant-prose',
       provider: event.provider,
       text: event.payload.text,
+      ...(event.payload.concludesTurn ? { concludesTurn: true as const } : {}),
     };
     this.proseById.set(id, block);
     this.current.blocks.push(block);

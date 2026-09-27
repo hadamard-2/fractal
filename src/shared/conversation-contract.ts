@@ -90,7 +90,7 @@ export type BlockingRequest =
   | { id: string; kind: 'question'; provider: ProviderId; prompt: string; fieldId: string; choices?: Array<{ value: string; label: string }>; allowFreeText: boolean; status: 'open' | 'resolved'; decision?: UserDecision };
 
 export type TurnBlock =
-  | { id: string; kind: 'assistant-prose'; text: string; provider: ProviderId }
+  | { id: string; kind: 'assistant-prose'; text: string; provider: ProviderId; concludesTurn?: true }
   | { id: string; kind: 'work-packet'; status: 'active' | 'completed' | 'failed'; actions: AgentAction[]; startedAt?: number; completedAt?: number }
   | { id: string; kind: 'approval'; request: BlockingRequest }
   | { id: string; kind: 'question'; request: BlockingRequest }
