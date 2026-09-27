@@ -158,7 +158,7 @@ export function AppShell({
                 <BreadcrumbList className="min-w-0 flex-nowrap">
                   {selectedItem.section && (
                     <>
-                      <BreadcrumbItem>{selectedItem.section}</BreadcrumbItem>
+                      <BreadcrumbItem className="shrink-0 whitespace-nowrap">{selectedItem.section}</BreadcrumbItem>
                       <BreadcrumbSeparator />
                     </>
                   )}
