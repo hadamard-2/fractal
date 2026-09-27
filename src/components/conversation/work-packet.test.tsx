@@ -8,6 +8,9 @@ import { WorkPacket, workPacketSummary } from './work-packet';
 
 afterEach(cleanup);
 
+// The command is split into highlighted token spans once the highlighter loads.
+const commandText = (_: string, element: Element | null) => element?.tagName === 'PRE' && element.textContent === 'pnpm lint';
+
 const command = (status: AgentAction['status']): AgentAction => ({
   id: 'command-1', nativeId: 'command-1', provider: 'codex', kind: 'command',
   status, captureCompleteness: 'complete', command: 'pnpm lint', cwd: '/work/fractal',
@@ -27,12 +30,12 @@ describe('WorkPacket', () => {
     const { rerender } = render(<WorkPacket packet={activePacket} />);
 
     expect(screen.getByRole('button', { name: '1 command: 1 running' })).toBeTruthy();
-    expect(screen.getByText('pnpm lint')).toBeTruthy();
+    expect(screen.getByText(commandText)).toBeTruthy();
 
     rerender(<WorkPacket packet={completedPacket} />);
 
     expect(screen.getByText('1 command completed')).toBeTruthy();
-    expect(screen.queryByText('pnpm lint')).toBeNull();
+    expect(screen.queryByText(commandText)).toBeNull();
   });
 
   test('a packet keeps explicit open and closed disclosure choices across status changes', async () => {
@@ -40,22 +43,22 @@ describe('WorkPacket', () => {
     const { rerender } = render(<WorkPacket packet={activePacket} />);
 
     await user.click(screen.getByRole('button', { name: '1 command: 1 running' }));
-    expect(screen.queryByText('pnpm lint')).toBeNull();
+    expect(screen.queryByText(commandText)).toBeNull();
 
     rerender(<WorkPacket packet={{ ...activePacket, actions: [{ ...command('running'), id: 'command-2' }] }} />);
-    expect(screen.queryByText('pnpm lint')).toBeNull();
+    expect(screen.queryByText(commandText)).toBeNull();
 
     await user.click(screen.getByRole('button', { name: '1 command: 1 running' }));
-    expect(screen.getByText('pnpm lint')).toBeTruthy();
+    expect(screen.getByText(commandText)).toBeTruthy();
 
     rerender(<WorkPacket packet={completedPacket} />);
-    expect(screen.getByText('pnpm lint')).toBeTruthy();
+    expect(screen.getByText(commandText)).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '1 command completed' }));
-    expect(screen.queryByText('pnpm lint')).toBeNull();
+    expect(screen.queryByText(commandText)).toBeNull();
 
     rerender(<WorkPacket packet={activePacket} />);
-    expect(screen.queryByText('pnpm lint')).toBeNull();
+    expect(screen.queryByText(commandText)).toBeNull();
   });
 
   test('summarizes failed, denied, and interrupted activity exactly', () => {

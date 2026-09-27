@@ -2,6 +2,7 @@ import { ChevronRight, CircleAlert, CircleCheck, CirclePause, LoaderCircle } fro
 import { useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { HighlightedCommand } from './highlighted-command';
 import type { AgentAction as AgentActionData, CaptureCompleteness, ProviderId } from '@/shared/conversation-contract';
 
 const actionLabel = (action: AgentActionData): string => {
@@ -79,7 +80,7 @@ export function AgentAction({ action }: { action: AgentActionData }) {
         <StatusIcon status={action.status} />
         <div className="min-w-0 flex-1">
           {action.kind === 'command'
-            ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-sm">{action.command}</pre>
+            ? <HighlightedCommand className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm" command={action.command} />
             : <p className="break-words font-mono text-sm">{actionLabel(action)}</p>}
           <p className="text-xs text-muted-foreground">{actionState(action)}</p>
         </div>

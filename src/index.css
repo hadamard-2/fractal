@@ -5,6 +5,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Streamdown and its code plugin style their output with Tailwind classes, which
+ * only get generated if Tailwind scans their bundles. */
+@source '../node_modules/streamdown/dist/*.js';
+@source '../node_modules/@streamdown/code/dist/*.js';
+
 :root {
   /*
    * The OS titlebar overlay's height, read once here so the title bar strip,
