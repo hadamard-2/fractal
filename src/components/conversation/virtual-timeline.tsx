@@ -112,11 +112,14 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
 
   useLayoutEffect(() => () => remember(), [remember]);
 
+  // Rows are placed with `top`, not a transform: Chromium resolves position: sticky inside a
+  // transformed row against the untransformed offset, which pushes sticky content (Streamdown's
+  // code-block buttons) to the bottom of its block.
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto" onScroll={() => { remember(); if (position.current.distanceFromBottom <= 96) setNewActivity(false); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
         <div className="relative w-full" style={{ height: size }}>
-          {virtualizer.getVirtualItems().map((item) => <div className={`absolute top-0 left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start}px)` }}>
+          {virtualizer.getVirtualItems().map((item) => <div className={`absolute left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ top: item.start }}>
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />
           </div>)}
         </div>
