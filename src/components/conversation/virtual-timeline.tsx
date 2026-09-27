@@ -42,6 +42,8 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
     getItemKey: useCallback((index: number) => turns[index].id, [turns]),
     estimateSize: () => 280,
     overscan: 6,
+    // Breathing room below the last message, counted in the total size so follow-bottom lands after it.
+    paddingEnd: 96,
     initialMeasurementsCache: initialMeasurements,
     initialOffset: () => restoreAnchor(saved?.anchor ?? null, initialMeasurements) ?? 0,
     // Keyed anchors are captured before setOptions changes the turn order and

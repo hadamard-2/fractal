@@ -81,7 +81,7 @@ test('keeps restoration pending when a partial chunk contains the anchor but can
   act(() => { viewport.scrollTop = 840; fireEvent.scroll(viewport); });
   rerender(<VirtualTimeline conversationId="other-clamped-session" turns={history} onResolve={() => undefined} />);
   rerender(<VirtualTimeline conversationId="clamped-restore" turns={history.slice(0, 4)} historyComplete={false} onResolve={() => undefined} />);
-  await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(560));
+  await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(656));
   rerender(<VirtualTimeline conversationId="clamped-restore" turns={history.slice(0, 5)} historyComplete={false} onResolve={() => undefined} />);
   await waitFor(() => expect(screen.getByRole('log').scrollTop).toBe(840));
   // At five rows the saved position is also the temporary bottom. Let its
@@ -116,7 +116,7 @@ test('follows content from an empty history and growing final turn only while ne
   const last = screen.getByText('User anchor 99').closest('[data-index]');
   if (!last) throw new Error('Latest row did not mount');
   resize(last, 500);
-  await waitFor(() => expect(viewport.scrollTop).toBe(27660));
+  await waitFor(() => expect(viewport.scrollTop).toBe(27756));
   act(() => { viewport.scrollTop = 560; fireEvent.scroll(viewport); });
   rerender(<VirtualTimeline conversationId="empty-growth" turns={history.map((turn, index) => index === 99 ? { ...turn, userMessage: { ...turn.userMessage, text: 'Updated last turn' } } : turn)} onResolve={() => undefined} />);
   expect(viewport.scrollTop).toBe(560);
