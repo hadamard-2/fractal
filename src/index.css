@@ -38,8 +38,16 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  /*
+   * Brand teal (#31A586), the same fill in both themes. Text on it is
+   * near-black: 6.5:1, where white would be 3.1:1. Against white it clears
+   * 3:1 for icons and borders but not 4.5:1 for text, so light mode draws
+   * text with --primary-text instead (#257E66, 4.9:1); dark mode can use the
+   * fill itself (6.5:1).
+   */
+  --primary: oklch(0.65 0.112 171.06);
+  --primary-foreground: oklch(0.145 0 0);
+  --primary-text: oklch(0.535 0.091 171.08);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -72,8 +80,9 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.65 0.112 171.06);
+  --primary-foreground: oklch(0.145 0 0);
+  --primary-text: oklch(0.65 0.112 171.06);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -123,6 +132,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
