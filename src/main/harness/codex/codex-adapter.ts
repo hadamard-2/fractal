@@ -3,8 +3,10 @@ import type { CodexAppServer, CodexRequestMap } from '@/main/harness/codex/codex
 import { createCodexLiveNormalizationContext, normalizeCodexNotification, normalizeCodexServerRequest, normalizeCodexThread } from '@/main/harness/codex/codex-normalizer';
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
+import { composePromptText } from '@/main/harness/attachment-block';
 import type { ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
-import type { ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
 
 type CodexServer = Pick<CodexAppServer, 'request' | 'onNotification' | 'onServerRequest' | 'respond' | 'respondError' | 'status'> & Partial<Pick<CodexAppServer, 'onStatus'>>;
 type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: string; text: string } };
@@ -12,6 +14,14 @@ type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: stri
 const CAPABILITIES: HarnessCapabilities = {
   create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: false,
 };
+
+function codexTurnInput(prompt: AgentPrompt): UserInput[] {
+  const text = composePromptText(prompt);
+  return [
+    ...(text ? [{ type: 'text' as const, text, text_elements: [] }] : []),
+    ...(prompt.attachments ?? []).flatMap((attachment) => attachment.image ? [{ type: 'localImage' as const, path: attachment.path }] : []),
+  ];
+}
 
 export class CodexAdapter implements HarnessAdapter {
   readonly provider = 'codex' as const;
@@ -100,7 +110,7 @@ export class CodexAdapter implements HarnessAdapter {
     return { provider: 'codex', nativeSessionId: response.thread.id, projectPath: canonical };
   }
 
-  async continueConversation(ref: ConversationRef, prompt: { text: string }): Promise<ConversationRun> {
+  async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);
     const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: projectPath });
@@ -211,7 +221,7 @@ export class CodexAdapter implements HarnessAdapter {
     try {
       const started = await this.server.request('turn/start', {
         threadId: ref.nativeSessionId,
-        input: [{ type: 'text', text: prompt.text, text_elements: [] }],
+        input: codexTurnInput(prompt),
       });
       turnId = started.turn.id;
       for (const traffic of bufferedTraffic.splice(0)) {

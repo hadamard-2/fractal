@@ -218,6 +218,25 @@ describe('Codex native continuation', () => {
     await run.dispose();
   });
 
+  test('sends images as localImage items and other files as a trailing attachments block', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Compare', attachments: [{ path: '/repo/a.ts' }, { path: '/tmp/shot.png', image: 'image/png' }] });
+    expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [
+      { type: 'text', text: 'Compare\n\n<attachments>\n/repo/a.ts\n</attachments>', text_elements: [] },
+      { type: 'localImage', path: '/tmp/shot.png' },
+    ] } });
+    await run.dispose();
+  });
+
+  test('omits the text item for an image-only message', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: '', attachments: [{ path: '/tmp/shot.png', image: 'image/png' }] });
+    expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'localImage', path: '/tmp/shot.png' }] } });
+    await run.dispose();
+  });
+
   test('routes an approval once, fails closed for unsupported decisions, and interrupts once', async () => {
     const server = createFakeAppServer();
     const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
