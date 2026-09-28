@@ -7,13 +7,14 @@ import { runClaudeTurn, type ClaudeChildProcess } from './claude-runner';
 const ref = { provider: 'claude' as const, nativeSessionId: 'claude-session-1', projectPath: '/work/fractal' };
 const bridge = { configPath: '/tmp/bridge.json', toolName: 'fractal_permission' };
 
-function fakeProcess(): ClaudeChildProcess & { stdout: PassThrough; stderr: PassThrough; finish(code?: number): void; fail(error: Error): void; signals: NodeJS.Signals[] } {
+function fakeProcess(): ClaudeChildProcess & { stdout: PassThrough; stderr: PassThrough; stdin: PassThrough; finish(code?: number): void; fail(error: Error): void; signals: NodeJS.Signals[] } {
   const emitter = new EventEmitter();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
+  const stdin = new PassThrough();
   const signals: NodeJS.Signals[] = [];
   return Object.assign(emitter, {
-    stdout, stderr, signals, pid: 123,
+    stdout, stderr, stdin, signals, pid: 123,
     kill(signal: NodeJS.Signals) { signals.push(signal); return true; },
     finish(code = 0) { stdout.end(); stderr.end(); emitter.emit('close', code, null); },
     fail(error: Error) { stdout.destroy(); stderr.destroy(); emitter.emit('error', error); },
@@ -22,16 +23,34 @@ function fakeProcess(): ClaudeChildProcess & { stdout: PassThrough; stderr: Pass
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> { const values: T[] = []; for await (const value of iterable) values.push(value); return values; }
 
+function stdinText(child: { stdin: PassThrough }): string { return child.stdin.read()?.toString() ?? ''; }
+
 describe('runClaudeTurn', () => {
-  test('spawns resume as an exact argument array without a shell', async () => {
+  test('spawns resume without a shell and writes the prompt to stdin as one stream-json user message', async () => {
     const child = fakeProcess();
     const spawnProcess = vi.fn(() => child);
     const run = runClaudeTurn({ ref, prompt: { text: 'fix; $(touch /tmp/nope)' }, executable: '/usr/bin/claude', spawnProcess, permissionBridge: bridge, rereadNative: async () => [] });
+    expect(JSON.parse(stdinText(child))).toEqual({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'fix; $(touch /tmp/nope)' }] } });
     child.finish(); await collect(run.events);
     expect(spawnProcess).toHaveBeenCalledWith('/usr/bin/claude', [
-      '--resume', 'claude-session-1', '--print', 'fix; $(touch /tmp/nope)', '--output-format', 'stream-json', '--verbose',
+      '--resume', 'claude-session-1', '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--include-partial-messages', '--mcp-config', '/tmp/bridge.json', '--permission-prompt-tool', 'fractal_permission',
-    ], { cwd: '/work/fractal', shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { cwd: '/work/fractal', shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+
+  test('puts image blocks after the text and drops an empty text block', async () => {
+    const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' };
+    const withText = fakeProcess();
+    const first = runClaudeTurn({ ref, prompt: { text: 'What is this?', images: [image] }, executable: 'claude', spawnProcess: () => withText, rereadNative: async () => [] });
+    expect(JSON.parse(stdinText(withText)).message.content).toEqual([
+      { type: 'text', text: 'What is this?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+    withText.finish(); await collect(first.events);
+    const imageOnly = fakeProcess();
+    const second = runClaudeTurn({ ref, prompt: { text: '', images: [image] }, executable: 'claude', spawnProcess: () => imageOnly, rereadNative: async () => [] });
+    expect(JSON.parse(stdinText(imageOnly)).message.content.map((block: { type: string }) => block.type)).toEqual(['image']);
+    imageOnly.finish(); await collect(second.events);
   });
 
   test('uses session-id for the first turn', async () => {
@@ -40,6 +59,7 @@ describe('runClaudeTurn', () => {
     child.finish(); await collect(run.events);
     const call = spawnProcess.mock.calls[0] as unknown as [string, string[]];
     expect(call[1].slice(0, 2)).toEqual(['--session-id', 'claude-session-1']);
+    expect(call[1]).toEqual(expect.arrayContaining(['--input-format', 'stream-json']));
   });
 
   test('normalizes parsable stdout and reconciles native history even after a nonzero exit', async () => {
@@ -107,6 +127,17 @@ describe('runClaudeTurn', () => {
     child.stdout.write('{"type":"user","uuid":"live","message":{"role":"user","content":"live now"}}\n');
     await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { nativeId: 'live' } });
     child.finish(); await run.completion; await iterator.return?.();
+  });
+
+  test('anchors on a composed prompt containing an attachments block', async () => {
+    const child = fakeProcess();
+    const composed = 'Compare\n\n<attachments>\n/repo/a.ts\n</attachments>';
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'file-user', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'file-user', userMessageId: 'file-user', text: composed } };
+    const run = runClaudeTurn({ ref, prompt: { text: composed }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [anchor] });
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1","role":"assistant","content":[]}}}\n');
+    child.finish();
+    const events = await collect(run.events);
+    expect(events).toContainEqual(anchor);
   });
 
   test('waits for the persisted user anchor before streaming partials and reconciles by message id', async () => {

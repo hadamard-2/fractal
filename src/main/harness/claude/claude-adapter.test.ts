@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import type { NativeEvent } from '@/main/harness/reconciler';
 import type { BlockingRequest, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
-import type { ClaudeTurnRun } from './claude-runner';
+import type { ClaudeTurnRun, RunClaudeTurnOptions } from './claude-runner';
 import { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
 const root = path.join(import.meta.dirname, '__fixtures__');
@@ -97,6 +97,20 @@ describe('Claude adapter', () => {
     await expect(run.resolveRequest('approval-1', { kind: 'deny' })).rejects.toThrow('no longer available');
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved' } } });
     finish(); await run.dispose(); expect(disposeBridge).toHaveBeenCalledOnce();
+  });
+
+  test('composes the attachment block and reads images into the runner prompt', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-attach-'));
+    const image = path.join(directory, 'shot.png');
+    await writeFile(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const runTurn = vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn });
+    const run = await adapter.continueConversation(ref, { text: 'Compare', attachments: [{ path: '/repo/a.ts' }, { path: image, image: 'image/png' }] });
+    expect(runTurn.mock.calls[0][0].prompt).toEqual({
+      text: 'Compare\n\n<attachments>\n/repo/a.ts\n</attachments>',
+      images: [{ mediaType: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64') }],
+    });
+    await run.dispose(); await rm(directory, { recursive: true, force: true });
   });
 
   test('denies and audits a pending bridge request before closing a naturally ended turn', async () => {

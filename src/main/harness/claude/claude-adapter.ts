@@ -1,12 +1,13 @@
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
-import { access, realpath } from 'node:fs/promises';
+import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
+import { composePromptText } from '@/main/harness/attachment-block';
 import { discoverClaudeConversations, readClaudeConversation, watchClaudeConversation } from './claude-history';
 import { ClaudePermissionBridge } from './claude-permission-bridge';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
-import type { ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
-import type { BlockingRequest, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
+import type { BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
@@ -64,7 +65,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     this.drafts.set(ref.nativeSessionId, ref); return structuredClone(ref);
   }
 
-  async continueConversation(input: ConversationRef, prompt: { text: string }): Promise<ConversationRun> {
+  async continueConversation(input: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     const ref = parseConversationRef(input);
     if (ref.provider !== 'claude') throw new Error('Conversation provider must be claude');
     ref.projectPath = await this.canonicalPath(ref.projectPath);
@@ -74,6 +75,8 @@ export class ClaudeAdapter implements HarnessAdapter {
     if (status.availability !== 'available') throw new Error('Claude conversation continuation is not available');
     if (!newSession && !this.validatedSessions.has(ref.nativeSessionId) && (await this.find(ref)).summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     if (!newSession && await this.runtime(ref) !== 'idle') throw new Error('Conversation is not idle');
+    const images = await readPromptImages(prompt);
+    const turnPrompt = { text: composePromptText(prompt), ...(images.length > 0 ? { images } : {}) };
 
     const queue = new NativeEventQueue(); const pending = new Map<string, PendingDecision>();
     let currentTurnId = `run:${ref.nativeSessionId}`;
@@ -103,7 +106,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt, executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;
@@ -160,6 +163,12 @@ export class ClaudeAdapter implements HarnessAdapter {
     throw new Error('Claude conversation is not currently available in this project');
   }
   private canonicalPath(value: string): Promise<string> { return canonicalizeProjectPath(value, this.dependencies.realpath ?? (async (input) => realpath(input).catch(() => input))); }
+}
+
+async function readPromptImages(prompt: AgentPrompt): Promise<ConversationImage[]> {
+  return Promise.all((prompt.attachments ?? []).flatMap((attachment) => attachment.image
+    ? [readFile(attachment.path).then((bytes) => ({ mediaType: attachment.image!, data: bytes.toString('base64') }))]
+    : []));
 }
 
 interface PendingDecision { turnId: string; resolve(decision: UserDecision): void; signalCleanup(): void }

@@ -4,18 +4,19 @@ import { isDeepStrictEqual } from 'node:util';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 import { createClaudeNormalizationContext, normalizeClaudeRecord, normalizeClaudeStreamRecord } from '@/main/harness/claude/claude-normalizer';
 import { nativeEventKey, type NativeEvent } from '@/main/harness/reconciler';
-import type { ConversationRef } from '@/shared/conversation-contract';
+import type { ConversationImage, ConversationRef } from '@/shared/conversation-contract';
 
 export interface ClaudeChildProcess {
   readonly pid?: number;
   readonly stdout: AsyncIterable<Uint8Array | string>;
   readonly stderr: AsyncIterable<Uint8Array | string>;
+  readonly stdin: { end(chunk: string): unknown; on(event: 'error', listener: (error: Error) => void): unknown };
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   once(event: 'error', listener: (error: Error) => void): this;
   kill(signal: NodeJS.Signals): boolean;
 }
 
-export interface ClaudeSpawnOptions { cwd: string; shell: false; stdio: ['ignore', 'pipe', 'pipe'] }
+export interface ClaudeSpawnOptions { cwd: string; shell: false; stdio: ['pipe', 'pipe', 'pipe'] }
 export type SpawnClaudeProcess = (file: string, args: string[], options: ClaudeSpawnOptions) => ClaudeChildProcess;
 
 export interface ClaudeRunCompletion { exitCode: number | null; signal: NodeJS.Signals | null; diagnostic?: string }
@@ -27,7 +28,8 @@ export interface ClaudeTurnRun {
 
 export interface RunClaudeTurnOptions {
   ref: ConversationRef;
-  prompt: { text: string };
+  /** text is the composed prompt (user text plus any attachment block); the turn anchor matches it exactly. */
+  prompt: { text: string; images?: ConversationImage[] };
   executable: string;
   spawnProcess?: SpawnClaudeProcess;
   permissionBridge?: { configPath: string; toolName: string };
@@ -43,12 +45,15 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     ? ['--mcp-config', options.permissionBridge.configPath, '--permission-prompt-tool', options.permissionBridge.toolName]
     : [];
   const args = [
-    ...sessionArguments, '--print', options.prompt.text, '--output-format', 'stream-json', '--verbose',
+    ...sessionArguments, '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--include-partial-messages', ...bridgeArguments,
   ];
   const child = (options.spawnProcess ?? spawnClaude)(options.executable, args, {
-    cwd: options.ref.projectPath, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: options.ref.projectPath, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
   });
+  // A process that exits or fails to launch before reading stdin reports through close/error, not here.
+  child.stdin.on('error', () => undefined);
+  child.stdin.end(claudeStdinMessage(options.prompt));
   type Terminal = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
   let terminalValue: Terminal | undefined;
   let resolveTerminal!: (result: Terminal) => void;
@@ -135,6 +140,15 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
       await terminateOwned();
     },
   };
+}
+
+/** One stream-json user message: the text block (omitted when empty) followed by base64 image blocks. */
+export function claudeStdinMessage(prompt: RunClaudeTurnOptions['prompt']): string {
+  const content = [
+    ...(prompt.text ? [{ type: 'text', text: prompt.text }] : []),
+    ...(prompt.images ?? []).map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
+  ];
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
 }
 
 function spawnClaude(file: string, args: string[], options: ClaudeSpawnOptions): ClaudeChildProcess {
