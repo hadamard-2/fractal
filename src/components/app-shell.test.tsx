@@ -121,7 +121,7 @@ describe('home screen actions', () => {
     const create = vi.fn<ConversationApi['create']>(async () => null);
     install(create);
     const user = userEvent.setup();
-    await screen.findByText('Fractal');
+    await screen.findByRole('button', { name: 'Fractal' });
     await user.keyboard('{Control>}n{/Control}');
     await user.click(await screen.findByRole('button', { name: 'Choose another folder…' }));
     await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex' }));
@@ -131,7 +131,7 @@ describe('home screen actions', () => {
     const create = vi.fn<ConversationApi['create']>(async () => null);
     install(create);
     const user = userEvent.setup();
-    await screen.findByText('Fractal');
+    await screen.findByRole('button', { name: 'Fractal' });
     await waitFor(() => expect((screen.getByRole('button', { name: /New conversation/ }) as HTMLButtonElement).disabled).toBe(false));
     await user.keyboard('{Control>}o{/Control}');
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -155,7 +155,7 @@ describe('home screen actions', () => {
   test('Mod+K opens search, but not from inside a terminal', async () => {
     install(vi.fn<ConversationApi['create']>(async () => null));
     const user = userEvent.setup();
-    await screen.findByText('Fractal');
+    await screen.findByRole('button', { name: 'Fractal' });
     const terminal = document.createElement('div');
     terminal.dataset.slot = 'terminal';
     const input = document.createElement('textarea');

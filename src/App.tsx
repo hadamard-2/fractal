@@ -31,6 +31,9 @@ export default function App() {
   // Execute's selected project; new terminals start there in any mode.
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const shellInsetRef = useRef<HTMLElement>(null);
+  // The home screen is Execute with nothing selected; the selected project is
+  // null exactly then. The mode toggle stays out of it.
+  const onHomeScreen = mode === 'execute' && projectPath === null;
 
   // Cmd+, (Ctrl+, elsewhere) — the canonical application-settings shortcut.
   // Matched on `code` like main.ts's window shortcuts, so it survives
@@ -87,8 +90,10 @@ export default function App() {
           paddingRight: 'calc((var(--app-bar-height) - 2rem) / 2)',
         }}
       >
+        {/* Hidden rather than unmounted, so the pill keeps its position to animate from. */}
         <div
-          className="pointer-events-auto"
+          aria-hidden={onHomeScreen || undefined}
+          className={onHomeScreen ? 'invisible' : 'pointer-events-auto'}
           data-slot="mode-toggle-shift"
           style={{ transform: `translateX(${-modeToggleShift(rightOpen, rightWidth ?? 0)}px)` }}
         >

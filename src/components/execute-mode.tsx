@@ -15,7 +15,7 @@ const AVAILABILITY_TEXT: Record<Exclude<HarnessStatus['availability'], 'availabl
 };
 
 function Kbd({ children }: { children: string }) {
-  return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] text-muted-foreground">{children}</kbd>;
+  return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">{children}</kbd>;
 }
 
 /** A quiet one-line notice under the empty state; `detail` goes in a tooltip. */
@@ -45,7 +45,6 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
   const shortcuts = [
     ['Search conversations', `${MOD_KEY_LABEL} K`],
     ['Add a project', `${MOD_KEY_LABEL} O`],
-    ['Switch mode', `${MOD_KEY_LABEL} 1–3`],
   ] as const;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ display: active ? undefined : 'none' }}>
@@ -57,13 +56,16 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
           any provider trouble as a quiet notice rather than raw status text.
         */
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8 text-center">
-          <FractalMark className="mb-5 size-10 text-foreground" />
+          <div className="mb-16 flex items-center gap-3 text-muted-foreground">
+            <FractalMark className="size-10" monochrome />
+            <span className="text-3xl font-semibold tracking-tight">Fractal</span>
+          </div>
           <h2 className="text-base font-medium">Pick up a thread</h2>
           <p className="mt-1 text-sm text-muted-foreground">Choose a conversation from the sidebar, or start one in a project.</p>
           <Button className="mt-5" disabled={!actions.canStart} onClick={actions.newConversation}>
             <Plus aria-hidden />
             New conversation
-            <kbd className="ml-1 font-mono text-[11px] opacity-60">{MOD_KEY_LABEL} N</kbd>
+            <kbd className="ml-1 font-mono text-[11px] font-medium opacity-60">{MOD_KEY_LABEL} N</kbd>
           </Button>
           <dl className="mt-6 grid grid-cols-[auto_auto] gap-x-8 gap-y-2.5 text-left text-sm text-muted-foreground">
             {shortcuts.map(([label, keys]) => (

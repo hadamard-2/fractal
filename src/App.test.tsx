@@ -80,5 +80,20 @@ test('Mod+1–3 switch modes in the toggle order', async () => {
   await user.keyboard('{Control>}3{/Control}');
   expect(screen.getByRole('radio', { name: 'Explain' }).getAttribute('aria-checked')).toBe('true');
   await user.keyboard('{Control>}1{/Control}');
-  expect(screen.getByRole('radio', { name: 'Execute' }).getAttribute('aria-checked')).toBe('true');
+  // Back on the home screen, where the toggle is hidden but still tracks the mode.
+  expect(screen.getByRole('radio', { name: 'Execute', hidden: true }).getAttribute('aria-checked')).toBe('true');
+});
+
+test('hides the mode toggle on the home screen only', async () => {
+  installApi();
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole('button', { name: 'Fractal' });
+  expect(screen.queryByRole('radiogroup', { name: 'Mode' })).toBeNull();
+  await user.keyboard('{Control>}2{/Control}');
+  expect(screen.getByRole('radiogroup', { name: 'Mode' })).toBeTruthy();
+  await user.keyboard('{Control>}1{/Control}');
+  await user.click(screen.getByRole('button', { name: 'Fractal' }));
+  await user.click(screen.getByRole('button', { name: /Existing chat, Codex conversation/ }));
+  expect(await screen.findByRole('radiogroup', { name: 'Mode' })).toBeTruthy();
 });
