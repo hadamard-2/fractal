@@ -18,6 +18,9 @@ const MODES = [
   group: number;
 }[];
 
+/** The modes in the toggle's left-to-right order, which Mod+1–3 follow. */
+export const MODE_ORDER: readonly Mode[] = MODES.map((mode) => mode.value);
+
 const ITEM_WIDTH = 34;
 const GAP_WITHIN_GROUP = 4;
 const GAP_BETWEEN_GROUPS = 14;

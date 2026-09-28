@@ -5,12 +5,13 @@ import { AppShell } from '@/components/app-shell';
 import { ExecuteMode } from '@/components/execute-mode';
 import { ExplainMode } from '@/components/explain-mode';
 import { MapMode } from '@/components/map-mode';
-import { ModeToggle, type Mode } from '@/components/mode-toggle';
+import { MODE_ORDER, ModeToggle, type Mode } from '@/components/mode-toggle';
 import { RightWorkspace } from '@/components/right-workspace';
 import { SettingsDialog } from '@/components/settings-dialog';
 import { TitleBar } from '@/components/title-bar';
 import { Button } from '@/components/ui/button';
 import { modeToggleShift } from '@/renderer/right-panel-layout';
+import { isAppShortcut } from '@/renderer/shortcuts';
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('execute');
@@ -33,12 +34,19 @@ export default function App() {
 
   // Cmd+, (Ctrl+, elsewhere) — the canonical application-settings shortcut.
   // Matched on `code` like main.ts's window shortcuts, so it survives
-  // keyboard layouts where the comma sits behind a modifier.
+  // keyboard layouts where the comma sits behind a modifier. Mod+1–3 pick a
+  // mode in the toggle's own left-to-right order.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === 'Comma' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         setSettingsOpen(true);
+        return;
+      }
+      const index = MODE_ORDER.findIndex((_, i) => isAppShortcut(event, `Digit${i + 1}`));
+      if (index !== -1) {
+        event.preventDefault();
+        setMode(MODE_ORDER[index]);
       }
     };
     window.addEventListener('keydown', onKeyDown);

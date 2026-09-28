@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { AppShell } from './app-shell';
 import { ExecuteMode } from './execute-mode';
 vi.mock('./terminal-view', () => ({ TerminalView: (): null => null }));
@@ -24,8 +24,8 @@ test('explains no selection and opens native sidebar refs while identifying unav
   const onProjectPathChange = vi.fn();
   render(<AppShell onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
   expect(onProjectPathChange).toHaveBeenLastCalledWith(null);
-  expect(screen.getByText('Select a conversation')).toBeTruthy();
-  await screen.findByText(/claude.*unavailable/i);
+  expect(screen.getByText('Pick up a thread')).toBeTruthy();
+  await screen.findByText("Claude Code isn't available, so its conversations are hidden");
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Search' }));
   expect(screen.getByRole('dialog')).toBeTruthy();
@@ -80,4 +80,92 @@ test('creates a chat from a project row and opens its native reference', async (
   await user.click(screen.getByRole('button', { name: 'Codex' }));
   expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/fractal' });
   await waitFor(() => expect(open).toHaveBeenCalledWith(ref, expect.any(String)));
+});
+
+describe('home screen actions', () => {
+  const creatable = { ...capabilities, create: true };
+  const other: ConversationRef = { provider: 'codex', nativeSessionId: 'native-other', projectPath: '/work/other' };
+  function install(create: ConversationApi['create']) {
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+    const api: ConversationApi = {
+      list: async () => ({
+        projects: [
+          { projectPath: other.projectPath, displayName: 'Other', conversations: [{ ref: other, title: 'Older chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] },
+          { projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Newer chat', updatedAt: 5, runtime: 'idle', captureCompleteness: 'complete' }] },
+        ],
+        providers: [{ provider: 'codex', availability: 'available', capabilities: creatable }],
+      }),
+      open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
+      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
+    };
+    const codexDefault = { get: async () => ({ theme: 'system' as const, defaultCodingAgent: 'codex' as const, sidebarOrder: emptyOrder }), set: settings.set };
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: codexDefault } });
+    return render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+  }
+
+  test('new conversation with nothing selected asks for a project, most recent first', async () => {
+    const create = vi.fn<ConversationApi['create']>(async ({ provider, projectPath }) => ({ provider, nativeSessionId: 'created', projectPath: projectPath ?? '' }));
+    install(create);
+    const user = userEvent.setup();
+    const button = await screen.findByRole('button', { name: /New conversation/ });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    await user.click(button);
+    const dialog = await screen.findByRole('dialog');
+    const rows = within(dialog).getAllByRole('button').map((row) => row.textContent);
+    expect(rows).toEqual(['Fractal/work/fractal', 'Other/work/other', 'Choose another folder…']);
+    await user.click(within(dialog).getByRole('button', { name: /Other/ }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/other' }));
+  });
+
+  test('choosing another folder hands the folder choice to the main process', async () => {
+    const create = vi.fn<ConversationApi['create']>(async () => null);
+    install(create);
+    const user = userEvent.setup();
+    await screen.findByText('Fractal');
+    await user.keyboard('{Control>}n{/Control}');
+    await user.click(await screen.findByRole('button', { name: 'Choose another folder…' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex' }));
+  });
+
+  test('Mod+O and the sidebar New project row start a chat in a picked folder', async () => {
+    const create = vi.fn<ConversationApi['create']>(async () => null);
+    install(create);
+    const user = userEvent.setup();
+    await screen.findByText('Fractal');
+    await waitFor(() => expect((screen.getByRole('button', { name: /New conversation/ }) as HTMLButtonElement).disabled).toBe(false));
+    await user.keyboard('{Control>}o{/Control}');
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenLastCalledWith({ provider: 'codex' });
+    await user.click(screen.getByRole('button', { name: 'New project' }));
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create).toHaveBeenLastCalledWith({ provider: 'codex' });
+  });
+
+  test('Mod+N with a conversation open starts one in its project without asking', async () => {
+    const create = vi.fn<ConversationApi['create']>(async ({ provider, projectPath }) => ({ provider, nativeSessionId: 'created', projectPath: projectPath ?? '' }));
+    install(create);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Other' }));
+    await user.click(await screen.findByText('Older chat'));
+    await user.keyboard('{Control>}n{/Control}');
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/other' }));
+    expect(screen.queryByText('Choose the project to start it in.')).toBeNull();
+  });
+
+  test('Mod+K opens search, but not from inside a terminal', async () => {
+    install(vi.fn<ConversationApi['create']>(async () => null));
+    const user = userEvent.setup();
+    await screen.findByText('Fractal');
+    const terminal = document.createElement('div');
+    terminal.dataset.slot = 'terminal';
+    const input = document.createElement('textarea');
+    terminal.append(input);
+    document.body.append(terminal);
+    input.focus();
+    await user.keyboard('{Control>}k{/Control}');
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    terminal.remove();
+    await user.keyboard('{Control>}k{/Control}');
+    expect(await screen.findByRole('searchbox')).toBeTruthy();
+  });
 });

@@ -69,3 +69,16 @@ test('keeps one right panel across modes and slides the mode toggle to its edge'
   expect(shift.style.transform).toBe('translateX(0px)');
   expect(screen.getByRole('button', { name: 'Open right panel' })).toBeTruthy();
 });
+
+test('Mod+1–3 switch modes in the toggle order', async () => {
+  installApi();
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole('button', { name: 'Fractal' });
+  await user.keyboard('{Control>}2{/Control}');
+  expect(screen.getByRole('radio', { name: 'Map' }).getAttribute('aria-checked')).toBe('true');
+  await user.keyboard('{Control>}3{/Control}');
+  expect(screen.getByRole('radio', { name: 'Explain' }).getAttribute('aria-checked')).toBe('true');
+  await user.keyboard('{Control>}1{/Control}');
+  expect(screen.getByRole('radio', { name: 'Execute' }).getAttribute('aria-checked')).toBe('true');
+});

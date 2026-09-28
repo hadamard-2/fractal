@@ -1,30 +1,87 @@
-import { Blocks } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { ConversationPanel } from '@/components/conversation-panel';
-import { ConversationEmptyState } from '@/components/ai-elements/conversation';
+import { FractalMark } from '@/components/fractal-mark';
+import { providerName } from '@/components/sidebar-03/nav-main';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ShellContext } from '@/components/app-shell';
+import { MOD_KEY_LABEL } from '@/renderer/shortcuts';
+import type { HarnessStatus } from '@/shared/conversation-contract';
+
+const AVAILABILITY_TEXT: Record<Exclude<HarnessStatus['availability'], 'available'>, string> = {
+  unavailable: "isn't available",
+  unauthenticated: "isn't signed in",
+  unsupported: "isn't a supported version",
+};
+
+function Kbd({ children }: { children: string }) {
+  return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] text-muted-foreground">{children}</kbd>;
+}
+
+/** A quiet one-line notice under the empty state; `detail` goes in a tooltip. */
+function Notice({ children, detail }: { children: string; detail?: string }) {
+  const notice = (
+    <p className="flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground" role="status">
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-amber-500" />
+      {children}
+    </p>
+  );
+  if (!detail) return notice;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{notice}</TooltipTrigger>
+      <TooltipContent>{detail}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
- * Execute mode: the selected conversation, or an empty state explaining how to
- * pick one. App keeps it mounted but hidden in other modes so a running
+ * Execute mode: the selected conversation, or the home screen when nothing is
+ * selected. App keeps it mounted but hidden in other modes so a running
  * session isn't torn down by a mode switch.
  */
-export function ExecuteMode({ active = true, selectedRef, history }: ShellContext & { active?: boolean }) {
+export function ExecuteMode({ active = true, selectedRef, history, actions }: ShellContext & { active?: boolean }) {
   const { providers, loading, error } = history;
+  const shortcuts = [
+    ['Search conversations', `${MOD_KEY_LABEL} K`],
+    ['Add a project', `${MOD_KEY_LABEL} O`],
+    ['Switch mode', `${MOD_KEY_LABEL} 1–3`],
+  ] as const;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ display: active ? undefined : 'none' }}>
       {selectedRef ? (
         <ConversationPanel conversationRef={selectedRef} />
       ) : (
         /*
-          No conversation yet. The mark is the same Blocks glyph the
-          sidebar's wordmark uses — a quiet centrepiece rather than a
-          call to action; starting one lives on a project's plus action.
+          The home screen: one action, the shortcuts that reach the rest, and
+          any provider trouble as a quiet notice rather than raw status text.
         */
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
-          <ConversationEmptyState className="h-auto" icon={<Blocks aria-hidden className="size-10 text-muted-foreground/50" />} title="Select a conversation" description="Open native conversation history from the sidebar to read the transcript and see its session status." />
-          {loading && <p className="text-sm text-muted-foreground" role="status">Loading conversation history…</p>}
-          {error && <p className="px-4 text-sm text-muted-foreground" role="status">Conversation history could not be loaded: {error.message}</p>}
-          {providers.filter((provider) => provider.availability !== 'available').map((provider) => <p className="max-w-xl px-4 py-1 text-sm text-muted-foreground" key={provider.provider} role="status">{provider.provider}: {provider.availability}.{provider.message ? ` ${provider.message}` : ''}</p>)}
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8 text-center">
+          <FractalMark className="mb-5 size-10 text-foreground" />
+          <h2 className="text-base font-medium">Pick up a thread</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Choose a conversation from the sidebar, or start one in a project.</p>
+          <Button className="mt-5" disabled={!actions.canStart} onClick={actions.newConversation}>
+            <Plus aria-hidden />
+            New conversation
+            <kbd className="ml-1 font-mono text-[11px] opacity-60">{MOD_KEY_LABEL} N</kbd>
+          </Button>
+          <dl className="mt-6 grid grid-cols-[auto_auto] gap-x-8 gap-y-2.5 text-left text-sm text-muted-foreground">
+            {shortcuts.map(([label, keys]) => (
+              <div className="contents" key={label}>
+                <dt>{label}</dt>
+                <dd className="text-right"><Kbd>{keys}</Kbd></dd>
+              </div>
+            ))}
+          </dl>
+          <div className="mt-7 flex flex-col items-center gap-2">
+            {loading && <p className="text-xs text-muted-foreground" role="status">Loading your conversations…</p>}
+            {error && <Notice detail={error.message}>Your conversations couldn't be loaded</Notice>}
+            {providers.filter((provider) => provider.availability !== 'available').map((provider) => (
+              <Notice detail={provider.message} key={provider.provider}>
+                {`${providerName(provider.provider)} ${AVAILABILITY_TEXT[provider.availability as keyof typeof AVAILABILITY_TEXT]}, so its conversations are hidden`}
+              </Notice>
+            ))}
+          </div>
         </div>
       )}
     </div>

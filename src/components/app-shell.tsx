@@ -1,8 +1,11 @@
-import { useEffect, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { useConversationHistory, type ConversationHistory } from '@/renderer/use-conversation-history';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
 import { providerName, runtimeLabel, type NavSelection } from '@/components/sidebar-03/nav-main';
 import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
+import { ProjectPickerDialog } from '@/components/conversation/project-picker-dialog';
+import { useStartConversation } from '@/components/conversation/use-start-conversation';
+import { isAppShortcut } from '@/renderer/shortcuts';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -17,10 +20,20 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar';
 
+/** The shell's app-wide actions, bound to Mod+N, Mod+K, and Mod+O. */
+export type ShellActions = {
+  newConversation: () => void;
+  search: () => void;
+  addProject: () => void;
+  // False when no available agent can create a conversation.
+  canStart: boolean;
+};
+
 /** What the shell hands the modes it frames. */
 export type ShellContext = {
   selectedRef: ConversationRef | null;
   history: ConversationHistory;
+  actions: ShellActions;
 };
 
 /**
@@ -75,6 +88,47 @@ export function AppShell({
     by the length of its own transition.
   */
   const [resizing, setResizing] = useState(false);
+  // Lifted out of the sidebar so Mod+K and the empty state can open it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const selectCreated = (ref: ConversationRef) => {
+    setSelectedRef(ref);
+    setSelectedItem(null);
+  };
+  const starter = useStartConversation({ providers: history.providers, onCreated: selectCreated });
+  const selectedProject = selectedRef && projects.find((project) => project.projectPath === selectedRef.projectPath);
+  const actions: ShellActions = {
+    // With a conversation open, its project is the obvious place for the next
+    // one; with nothing selected, ask.
+    newConversation: () => {
+      if (!starter.canStart) return;
+      if (selectedRef) void starter.start({ name: selectedProject?.displayName ?? selectedRef.projectPath, path: selectedRef.projectPath });
+      else setPickerOpen(true);
+    },
+    search: () => setSearchOpen(true),
+    // A project exists here only through its conversations, so adding one is
+    // starting a conversation in a folder the main process asks for.
+    addProject: () => void starter.start(null),
+    canStart: starter.canStart,
+  };
+  // Read by the listener below, which subscribes once.
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action =
+        isAppShortcut(event, 'KeyN') ? actionsRef.current.newConversation
+        : isAppShortcut(event, 'KeyK') ? actionsRef.current.search
+        : isAppShortcut(event, 'KeyO') ? actionsRef.current.addProject
+        : null;
+      if (!action) return;
+      event.preventDefault();
+      action();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const currentSummary = selectedRef && projects
     .flatMap((project) => project.conversations)
     .find((conversation) => conversationKey(conversation.ref) === conversationKey(selectedRef));
@@ -98,11 +152,10 @@ export function AppShell({
     >
       <DashboardSidebar
         onCollapse={() => onSidebarOpenChange?.(false)}
-        onConversationCreated={(ref) => {
-          setSelectedRef(ref);
-          setSelectedItem(null);
-        }}
+        onConversationCreated={selectCreated}
+        onNewProject={actions.addProject}
         onOpenSettings={onOpenSettings}
+        onSearchOpenChange={setSearchOpen}
         onResizingChange={setResizing}
         onWidthChange={onSidebarWidthChange}
         onItemSelect={(item) => {
@@ -113,6 +166,7 @@ export function AppShell({
           );
           setSelectedItem(item);
         }}
+        searchOpen={searchOpen}
         selected={selectedRef}
         style={{
           top: 'var(--titlebar-height)',
@@ -176,9 +230,12 @@ export function AppShell({
               </Breadcrumb>
             </>
           )}
+          {starter.status && <span className="ml-auto shrink-0 text-xs text-muted-foreground" role="status">{starter.status}</span>}
         </header>
-        {children({ selectedRef, history })}
+        {children({ selectedRef, history, actions })}
       </SidebarInset>
+      <ProjectPickerDialog onOpenChange={setPickerOpen} onPick={(target) => void starter.start(target)} open={pickerOpen} projects={projects} />
+      {starter.chooser}
     </SidebarProvider>
   );
 }

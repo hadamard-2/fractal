@@ -1,8 +1,8 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { Blocks, FolderPlus, Search } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { FolderPlus, Search } from 'lucide-react';
+import { useRef } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
+import { FractalMark } from '@/components/fractal-mark';
 import type { NavSelection } from '@/components/sidebar-03/nav-main';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
@@ -148,6 +149,9 @@ export function DashboardSidebar({
   selected,
   onItemSelect,
   onConversationCreated,
+  onNewProject,
+  searchOpen = false,
+  onSearchOpenChange,
   width,
   onWidthChange,
   onResizingChange,
@@ -167,6 +171,11 @@ export function DashboardSidebar({
   // Creates a conversation and switches this mode to it; ExecuteMode owns
   // the conversationId state.
   onConversationCreated?: (ref: ConversationRef) => void;
+  // Starts a conversation in a folder the user picks; AppShell owns the flow.
+  onNewProject?: () => void;
+  // Owned by AppShell so its keyboard shortcut and the empty state can open it.
+  searchOpen?: boolean;
+  onSearchOpenChange?: (open: boolean) => void;
   // Chosen sidebar width in px, owned by App for the same reason as the
   // open/collapsed state. Null means the 16rem default.
   width?: number | null;
@@ -178,7 +187,6 @@ export function DashboardSidebar({
   const { projects, providers, error } = useConversationHistory();
   const { orderedProjects, ready: orderReady, error: orderError, moveProject, moveChat } = useSidebarOrder(projects);
   const isCollapsed = state === 'collapsed';
-  const [searchOpen, setSearchOpen] = useState(false);
 
   return (
     <Sidebar
@@ -203,7 +211,7 @@ export function DashboardSidebar({
         )}
       >
         <a className="flex items-center gap-2" href="#">
-          <Blocks className="size-5" />
+          <FractalMark className="size-5" />
           <span
             className={cn(
               'font-semibold text-foreground',
@@ -229,7 +237,7 @@ export function DashboardSidebar({
               <Button
                 aria-label="Search"
                 className="rounded-full"
-                onClick={() => setSearchOpen(true)}
+                onClick={() => onSearchOpenChange?.(true)}
                 size="icon"
                 variant="ghost"
               >
@@ -243,7 +251,7 @@ export function DashboardSidebar({
       <SidebarContent className="gap-4 overflow-hidden px-2 py-4 group-data-[collapsible=icon]:pt-2.5">
         <SidebarMenu className="shrink-0">
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="New project">
+            <SidebarMenuButton onClick={onNewProject} tooltip="New project">
               <FolderPlus />
               <span>New project</span>
             </SidebarMenuButton>
@@ -285,7 +293,7 @@ export function DashboardSidebar({
       />
       <SearchDialog
         groups={orderedProjects}
-        onOpenChange={setSearchOpen}
+        onOpenChange={(open) => onSearchOpenChange?.(open)}
         onSelect={(item) => onItemSelect?.(item)}
         open={searchOpen}
       />
