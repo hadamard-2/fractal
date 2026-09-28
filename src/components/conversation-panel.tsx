@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Square } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
+import { Shimmer } from '@/components/ai-elements/shimmer';
 import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
@@ -86,8 +87,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
     <div className="relative flex size-full flex-col overflow-hidden">
       {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
       {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
-      {loading && <p className="shrink-0 px-4 py-2 text-sm text-muted-foreground" role="status">Loading conversation…</p>}
-      {turns.length ? <VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /> : <div className="min-h-0 flex-1"><ConversationEmptyState title={loading ? 'Loading history' : state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={loading ? 'Messages will appear as native history loads.' : state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} /></div>}
+      {turns.length ? <VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
       <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 ${COLUMN}`}>
         {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
