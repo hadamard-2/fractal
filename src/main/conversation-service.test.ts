@@ -583,6 +583,8 @@ describe('ConversationService', () => {
     expect(f.service.attachmentAllowed(ref, '/tmp/shot.png')).toBe(true);
     expect(f.service.attachmentAllowed(ref, '/etc/passwd')).toBe(false);
     expect(f.service.attachmentAllowed({ ...ref, projectPath: '/other' }, '/repo/notes.md')).toBe(false);
+    await f.service.close(ref);
+    expect(f.service.attachmentAllowed(ref, '/repo/notes.md')).toBe(false);
     await f.service.dispose();
   });
 });

@@ -96,8 +96,8 @@ export class ConversationService {
   /** Whether a path is an attachment on a user message of this open conversation; the only files the preview may read. */
   attachmentAllowed(input: ConversationRef, file: string): boolean {
     const ref = parseConversationRef(input);
-    const load = this.loads.get(conversationKey(ref));
-    if (!load || load.ref.projectPath !== ref.projectPath) return false;
+    const load = this.currentLoad(ref);
+    if (!load) return false;
     for (const turn of load.turns.values()) {
       if (turn.userMessage.attachments?.some((attachment) => attachment.path === file)) return true;
     }
