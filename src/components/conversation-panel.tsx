@@ -1,16 +1,31 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Square } from 'lucide-react';
+import { Paperclip, Square } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
-import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
+import { PromptInput, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, PromptInputHeader, PromptInputSubmit, PromptInputTextarea, usePromptInputAttachments, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
+import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
 import { Button } from '@/components/ui/button';
 import { useConversation } from '@/renderer/use-conversation';
-import { conversationKey, type ConversationRef, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
+import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type PromptAttachment, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
 // The transcript and composer share a reading measure at every panel width.
 const COLUMN = 'px-4 lg:px-[8%] xl:px-[14%] 2xl:px-[20%]';
+
+function AttachButton({ disabled }: { disabled: boolean }) {
+  const attachments = usePromptInputAttachments();
+  return (
+    <PromptInputButton aria-label="Attach files" disabled={disabled} onClick={attachments.openFileDialog}>
+      <Paperclip aria-hidden className="size-4" />
+    </PromptInputButton>
+  );
+}
+
+function ComposerSubmit({ blocked, hasText, sending }: { blocked: boolean; hasText: boolean; sending: boolean }) {
+  const attachments = usePromptInputAttachments();
+  return <PromptInputSubmit disabled={blocked || sending || (!hasText && attachments.files.length === 0)} status={sending ? 'submitted' : 'ready'} />;
+}
 
 function NativeConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
@@ -49,10 +64,13 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   }) : turn), [state.turns, state.requests]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
-    if (!eligible || pendingSend.current || !message.text.trim()) return;
+    if (!eligible || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
+    let attachments: PromptAttachment[];
+    try { attachments = promptAttachments(message.files); }
+    catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
     const draft = message.text;
-    const dispatched = send(draft.trim());
-    if (!dispatched) return;
+    const dispatched = send(draft.trim(), attachments);
+    if (!dispatched) throw new Error('Message was not sent');
     const attempt = {};
     pendingSend.current = attempt;
     setSending(true);
@@ -93,13 +111,26 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
         {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}
         {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
-        <PromptInput onSubmit={handleSubmit}>
+        <PromptInput
+          maxFiles={MAX_PROMPT_ATTACHMENTS}
+          multiple
+          onError={(error) => setActionError(error.message)}
+          onSubmit={handleSubmit}
+          resolvePath={(file) => window.fractal.attachments.pathFor(file)}
+          validateFile={composerFileError}
+        >
+          <PromptInputHeader className="p-0">
+            <PromptInputAttachments className="px-3 pt-3 pb-0">{(file) => <PromptInputAttachment data={file} />}</PromptInputAttachments>
+          </PromptInputHeader>
           <PromptInputBody><PromptInputTextarea aria-label="Message" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
-          <PromptInputFooter className="justify-end">
-            {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
-              <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
-            )}
-            <PromptInputSubmit disabled={!eligible || sending || !input.trim()} status={sending ? 'submitted' : 'ready'} />
+          <PromptInputFooter className="justify-between">
+            <AttachButton disabled={!eligible || sending} />
+            <div className="flex items-center gap-1">
+              {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
+                <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
+              )}
+              <ComposerSubmit blocked={!eligible} hasText={Boolean(input.trim())} sending={sending} />
+            </div>
           </PromptInputFooter>
         </PromptInput>
       </div>

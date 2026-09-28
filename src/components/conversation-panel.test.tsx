@@ -109,6 +109,87 @@ test('pins the highest-priority unresolved request and forwards decisions and in
   expect(screen.getByRole('region', { name: 'Question request' })).toBeTruthy();
 });
 
+test('attaches a picked file, sends it by path with no text, and clears it after sending', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  Object.assign(window.fractal, { attachments: { pathFor: () => '/work/fractal/notes.md' } });
+  URL.createObjectURL = vi.fn(() => 'blob:notes');
+  URL.revokeObjectURL = vi.fn();
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await userEvent.upload(screen.getByLabelText('Upload files'), new File(['# Notes'], 'notes.md', { type: 'text/markdown' }));
+  expect(screen.getByText('notes.md')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: '', attachments: [{ kind: 'path', path: '/work/fractal/notes.md' }] }));
+  await waitFor(() => expect(screen.queryByText('notes.md')).toBeNull());
+});
+
+test('keeps attachments when the send fails', async () => {
+  install('idle', async () => { throw new Error('Error invoking remote method: /work/fractal/notes.md no longer exists or cannot be read'); });
+  Object.assign(window.fractal, { attachments: { pathFor: () => '/work/fractal/notes.md' } });
+  URL.createObjectURL = vi.fn(() => 'blob:notes');
+  URL.revokeObjectURL = vi.fn();
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await userEvent.upload(screen.getByLabelText('Upload files'), new File(['# Notes'], 'notes.md', { type: 'text/markdown' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('no longer exists'));
+  expect(screen.getByText('notes.md')).toBeTruthy();
+});
+
+test('attaches a pasted pathless image as a chip and sends it as bytes', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  Object.assign(window.fractal, { attachments: { pathFor: () => '' } });
+  URL.createObjectURL = vi.fn(() => 'blob:shot');
+  URL.revokeObjectURL = vi.fn();
+  const png = new File(['fake-png-bytes'], 'shot.png', { type: 'image/png' });
+  const originalFileReader = globalThis.FileReader;
+  class StubFileReader {
+    onloadend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    result: string | null = null;
+    readAsDataURL() {
+      this.result = 'data:image/png;base64,ZmFrZS1wbmctYnl0ZXM=';
+      this.onloadend?.();
+    }
+  }
+  // @ts-expect-error stubbing the global for jsdom, which has no real blob-to-data-URL pipeline
+  globalThis.FileReader = StubFileReader;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async () => ({ blob: async () => new Blob(['fake-png-bytes'], { type: 'image/png' }) })) as unknown as typeof fetch;
+  try {
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    const textarea = screen.getByLabelText('Message');
+    const clipboardData = { items: [{ kind: 'file', getAsFile: () => png }] } as unknown as DataTransfer;
+    fireEvent.paste(textarea, { clipboardData });
+    expect(await screen.findByText('shot.png')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: '', attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/png', data: 'ZmFrZS1wbmctYnl0ZXM=' }] }));
+  } finally {
+    globalThis.FileReader = originalFileReader;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('attaches a dropped file and sends it by path', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  Object.assign(window.fractal, { attachments: { pathFor: () => '/work/fractal/notes.md' } });
+  URL.createObjectURL = vi.fn(() => 'blob:notes');
+  URL.revokeObjectURL = vi.fn();
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const file = new File(['# Notes'], 'notes.md', { type: 'text/markdown' });
+  const dataTransfer = { types: ['Files'], files: [file] } as unknown as DataTransfer;
+  const form = screen.getByLabelText('Message').closest('form') as HTMLFormElement;
+  fireEvent.drop(form, { dataTransfer });
+  expect(await screen.findByText('notes.md')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: '', attachments: [{ kind: 'path', path: '/work/fractal/notes.md' }] }));
+});
+
 test('resolves an imported historical request into audit history without a separate request-opened event', async () => {
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = options.top ?? 0; } });
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 280 : 560; });

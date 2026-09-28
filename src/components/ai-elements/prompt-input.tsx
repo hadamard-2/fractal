@@ -74,8 +74,10 @@ import {
 // Provider Context & Types
 // ============================================================================
 
+export type PromptInputFile = FileUIPart & { id: string; path?: string };
+
 export type AttachmentsContext = {
-  files: (FileUIPart & { id: string })[];
+  files: (PromptInputFile)[];
   add: (files: File[] | FileList) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -151,7 +153,7 @@ export function PromptInputProvider({
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<
-    (FileUIPart & { id: string })[]
+    (PromptInputFile)[]
   >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const openRef = useRef<() => void>(() => {});
@@ -277,7 +279,7 @@ export const usePromptInputAttachments = () => {
 };
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & { id: string };
+  data: PromptInputFile;
   className?: string;
 };
 
@@ -376,7 +378,7 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   "children"
 > & {
-  children: (attachment: FileUIPart & { id: string }) => ReactNode;
+  children: (attachment: PromptInputFile) => ReactNode;
 };
 
 export function PromptInputAttachments({
@@ -429,7 +431,7 @@ export const PromptInputActionAddAttachments = ({
 
 export type PromptInputMessage = {
   text: string;
-  files: FileUIPart[];
+  files: (FileUIPart & { path?: string })[];
 };
 
 export type PromptInputProps = Omit<
@@ -453,6 +455,10 @@ export type PromptInputProps = Omit<
     message: PromptInputMessage,
     event: FormEvent<HTMLFormElement>
   ) => void | Promise<void>;
+  /** Disk path for a file, or '' when it has none; recorded on the attachment as it is added. */
+  resolvePath?: (file: File) => string;
+  /** An error message to reject a file as it is added, given its disk path ('' when it has none). */
+  validateFile?: (file: File, path: string) => string | null;
 };
 
 export const PromptInput = ({
@@ -465,6 +471,8 @@ export const PromptInput = ({
   maxFileSize,
   onError,
   onSubmit,
+  resolvePath,
+  validateFile,
   children,
   ...props
 }: PromptInputProps) => {
@@ -477,7 +485,7 @@ export const PromptInput = ({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // ----- Local attachments (only used when no provider)
-  const [items, setItems] = useState<(FileUIPart & { id: string })[]>([]);
+  const [items, setItems] = useState<(PromptInputFile)[]>([]);
   const files = usingProvider ? controller.attachments.files : items;
 
   // Keep a ref to files for cleanup on unmount (avoids stale closure)
@@ -532,33 +540,42 @@ export const PromptInput = ({
         return;
       }
 
+      const checked: { file: File; path: string }[] = [];
+      for (const file of sized) {
+        const path = resolvePath?.(file) ?? '';
+        const rejection = validateFile?.(file, path);
+        if (rejection) { onError?.({ code: 'accept', message: rejection }); continue; }
+        checked.push({ file, path });
+      }
+
       setItems((prev) => {
         const capacity =
           typeof maxFiles === "number"
             ? Math.max(0, maxFiles - prev.length)
             : undefined;
         const capped =
-          typeof capacity === "number" ? sized.slice(0, capacity) : sized;
-        if (typeof capacity === "number" && sized.length > capacity) {
+          typeof capacity === "number" ? checked.slice(0, capacity) : checked;
+        if (typeof capacity === "number" && checked.length > capacity) {
           onError?.({
             code: "max_files",
             message: "Too many files. Some were not added.",
           });
         }
-        const next: (FileUIPart & { id: string })[] = [];
-        for (const file of capped) {
+        const next: (PromptInputFile)[] = [];
+        for (const { file, path } of capped) {
           next.push({
             id: nanoid(),
             type: "file",
             url: URL.createObjectURL(file),
             mediaType: file.type,
             filename: file.name,
+            ...(path ? { path } : {}),
           });
         }
         return prev.concat(next);
       });
     },
-    [matchesAccept, maxFiles, maxFileSize, onError]
+    [matchesAccept, maxFiles, maxFileSize, onError, resolvePath, validateFile]
   );
 
   const removeLocal = useCallback(
@@ -727,7 +744,7 @@ export const PromptInput = ({
     // Convert blob URLs to data URLs asynchronously
     Promise.all(
       files.map(async ({ id, ...item }) => {
-        if (item.url && item.url.startsWith("blob:")) {
+        if (!item.path && item.url && item.url.startsWith("blob:")) {
           const dataUrl = await convertBlobUrlToDataUrl(item.url);
           // If conversion failed, keep the original blob URL
           return {
@@ -738,7 +755,7 @@ export const PromptInput = ({
         return item;
       })
     )
-      .then((convertedFiles: FileUIPart[]) => {
+      .then((convertedFiles: (FileUIPart & { path?: string })[]) => {
         try {
           const result = onSubmit({ text, files: convertedFiles }, event);
 
