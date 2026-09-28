@@ -9,9 +9,12 @@ import type { HarnessAdapter } from '@/main/harness/types';
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>(),
   picker: vi.fn(),
+  openPath: vi.fn(async () => ''),
+  showItemInFolder: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: {}, BrowserWindow: {}, dialog: { showOpenDialog: electron.picker },
+  shell: { openPath: electron.openPath, showItemInFolder: electron.showItemInFolder },
   ipcMain: {
     handle: (channel: string, handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown) => {
       if (electron.handlers.has(channel)) throw new Error('Duplicate handler');
@@ -20,6 +23,13 @@ vi.mock('electron', () => ({
     removeHandler: (channel: string) => electron.handlers.delete(channel),
   },
 }));
+
+const attachments = vi.hoisted(() => ({
+  resolve: vi.fn(async (prompt: { text: string }) => ({ text: prompt.text })),
+  preview: vi.fn(async () => ({ kind: 'missing' as const })),
+}));
+vi.mock('@/main/attachments/resolve', async (actual) => ({ ...(await actual<typeof import('@/main/attachments/resolve')>()), resolveAttachments: attachments.resolve }));
+vi.mock('@/main/attachments/preview', () => ({ readAttachmentPreview: attachments.preview }));
 
 const ref = { provider: 'codex' as const, nativeSessionId: 'session', projectPath: '/repo' };
 const loadId = '00000000-0000-4000-8000-000000000001';
@@ -40,11 +50,12 @@ function fixture() {
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
     create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined),
     resolveRequest: vi.fn(async () => undefined), denyRequestsForOwner: vi.fn(async () => undefined),
+    attachmentAllowed: vi.fn((_ref: unknown, path: string) => path === '/repo/notes.md'),
   };
   const sender = new Sender();
   let current = sender;
   const getWindow = () => ({ webContents: current, isDestroyed: () => current.destroyed }) as unknown as BrowserWindow;
-  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow);
+  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow, { attachmentsRoot: '/data/attachments' });
   const registration = register();
   const invokeAs = async (source: Sender, channel: string, ...args: unknown[]) => {
     const handler = electron.handlers.get(`fractal:conversations:${channel}`);
@@ -79,11 +90,11 @@ describe('conversation IPC', () => {
     expect(electron.picker).not.toHaveBeenCalled();
   });
 
-  test('registers only seven invoke handlers, is idempotent, and preserves unrelated handlers', async () => {
+  test('registers only nine invoke handlers, is idempotent, and preserves unrelated handlers', async () => {
     const unrelated = vi.fn(); electron.handlers.set('unrelated', unrelated);
     const f = fixture();
     expect(f.register()).toBe(f.registration);
-    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request'].map((name) => `fractal:conversations:${name}`)].sort());
+    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment'].map((name) => `fractal:conversations:${name}`)].sort());
     await f.invoke('list');
     await boundary.disposeConversationIpc(); await boundary.disposeConversationIpc();
     expect([...electron.handlers.keys()]).toEqual(['unrelated']);
@@ -200,7 +211,7 @@ describe('conversation IPC', () => {
       loadConversation: vi.fn(), watchConversation: vi.fn(), continueConversation: vi.fn(),
     };
     const service = new ConversationService(new ConversationRegistry([adapter], async (value) => value), () => undefined);
-    boundary.registerConversationIpc(service, () => ({ webContents: sender, isDestroyed: () => false }) as unknown as BrowserWindow);
+    boundary.registerConversationIpc(service, () => ({ webContents: sender, isDestroyed: () => false }) as unknown as BrowserWindow, { attachmentsRoot: '/data/attachments' });
     electron.picker.mockResolvedValue({ canceled: false, filePaths: ['/tmp/../tmp'] });
     const handler = electron.handlers.get('fractal:conversations:create');
     if (!handler) throw new Error('Missing create handler');
@@ -235,7 +246,7 @@ describe('conversation IPC', () => {
       loadConversation: vi.fn(), createConversation: vi.fn(), continueConversation: vi.fn(),
     };
     const service = new ConversationService(new ConversationRegistry([adapter], async (path) => path), (event) => registration.emit(event));
-    const registration = boundary.registerConversationIpc(service, () => ({ webContents: sender, isDestroyed: () => false }) as unknown as BrowserWindow);
+    const registration = boundary.registerConversationIpc(service, () => ({ webContents: sender, isDestroyed: () => false }) as unknown as BrowserWindow, { attachmentsRoot: '/data/attachments' });
     const handler = electron.handlers.get('fractal:conversations:open'); if (!handler) throw new Error('Missing open handler');
     const opening = handler({ sender, senderFrame: sender.mainFrame } as unknown as IpcMainInvokeEvent, ref, loadId);
     const failed = expect(opening).rejects.toThrow('Conversation operation failed');
@@ -260,5 +271,35 @@ describe('conversation IPC', () => {
     expect(f.sender.send).toHaveBeenCalledTimes(1);
     expect(f.service.close.mock.calls).toEqual([[ref]]);
     expect(f.service.denyRequestsForOwner.mock.calls).toEqual([['41', 'Fractal window closed']]);
+  });
+
+  test('resolves attachments before continuing and surfaces attachment errors by name', async () => {
+    const f = fixture();
+    await f.invoke('open', ref, loadId);
+    attachments.resolve.mockResolvedValueOnce({ text: 'Go', attachments: [{ path: '/repo/a.ts' }] } as never);
+    await f.invoke('continue', ref, { text: 'Go', attachments: [{ kind: 'path', path: '/repo/a.ts' }] });
+    expect(attachments.resolve).toHaveBeenLastCalledWith({ text: 'Go', attachments: [{ kind: 'path', path: '/repo/a.ts' }] }, { root: '/data/attachments', ref });
+    expect(f.service.continue).toHaveBeenLastCalledWith(ref, { text: 'Go', attachments: [{ path: '/repo/a.ts' }] }, '41');
+    const { AttachmentError } = await import('@/main/attachments/resolve');
+    attachments.resolve.mockRejectedValueOnce(new AttachmentError('/repo/gone.ts no longer exists or cannot be read'));
+    await expect(f.invoke('continue', ref, { text: 'Go', attachments: [{ kind: 'path', path: '/repo/gone.ts' }] })).rejects.toThrow('/repo/gone.ts no longer exists or cannot be read');
+    attachments.resolve.mockRejectedValueOnce(new Error('EACCES secret detail'));
+    await expect(f.invoke('continue', ref, { text: 'Go', attachments: [{ kind: 'path', path: '/repo/x.ts' }] })).rejects.toThrow('Conversation operation failed');
+  });
+
+  test('previews and opens only attachments of an owned conversation', async () => {
+    const f = fixture();
+    await expect(f.invoke('preview-attachment', ref, '/repo/notes.md')).rejects.toThrow('Conversation is not owned by this renderer');
+    await f.invoke('open', ref, loadId);
+    await expect(f.invoke('preview-attachment', ref, '/repo/notes.md')).resolves.toEqual({ kind: 'missing' });
+    expect(attachments.preview).toHaveBeenLastCalledWith('/repo/notes.md');
+    await expect(f.invoke('preview-attachment', ref, '/etc/passwd')).rejects.toThrow('Attachment is not part of this conversation');
+    await expect(f.invoke('preview-attachment', ref, 'relative.md')).rejects.toThrow('Invalid attachment path');
+    await f.invoke('open-attachment', ref, '/repo/notes.md', 'reveal');
+    expect(electron.showItemInFolder).toHaveBeenCalledWith('/repo/notes.md');
+    await f.invoke('open-attachment', ref, '/repo/notes.md', 'open');
+    expect(electron.openPath).toHaveBeenCalledWith('/repo/notes.md');
+    await expect(f.invoke('open-attachment', ref, '/etc/passwd', 'open')).rejects.toThrow('Attachment is not part of this conversation');
+    await expect(f.invoke('open-attachment', ref, '/repo/notes.md', 'delete')).rejects.toThrow('Invalid attachment action');
   });
 });

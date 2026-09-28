@@ -571,4 +571,18 @@ describe('ConversationService', () => {
     expect(f.events.at(-1)).toMatchObject({ type: 'turn.upserted', turn: { blocks: [{ text: 'Dra' }] } });
     await f.service.dispose();
   });
+
+  test('allows only attachment paths recorded on the open conversation', async () => {
+    const f = fixture([
+      event('start:a', { kind: 'turn-started', turnId: 'a', userMessageId: 'user:a', text: 'Look\n\n<attachments>\n/repo/notes.md\n</attachments>', attachments: [{ path: '/tmp/shot.png', kind: 'image' }] }),
+      finish('a'),
+    ]);
+    expect(f.service.attachmentAllowed(ref, '/repo/notes.md')).toBe(false);
+    await f.service.open(ref, loadId);
+    expect(f.service.attachmentAllowed(ref, '/repo/notes.md')).toBe(true);
+    expect(f.service.attachmentAllowed(ref, '/tmp/shot.png')).toBe(true);
+    expect(f.service.attachmentAllowed(ref, '/etc/passwd')).toBe(false);
+    expect(f.service.attachmentAllowed({ ...ref, projectPath: '/other' }, '/repo/notes.md')).toBe(false);
+    await f.service.dispose();
+  });
 });

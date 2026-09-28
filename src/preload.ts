@@ -1,8 +1,8 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
-import { contextBridge, ipcRenderer } from 'electron';
-import type { ConversationApi } from '@/shared/conversation-contract';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { AttachmentsApi, ConversationApi } from '@/shared/conversation-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
 import { CONVERSATION_CHANNELS as CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
@@ -54,4 +54,8 @@ const terminals: TerminalApi = {
   },
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, settings, terminals });
+const attachments: AttachmentsApi = {
+  pathFor: (file) => webUtils.getPathForFile(file),
+};
+
+contextBridge.exposeInMainWorld('fractal', { conversations, settings, terminals, attachments });

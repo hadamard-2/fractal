@@ -1,18 +1,20 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { AttachmentError, resolveAttachments } from '@/main/attachments/resolve';
+import { readAttachmentPreview } from '@/main/attachments/preview';
 import type { ConversationService } from '@/main/conversation-service';
 import { canonicalizeProjectPath } from '@/main/harness/project-path';
 import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
-import { CONVERSATION_CHANNELS as CHANNELS, parseConversationRef, parseConversationStreamEvent, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
+import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 
 type Owner = { sender: WebContents; closed: boolean; detach: () => void };
 type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
 type Registration = { emit: (payload: unknown) => void; dispose: () => Promise<void> };
 let activeRegistration: { service: ConversationService; registration: Registration } | undefined;
 
-export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null): Registration {
+export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string }): Registration {
   if (activeRegistration) {
     if (activeRegistration.service !== service) throw new Error('Conversation IPC is already registered');
     return activeRegistration.registration;
@@ -77,11 +79,15 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     ipcMain.handle(channel, async (event, ...args: unknown[]) => {
       const window = authorize(event);
       if (args.length !== arity) throw new Error('Invalid conversation arguments');
-      // Parsing and ownership errors are locally authored; native failures are hidden.
+      // Parsing, ownership, and attachment errors are locally authored; native failures are hidden.
       const owner = ownerFor(event.sender);
       const run = prepare(args, owner, window);
       try { assertLive(owner); const result = await run(); assertLive(owner); return result; }
-      catch { throw new Error('Conversation operation failed'); }
+      catch (error) {
+        // Attachment problems name the user's own file and are safe to show; everything else stays hidden.
+        if (error instanceof AttachmentError) throw error;
+        throw new Error('Conversation operation failed');
+      }
     });
     channels.push(channel);
   };
@@ -155,7 +161,7 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     });
     invoke(CHANNELS.continue, 2, ([input, promptInput], owner) => {
       const ref = parseConversationRef(input), prompt = parsePromptInput(promptInput); requireLoad(owner, ref);
-      return () => service.continue(ref, prompt, String(owner.sender.id));
+      return async () => service.continue(ref, await resolveAttachments(prompt, { root: options.attachmentsRoot, ref }), String(owner.sender.id));
     });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {
       const ref = parseConversationRef(input); requireLoad(owner, ref);
@@ -166,6 +172,23 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       const load = requests.get(id);
       if (!load || load.owner !== owner) throw new Error('Conversation is not owned by this renderer');
       return async () => { requests.delete(id); await service.resolveRequest(id, decision); };
+    });
+    const requireAttachment = (owner: Owner, input: unknown, pathInput: unknown) => {
+      const ref = parseConversationRef(input), file = parseAttachmentPath(pathInput); requireLoad(owner, ref);
+      if (!service.attachmentAllowed(ref, file)) throw new Error('Attachment is not part of this conversation');
+      return file;
+    };
+    invoke(CHANNELS.previewAttachment, 2, ([input, pathInput], owner) => {
+      const file = requireAttachment(owner, input, pathInput);
+      return () => readAttachmentPreview(file);
+    });
+    invoke(CHANNELS.openAttachment, 3, ([input, pathInput, actionInput], owner) => {
+      const action = parseAttachmentOpenAction(actionInput), file = requireAttachment(owner, input, pathInput);
+      return async () => {
+        if (action === 'reveal') { shell.showItemInFolder(file); return; }
+        const failure = await shell.openPath(file);
+        if (failure) throw new AttachmentError(`Could not open ${file}: ${failure}`);
+      };
     });
   } catch (error) { void registration.dispose(); throw error; }
   activeRegistration = { service, registration };

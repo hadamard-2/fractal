@@ -4,7 +4,7 @@ import type { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
-import type { ConversationRun, Unsubscribe } from '@/main/harness/types';
+import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
 import { conversationKey, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef, parseLoadId } from '@/shared/conversation-ipc';
 
@@ -93,6 +93,17 @@ export class ConversationService {
     }
   }
 
+  /** Whether a path is an attachment on a user message of this open conversation; the only files the preview may read. */
+  attachmentAllowed(input: ConversationRef, file: string): boolean {
+    const ref = parseConversationRef(input);
+    const load = this.loads.get(conversationKey(ref));
+    if (!load || load.ref.projectPath !== ref.projectPath) return false;
+    for (const turn of load.turns.values()) {
+      if (turn.userMessage.attachments?.some((attachment) => attachment.path === file)) return true;
+    }
+    return false;
+  }
+
   async create(provider: ProviderId, projectPath: string): Promise<ConversationRef> {
     this.assertAvailable();
     const ref = await this.registry.create(provider, projectPath);
@@ -104,7 +115,7 @@ export class ConversationService {
     return ref;
   }
 
-  async continue(input: ConversationRef, prompt: { text: string }, rendererId: string): Promise<void> {
+  async continue(input: ConversationRef, prompt: AgentPrompt, rendererId: string): Promise<void> {
     this.assertAvailable();
     const ref = parseConversationRef(input);
     const key = conversationKey(ref);

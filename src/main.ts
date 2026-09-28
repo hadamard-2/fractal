@@ -227,7 +227,7 @@ app.on('ready', () => {
       }),
     ], canonicalPath);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
-    const registration = registerConversationIpc(conversationService, () => mainWindowRef);
+    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments') });
     loadWindow(window);
   })();
   // Startup failures never forward native exception details into the renderer.
