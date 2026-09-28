@@ -151,7 +151,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         role="complementary"
         style={{ width, transform: open ? undefined : 'translateX(100%)', visibility: open ? 'visible' : 'hidden' }}
       >
-        <TooltipProvider delayDuration={500}>
+        <TooltipProvider>
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
             {/*
               The tab row sits on the app bar's centerline, level with the

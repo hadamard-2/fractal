@@ -5,8 +5,11 @@ import { Tooltip as TooltipPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
+// Half a second before a tooltip appears, so passing the pointer across the
+// UI doesn't flash them. Radix's skipDelayDuration still shows the next one
+// immediately while moving between triggers.
 function TooltipProvider({
-  delayDuration = 0,
+  delayDuration = 500,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return (
