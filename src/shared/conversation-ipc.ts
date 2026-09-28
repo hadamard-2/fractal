@@ -1,5 +1,4 @@
 import {
-  CONVERSATION_IMAGE_TYPES,
   MAX_ATTACHMENT_IMAGE_DATA_LENGTH,
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_CONVERSATION_IMAGE_DATA_LENGTH,
@@ -8,8 +7,8 @@ import {
   type AttachmentOpenAction,
   type BlockingRequest,
   type CaptureCompleteness,
+  isConversationImageType,
   type ConversationImage,
-  type ConversationImageType,
   type ConversationRef,
   type ConversationRuntime,
   type ConversationStreamEvent,
@@ -103,10 +102,6 @@ function completeness(value: unknown): value is CaptureCompleteness {
 
 function absolutePath(value: unknown): value is string {
   return nonblankText(value, MAX_PATH_LENGTH) && (value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(value));
-}
-
-export function isConversationImageType(value: unknown): value is ConversationImageType {
-  return (CONVERSATION_IMAGE_TYPES as readonly unknown[]).includes(value);
 }
 
 function invalidPrompt(): never {

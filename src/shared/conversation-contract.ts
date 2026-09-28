@@ -66,6 +66,11 @@ export const CONVERSATION_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif',
 export const MAX_CONVERSATION_IMAGE_DATA_LENGTH = 8_000_000;
 
 export type ConversationImageType = (typeof CONVERSATION_IMAGE_TYPES)[number];
+
+export function isConversationImageType(value: unknown): value is ConversationImageType {
+  return (CONVERSATION_IMAGE_TYPES as readonly unknown[]).includes(value);
+}
+
 /** Most attachments one message may carry. */
 export const MAX_PROMPT_ATTACHMENTS = 10;
 /** Largest image Fractal sends or previews, in raw bytes; Fractal's own bound on IPC and memory, not a provider limit. */
