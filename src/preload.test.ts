@@ -19,7 +19,7 @@ describe('preload conversation surface', () => {
     const { surface } = await preload();
     expect(mocks.expose.mock.calls[0][0]).toBe('fractal');
     expect(Object.keys(surface).sort()).toEqual(['conversations', 'settings', 'terminals']);
-    expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'onEvent'].sort());
+    expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'previewAttachment', 'openAttachment', 'onEvent'].sort());
     await surface.conversations.list(); await surface.conversations.open(ref, loadId); await surface.conversations.close(ref);
     await surface.conversations.create({ provider: 'claude' }); await surface.conversations.continue(ref, { text: 'hi' });
     await surface.conversations.interrupt(ref); await surface.conversations.resolveRequest('request', { kind: 'deny' });

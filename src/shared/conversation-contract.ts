@@ -65,8 +65,47 @@ export const CONVERSATION_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif',
 /** Longest base64 payload carried inline; larger images are left out rather than rejected. */
 export const MAX_CONVERSATION_IMAGE_DATA_LENGTH = 8_000_000;
 
+export type ConversationImageType = (typeof CONVERSATION_IMAGE_TYPES)[number];
+/** Most attachments one message may carry. */
+export const MAX_PROMPT_ATTACHMENTS = 10;
+/** Largest image Fractal sends or previews, in raw bytes; Fractal's own bound on IPC and memory, not a provider limit. */
+export const MAX_ATTACHMENT_IMAGE_BYTES = 20 * 1024 * 1024;
+/** Base64 length of an image at MAX_ATTACHMENT_IMAGE_BYTES. */
+export const MAX_ATTACHMENT_IMAGE_DATA_LENGTH = Math.ceil(MAX_ATTACHMENT_IMAGE_BYTES / 3) * 4;
+/** Longest text an attachment preview returns. */
+export const ATTACHMENT_PREVIEW_TEXT_BYTES = 256 * 1024;
+
+/** A file the user attached: a path on disk, or a pasted image with no file behind it. */
+export type PromptAttachment =
+  | { kind: 'path'; path: string }
+  | { kind: 'bytes'; name: string; mediaType: ConversationImageType; data: string };
+
+export interface PromptInput {
+  text: string;
+  attachments?: PromptAttachment[];
+}
+
+/** An attachment recorded on a sent user message, by path; contents are fetched through previewAttachment. */
+export interface UserMessageAttachment {
+  path: string;
+  kind: 'image' | 'file';
+}
+
+export type AttachmentPreview =
+  | { kind: 'image'; image: ConversationImage; size: number; modifiedAt: number }
+  | { kind: 'text'; text: string; truncated: boolean; size: number; modifiedAt: number }
+  | { kind: 'binary'; size: number; modifiedAt: number }
+  | { kind: 'missing' };
+
+export type AttachmentOpenAction = 'open' | 'reveal';
+
+export interface AttachmentsApi {
+  /** The file's path on disk, or '' when it has none (for example a pasted screenshot). */
+  pathFor(file: File): string;
+}
+
 export interface ConversationImage {
-  mediaType: (typeof CONVERSATION_IMAGE_TYPES)[number];
+  mediaType: ConversationImageType;
   /** Base64 image bytes. */
   data: string;
 }
@@ -111,7 +150,7 @@ export type TurnBlock =
 export interface ConversationTurn {
   id: string;
   nativeId: string;
-  userMessage: { id: string; text: string; createdAt?: number; images?: ConversationImage[] };
+  userMessage: { id: string; text: string; createdAt?: number; images?: ConversationImage[]; attachments?: UserMessageAttachment[] };
   blocks: TurnBlock[];
   status: 'active' | 'completed' | 'interrupted' | 'failed';
   captureCompleteness: CaptureCompleteness;
@@ -139,9 +178,11 @@ export interface ConversationApi {
   open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities }>;
   close(ref: ConversationRef): Promise<void>;
   create(input: { provider: ProviderId; projectPath?: string }): Promise<ConversationRef | null>;
-  continue(ref: ConversationRef, prompt: { text: string }): Promise<void>;
+  continue(ref: ConversationRef, prompt: PromptInput): Promise<void>;
   interrupt(ref: ConversationRef): Promise<void>;
   resolveRequest(requestId: string, decision: UserDecision): Promise<void>;
+  previewAttachment(ref: ConversationRef, path: string): Promise<AttachmentPreview>;
+  openAttachment(ref: ConversationRef, path: string, action: AttachmentOpenAction): Promise<void>;
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 

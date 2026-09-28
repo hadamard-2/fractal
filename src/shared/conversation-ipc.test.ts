@@ -129,6 +129,16 @@ describe('native conversation event validation', () => {
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'codex', prompt: 'Choose', fieldId: 'choice', choices: sparseChoices, allowFreeText: false, status: 'open' } })).toThrow('Invalid conversation stream event');
   });
 
+  test('accepts user message attachments and rejects relative paths or unknown kinds', () => {
+    const attachments = [{ path: '/repo/notes.md', kind: 'file' as const }, { path: '/tmp/shot.png', kind: 'image' as const }];
+    const withAttachments = { ...turn, userMessage: { ...turn.userMessage, attachments } };
+    expect(parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: withAttachments })).toMatchObject({ turn: withAttachments });
+    for (const bad of [[{ path: 'notes.md', kind: 'file' }], [{ path: '/repo/a', kind: 'video' }], { path: '/repo/a', kind: 'file' }]) {
+      const turnWithBad = { ...turn, userMessage: { ...turn.userMessage, attachments: bad } };
+      expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: turnWithBad })).toThrow('Invalid conversation stream event');
+    }
+  });
+
   test('accepts inline images on user messages and actions, and rejects unknown image types', () => {
     const images = [{ mediaType: 'image/png' as const, data: 'AAA' }];
     const withImages = { ...turn, userMessage: { ...turn.userMessage, images }, blocks: [{ ...turn.blocks[1], actions: [{ ...action, images }] }] };

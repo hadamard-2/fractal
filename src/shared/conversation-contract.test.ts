@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { conversationKey } from '@/shared/conversation-contract';
+import { conversationKey, MAX_ATTACHMENT_IMAGE_DATA_LENGTH } from '@/shared/conversation-contract';
 import {
+  parseAttachmentOpenAction,
+  parseAttachmentPath,
   parseConversationRef,
   parsePromptInput,
   parseUserDecision,
@@ -50,6 +52,26 @@ describe('native conversation IPC contract', () => {
     expect(() => parseUserDecision({ kind: 'allow-forever' })).toThrow('Invalid decision');
     expect(() => parseUserDecision({ kind: 'allow-and-remember', scope: '  ' })).toThrow('Invalid decision');
     expect(() => parseUserDecision({ kind: 'answer', answers: { answer: 'x'.repeat(100_001) } })).toThrow('Invalid decision');
+  });
+
+  test('accepts attachments with or without text and rejects malformed ones', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
+    expect(parsePromptInput({ text: 'Look', attachments: [{ kind: 'path', path: '/repo/a.ts' }] })).toEqual({ text: 'Look', attachments: [{ kind: 'path', path: '/repo/a.ts' }] });
+    expect(parsePromptInput({ text: '', attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/png', data: png }] })).toEqual({ text: '', attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/png', data: png }] });
+    expect(parsePromptInput({ text: 'Plain' })).toEqual({ text: 'Plain' });
+    expect(() => parsePromptInput({ text: ' ', attachments: [] })).toThrow('Prompt cannot be empty');
+    expect(() => parsePromptInput({ text: 'x', attachments: [{ kind: 'path', path: 'relative/a.ts' }] })).toThrow('Invalid prompt');
+    expect(() => parsePromptInput({ text: 'x', attachments: [{ kind: 'bytes', name: 'a.svg', mediaType: 'image/svg+xml', data: png }] })).toThrow('Invalid prompt');
+    expect(() => parsePromptInput({ text: 'x', attachments: [{ kind: 'bytes', name: 'a.png', mediaType: 'image/png', data: 'not base64!' }] })).toThrow('Invalid prompt');
+    expect(() => parsePromptInput({ text: 'x', attachments: Array.from({ length: 11 }, () => ({ kind: 'path', path: '/repo/a.ts' })) })).toThrow('at most 10 attachments');
+    expect(() => parsePromptInput({ text: 'x', attachments: [{ kind: 'bytes', name: 'big.png', mediaType: 'image/png', data: 'A'.repeat(MAX_ATTACHMENT_IMAGE_DATA_LENGTH + 4) }] })).toThrow('larger than 20 MiB');
+  });
+
+  test('parses attachment paths and open actions', () => {
+    expect(parseAttachmentPath('/repo/a.ts')).toBe('/repo/a.ts');
+    expect(() => parseAttachmentPath('a.ts')).toThrow('Invalid attachment path');
+    expect(parseAttachmentOpenAction('reveal')).toBe('reveal');
+    expect(() => parseAttachmentOpenAction('delete')).toThrow('Invalid attachment action');
   });
 
   test('returns fresh values and preserves submitted prompt text', () => {

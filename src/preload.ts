@@ -21,6 +21,8 @@ const conversations: ConversationApi = {
   continue: (ref, prompt) => ipcRenderer.invoke(CHANNELS.continue, ref, prompt),
   interrupt: (ref) => ipcRenderer.invoke(CHANNELS.interrupt, ref),
   resolveRequest: (id, decision) => ipcRenderer.invoke(CHANNELS.resolveRequest, id, decision),
+  previewAttachment: (ref, path) => ipcRenderer.invoke(CHANNELS.previewAttachment, ref, path),
+  openAttachment: (ref, path, action) => ipcRenderer.invoke(CHANNELS.openAttachment, ref, path, action),
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       let event;

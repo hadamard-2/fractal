@@ -1,18 +1,26 @@
 import {
   CONVERSATION_IMAGE_TYPES,
+  MAX_ATTACHMENT_IMAGE_DATA_LENGTH,
+  MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_CONVERSATION_IMAGE_DATA_LENGTH,
+  MAX_PROMPT_ATTACHMENTS,
   type AgentAction,
+  type AttachmentOpenAction,
   type BlockingRequest,
   type CaptureCompleteness,
   type ConversationImage,
+  type ConversationImageType,
   type ConversationRef,
   type ConversationRuntime,
   type ConversationStreamEvent,
   type ConversationSummary,
   type ConversationTurn,
+  type PromptAttachment,
+  type PromptInput,
   type ProviderId,
   type TurnBlock,
   type UserDecision,
+  type UserMessageAttachment,
 } from '@/shared/conversation-contract';
 
 export const CONVERSATION_CHANNELS = {
@@ -20,6 +28,7 @@ export const CONVERSATION_CHANNELS = {
   close: 'fractal:conversations:close', create: 'fractal:conversations:create',
   continue: 'fractal:conversations:continue', interrupt: 'fractal:conversations:interrupt',
   resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
+  previewAttachment: 'fractal:conversations:preview-attachment', openAttachment: 'fractal:conversations:open-attachment',
 } as const;
 
 const MAX_TEXT_LENGTH = 1_000_000;
@@ -27,6 +36,8 @@ const MAX_DECISION_TEXT_LENGTH = 100_000;
 const MAX_SESSION_ID_LENGTH = 512;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_HISTORY_TURNS = 50;
+const MAX_ATTACHMENT_NAME_LENGTH = 1_024;
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const RUNTIMES: readonly ConversationRuntime[] = [
   'idle',
@@ -94,6 +105,14 @@ function absolutePath(value: unknown): value is string {
   return nonblankText(value, MAX_PATH_LENGTH) && (value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(value));
 }
 
+export function isConversationImageType(value: unknown): value is ConversationImageType {
+  return (CONVERSATION_IMAGE_TYPES as readonly unknown[]).includes(value);
+}
+
+function invalidPrompt(): never {
+  throw new Error('Invalid prompt');
+}
+
 function invalidRef(): never {
   throw new Error('Invalid conversation reference');
 }
@@ -124,11 +143,40 @@ export function parseLoadId(value: unknown): string {
   return value;
 }
 
-export function parsePromptInput(value: unknown): { text: string } {
-  if (!plainObject(value) || typeof value.text !== 'string') invalidDecision();
-  if (value.text.trim().length === 0) throw new Error('Prompt cannot be empty');
+export function parsePromptInput(value: unknown): PromptInput {
+  if (!plainObject(value) || typeof value.text !== 'string') invalidPrompt();
   if (value.text.length > MAX_TEXT_LENGTH) throw new Error('Prompt is too large');
-  return { text: value.text as string };
+  const attachments = value.attachments === undefined ? [] : parsePromptAttachments(value.attachments);
+  if (value.text.trim().length === 0 && attachments.length === 0) throw new Error('Prompt cannot be empty');
+  return attachments.length > 0 ? { text: value.text, attachments } : { text: value.text };
+}
+
+function parsePromptAttachments(value: unknown): PromptAttachment[] {
+  if (!denseArray(value)) invalidPrompt();
+  if (value.length > MAX_PROMPT_ATTACHMENTS) throw new Error(`A message can carry at most ${MAX_PROMPT_ATTACHMENTS} attachments`);
+  return value.map((item): PromptAttachment => {
+    if (!plainObject(item)) invalidPrompt();
+    if (item.kind === 'path') {
+      if (!absolutePath(item.path)) invalidPrompt();
+      return { kind: 'path', path: item.path };
+    }
+    if (item.kind === 'bytes') {
+      if (typeof item.data === 'string' && item.data.length > MAX_ATTACHMENT_IMAGE_DATA_LENGTH) throw new Error(`Pasted image is larger than ${MAX_ATTACHMENT_IMAGE_BYTES / (1024 * 1024)} MiB`);
+      if (!nonblankText(item.name, MAX_ATTACHMENT_NAME_LENGTH) || !isConversationImageType(item.mediaType) || typeof item.data !== 'string' || !BASE64.test(item.data)) invalidPrompt();
+      return { kind: 'bytes', name: item.name, mediaType: item.mediaType, data: item.data };
+    }
+    invalidPrompt();
+  });
+}
+
+export function parseAttachmentPath(value: unknown): string {
+  if (!absolutePath(value)) throw new Error('Invalid attachment path');
+  return value;
+}
+
+export function parseAttachmentOpenAction(value: unknown): AttachmentOpenAction {
+  if (value !== 'open' && value !== 'reveal') throw new Error('Invalid attachment action');
+  return value;
 }
 
 function cloneUserDecision(value: unknown, error: () => never = invalidDecision): UserDecision {
@@ -165,8 +213,18 @@ function cloneImages(value: unknown): { images?: ConversationImage[] } {
   if (!denseArray(value)) invalidEvent();
   return {
     images: mapDense(value, (image) => {
-      if (!plainObject(image) || !(CONVERSATION_IMAGE_TYPES as readonly unknown[]).includes(image.mediaType) || !nonblankText(image.data, MAX_CONVERSATION_IMAGE_DATA_LENGTH)) invalidEvent();
-      return { mediaType: image.mediaType as ConversationImage['mediaType'], data: image.data };
+      if (!plainObject(image) || !isConversationImageType(image.mediaType) || !nonblankText(image.data, MAX_CONVERSATION_IMAGE_DATA_LENGTH)) invalidEvent();
+      return { mediaType: image.mediaType, data: image.data };
+    }),
+  };
+}
+
+function cloneUserAttachments(value: unknown): { attachments?: UserMessageAttachment[] } {
+  if (value === undefined) return {};
+  return {
+    attachments: mapDense(value, (item) => {
+      if (!plainObject(item) || !absolutePath(item.path) || (item.kind !== 'image' && item.kind !== 'file')) invalidEvent();
+      return { path: item.path, kind: item.kind };
     }),
   };
 }
@@ -264,7 +322,7 @@ function cloneTurn(value: unknown): ConversationTurn {
   return {
     id: value.id,
     nativeId: value.nativeId,
-    userMessage: { id: value.userMessage.id as string, text: value.userMessage.text as string, ...(value.userMessage.createdAt === undefined ? {} : { createdAt: value.userMessage.createdAt as number }), ...cloneImages(value.userMessage.images) },
+    userMessage: { id: value.userMessage.id as string, text: value.userMessage.text as string, ...(value.userMessage.createdAt === undefined ? {} : { createdAt: value.userMessage.createdAt as number }), ...cloneImages(value.userMessage.images), ...cloneUserAttachments(value.userMessage.attachments) },
     blocks: mapDense(value.blocks, cloneTurnBlock),
     status: value.status as 'active' | 'completed' | 'interrupted' | 'failed',
     captureCompleteness: value.captureCompleteness,
