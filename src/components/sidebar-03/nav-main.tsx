@@ -3,7 +3,7 @@
 import { PointerActivationConstraints, PointerSensor } from '@dnd-kit/dom';
 import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react';
 import { isSortable, useSortable, type UseSortableInput } from '@dnd-kit/react/sortable';
-import { Folder, FolderOpen } from 'lucide-react';
+import { Archive, ArchiveRestore, Folder, FolderOpen, FolderX } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Collapsible,
@@ -22,7 +22,16 @@ import {
 import { conversationKey, type ConversationRef, type ConversationRuntime, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
+import type { ProjectStatus } from '@/renderer/project-visibility';
 import { cn } from '@/lib/utils';
+
+/** The right-click actions on a project row. */
+export type ProjectMenuActions = {
+  statusOf: (projectPath: string) => ProjectStatus;
+  onToggleArchive: (projectPath: string) => void;
+  onRemove: (group: ProjectConversationGroup) => void;
+};
 
 export type NavSelection = {
   ref: ConversationRef;
@@ -92,6 +101,7 @@ export default function NavMain({
   onCreated,
   onMoveProject,
   onMoveChat,
+  projectMenu,
 }: {
   groups: ProjectConversationGroup[];
   providers: HarnessStatus[];
@@ -100,6 +110,7 @@ export default function NavMain({
   onCreated: (ref: ConversationRef) => void;
   onMoveProject?: (source: string, target: string) => void;
   onMoveChat?: (projectPath: string, source: string, target: string) => void;
+  projectMenu?: ProjectMenuActions;
 }) {
   const { state } = useSidebar();
   const [openProjects, setOpenProjects] = useState<Set<string>>(() =>
@@ -174,6 +185,8 @@ export default function NavMain({
               }}
               open={isOpen}
             >
+              <ContextMenu>
+              <ContextMenuTrigger asChild disabled={!projectMenu}>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton
                   className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
@@ -184,6 +197,21 @@ export default function NavMain({
                   <span>{group.displayName}</span>
                 </SidebarMenuButton>
               </CollapsibleTrigger>
+              </ContextMenuTrigger>
+              {projectMenu && (
+                <ContextMenuContent className="min-w-44">
+                  <ContextMenuItem onSelect={() => projectMenu.onToggleArchive(group.projectPath)}>
+                    {projectMenu.statusOf(group.projectPath) === 'archived'
+                      ? <><ArchiveRestore />Unarchive project</>
+                      : <><Archive />Archive project</>}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => projectMenu.onRemove(group)} variant="destructive">
+                    <FolderX />Remove project…
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              )}
+              </ContextMenu>
               <CollapsibleContent>
                 <SidebarMenuSub className="my-1 ml-3.5 mr-0 pr-0">
                   {visibleConversations.map((conversation, chatIndex) => {

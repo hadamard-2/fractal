@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { AppShell } from './app-shell';
 import { ExecuteMode } from './execute-mode';
 vi.mock('./terminal-view', () => ({ TerminalView: (): null => null }));
 import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
-import type { SidebarOrder } from '@/shared/settings-contract';
+import type { FractalSettings, SidebarOrder } from '@/shared/settings-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-choice', projectPath: '/work/fractal' };
 const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
@@ -167,5 +167,126 @@ describe('home screen actions', () => {
     terminal.remove();
     await user.keyboard('{Control>}k{/Control}');
     expect(await screen.findByRole('searchbox')).toBeTruthy();
+  });
+});
+
+describe('project status', () => {
+  const creatable = { ...capabilities, create: true };
+  const atlasRef: ConversationRef = { provider: 'codex', nativeSessionId: 'native-atlas', projectPath: '/work/atlas' };
+  function install({ create = vi.fn<ConversationApi['create']>(async () => null), stored: initial = {} }: { create?: ConversationApi['create']; stored?: Partial<FractalSettings> } = {}) {
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+    window.ResizeObserver = class { observe(): void { return undefined; } unobserve(): void { return undefined; } disconnect(): void { return undefined; } };
+    // Filtering shifts sortable rows, and dnd-kit animates the shift through
+    // getAnimations() on the document and the rows, which jsdom lacks.
+    Object.defineProperty(document, 'getAnimations', { configurable: true, value: (): Animation[] => [] });
+    Object.defineProperty(Element.prototype, 'getAnimations', { configurable: true, value: (): Animation[] => [] });
+    const api: ConversationApi = {
+      list: async () => ({
+        projects: [
+          { projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Fractal chat', updatedAt: 5, runtime: 'idle', captureCompleteness: 'complete' }] },
+          { projectPath: atlasRef.projectPath, displayName: 'Atlas', conversations: [{ ref: atlasRef, title: 'Atlas chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] },
+        ],
+        providers: [{ provider: 'codex', availability: 'available', capabilities: creatable }],
+      }),
+      open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
+      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, onEvent: () => () => undefined,
+    };
+    let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', ...initial };
+    const set = vi.fn(async (patch: Partial<FractalSettings>) => { stored = { ...stored, ...patch }; return stored; });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => stored, set } } });
+    render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+    return { set, create, stored: () => stored };
+  }
+  const projectRow = (name: string) => screen.queryByRole('button', { name });
+  async function openMenu(name: string) {
+    fireEvent.contextMenu(await screen.findByRole('button', { name }));
+    return screen.findByRole('menu');
+  }
+  async function chooseFilter(user: ReturnType<typeof userEvent.setup>, label: 'Active' | 'Archived' | 'All') {
+    await user.click(screen.getByRole('button', { name: /Filter projects by status/ }));
+    await user.click(await screen.findByRole('menuitemradio', { name: label }));
+  }
+
+  test('archiving moves a project behind the Archived filter, and unarchiving brings it back', async () => {
+    const { set, stored } = install();
+    const user = userEvent.setup();
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Archive project' }));
+    await waitFor(() => expect(projectRow('Atlas')).toBeNull());
+    expect(projectRow('Fractal')).toBeTruthy();
+    expect(set).toHaveBeenCalledWith({ projectVisibility: { archived: ['/work/atlas'], removed: [] } });
+
+    await chooseFilter(user, 'Archived');
+    expect(await screen.findByRole('button', { name: 'Atlas' })).toBeTruthy();
+    expect(projectRow('Fractal')).toBeNull();
+    await waitFor(() => expect(stored().projectFilter).toBe('archived'));
+
+    await chooseFilter(user, 'All');
+    expect(await screen.findByRole('button', { name: 'Fractal' })).toBeTruthy();
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Unarchive project' }));
+    await chooseFilter(user, 'Active');
+    expect(await screen.findByRole('button', { name: 'Atlas' })).toBeTruthy();
+  });
+
+  test('archived projects stay searchable but are not offered for new conversations', async () => {
+    install({ stored: { projectVisibility: { archived: ['/work/atlas'], removed: [] } } });
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Fractal' });
+    expect(projectRow('Atlas')).toBeNull();
+    await user.keyboard('{Control>}k{/Control}');
+    expect(await screen.findByRole('button', { name: /Atlas chat/ })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect((screen.getByRole('button', { name: /New conversation/ }) as HTMLButtonElement).disabled).toBe(false));
+    await user.click(screen.getByRole('button', { name: /New conversation/ }));
+    const picker = await screen.findByRole('dialog');
+    expect(within(picker).queryByRole('button', { name: /Atlas/ })).toBeNull();
+    expect(within(picker).getByRole('button', { name: /Fractal/ })).toBeTruthy();
+  });
+
+  test('starting a conversation in an archived project unarchives it', async () => {
+    const create = vi.fn<ConversationApi['create']>(async ({ provider, projectPath }) => ({ provider, nativeSessionId: 'created', projectPath: projectPath ?? '' }));
+    const { stored } = install({ create, stored: { projectVisibility: { archived: ['/work/atlas'], removed: [] }, projectFilter: 'all' } });
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Atlas' });
+    await user.click(screen.getByRole('button', { name: 'New chat in Atlas' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex', projectPath: '/work/atlas' }));
+    await waitFor(() => expect(stored().projectVisibility).toEqual({ archived: [], removed: [] }));
+  });
+
+  test('removing asks first, hides the project everywhere, and re-adding its folder restores it', async () => {
+    const create = vi.fn<ConversationApi['create']>(async ({ provider }) => ({ provider, nativeSessionId: 'created', projectPath: '/work/atlas' }));
+    const { stored } = install({ create, stored: { projectFilter: 'all' } });
+    const user = userEvent.setup();
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Remove Atlas from Fractal?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(projectRow('Atlas')).toBeTruthy();
+
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(projectRow('Atlas')).toBeNull());
+    expect(stored().projectVisibility).toEqual({ archived: [], removed: ['/work/atlas'] });
+    await chooseFilter(user, 'Archived');
+    expect(projectRow('Atlas')).toBeNull();
+    await user.keyboard('{Control>}k{/Control}');
+    await screen.findByRole('searchbox');
+    expect(screen.queryByRole('button', { name: /Atlas chat/ })).toBeNull();
+    await user.keyboard('{Escape}');
+
+    await chooseFilter(user, 'All');
+    await user.click(screen.getByRole('button', { name: 'New project' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex' }));
+    await waitFor(() => expect(stored().projectVisibility).toEqual({ archived: [], removed: [] }));
+    expect(await screen.findByRole('button', { name: 'Atlas' })).toBeTruthy();
+  });
+
+  test('removing the project of the open conversation closes it', async () => {
+    install();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Atlas' }));
+    await user.click(await screen.findByText('Atlas chat'));
+    await waitFor(() => expect(screen.queryByText('Pick up a thread')).toBeNull());
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }));
+    expect(await screen.findByText('Pick up a thread')).toBeTruthy();
   });
 });

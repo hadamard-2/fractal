@@ -1,8 +1,8 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { FolderPlus, Search } from 'lucide-react';
-import { useRef } from 'react';
+import { FolderPlus, ListFilter, Search } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -11,6 +11,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -22,9 +23,14 @@ import {
 import { cn } from '@/lib/utils';
 import { FractalMark } from '@/components/fractal-mark';
 import type { NavSelection } from '@/components/sidebar-03/nav-main';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { visibleProjects } from '@/renderer/project-visibility';
+import type { ProjectVisibilityState } from '@/renderer/use-project-visibility';
+import type { ProjectFilter } from '@/shared/settings-contract';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
-import type { ConversationRef } from '@/shared/conversation-contract';
+import type { ConversationRef, ProjectConversationGroup } from '@/shared/conversation-contract';
 import { SearchDialog } from '@/components/conversation/search-dialog';
 import { useSidebarOrder } from '@/components/sidebar-03/use-sidebar-order';
 
@@ -43,6 +49,9 @@ const SIDEBAR_DRAG_FLOOR = 120;
 
 const clampSidebarWidth = (width: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_DRAG_FLOOR, width));
+
+const FILTER_LABELS: Record<ProjectFilter, string> = { active: 'Active', archived: 'Archived', all: 'All' };
+const EMPTY_FILTER_TEXT: Partial<Record<ProjectFilter, string>> = { active: 'No active projects.', archived: 'No archived projects.' };
 
 /**
  * A grab strip on the sidebar's right edge. Lives inside the fixed sidebar
@@ -152,6 +161,8 @@ export function DashboardSidebar({
   onNewProject,
   searchOpen = false,
   onSearchOpenChange,
+  projectVisibility,
+  onRemoveProject,
   width,
   onWidthChange,
   onResizingChange,
@@ -176,6 +187,13 @@ export function DashboardSidebar({
   // Owned by AppShell so its keyboard shortcut and the empty state can open it.
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
+  // Archived/removed projects and the status filter, owned by AppShell so
+  // search and the new-conversation picker agree with the sidebar. Absent,
+  // every project shows and the project menu is off.
+  projectVisibility?: ProjectVisibilityState;
+  // Hides a project after the user confirms; AppShell also closes its open
+  // conversation.
+  onRemoveProject?: (projectPath: string) => void;
   // Chosen sidebar width in px, owned by App for the same reason as the
   // open/collapsed state. Null means the 16rem default.
   width?: number | null;
@@ -187,6 +205,11 @@ export function DashboardSidebar({
   const { projects, providers, error } = useConversationHistory();
   const { orderedProjects, ready: orderReady, error: orderError, moveProject, moveChat } = useSidebarOrder(projects);
   const isCollapsed = state === 'collapsed';
+  const [pendingRemoval, setPendingRemoval] = useState<ProjectConversationGroup | null>(null);
+  const filter = projectVisibility?.filter ?? 'all';
+  const shownProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, filter) : orderedProjects;
+  const searchableProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, 'searchable') : orderedProjects;
+  const emptyFilterText = orderReady && projects.length > 0 && shownProjects.length === 0 ? EMPTY_FILTER_TEXT[filter] : undefined;
 
   return (
     <Sidebar
@@ -263,16 +286,49 @@ export function DashboardSidebar({
         */}
         <SidebarGroup className="min-h-0 flex-1 px-0 py-0">
           <SidebarGroupLabel>Projects</SidebarGroupLabel>
+          {projectVisibility && (
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    {/* Tinted away from the default Active view, so a different list reads as filtered. */}
+                    <SidebarGroupAction
+                      aria-label={`Filter projects by status: ${FILTER_LABELS[filter]}`}
+                      className={cn('top-1.5 right-2 text-sidebar-foreground/60', filter !== 'active' && 'text-primary-text')}
+                    >
+                      <ListFilter />
+                    </SidebarGroupAction>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="right">Filter by status</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="min-w-36" side="right">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">Status</DropdownMenuLabel>
+                <DropdownMenuRadioGroup onValueChange={(value) => projectVisibility.setFilter(value as ProjectFilter)} value={filter}>
+                  {(['active', 'archived', 'all'] as const).map((value) => (
+                    <DropdownMenuRadioItem key={value} value={value}>{FILTER_LABELS[value]}</DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <SidebarGroupContent className="sidebar-projects-fade min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pb-10 pr-1">
             {orderReady && <NavMain
               onCreated={(ref) => onConversationCreated?.(ref)}
               onMoveChat={moveChat}
               onMoveProject={moveProject}
               onSelect={onItemSelect}
-              groups={orderedProjects}
+              groups={shownProjects}
+              projectMenu={projectVisibility && {
+                statusOf: projectVisibility.statusOf,
+                onToggleArchive: (projectPath) => projectVisibility.setStatus(projectPath, projectVisibility.statusOf(projectPath) === 'archived' ? 'active' : 'archived'),
+                onRemove: setPendingRemoval,
+              }}
               providers={providers}
               selected={selected ?? null}
             />}
+            {emptyFilterText && <p className="px-2 py-1 text-xs text-muted-foreground">{emptyFilterText}</p>}
+            {projectVisibility?.error && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Project status could not be loaded or saved.</p>}
             {orderError && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Sidebar order could not be loaded or saved.</p>}
             {error && projects.length === 0 && (
               <p className="px-2 py-1 text-muted-foreground text-xs">
@@ -291,8 +347,30 @@ export function DashboardSidebar({
         onWidthChange={onWidthChange}
         width={width}
       />
+      <Dialog onOpenChange={(open) => { if (!open) setPendingRemoval(null); }} open={pendingRemoval !== null}>
+        <DialogContent className="rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-2xl sm:max-w-md" overlayClassName="bg-black/45 backdrop-blur-sm">
+          <DialogHeader>
+            <DialogTitle>Remove {pendingRemoval?.displayName} from Fractal?</DialogTitle>
+            <DialogDescription>
+              Its Claude Code and Codex history stays on disk. To bring it back, start a conversation in that folder with New project.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setPendingRemoval(null)} variant="outline">Cancel</Button>
+            <Button
+              onClick={() => {
+                if (pendingRemoval) onRemoveProject?.(pendingRemoval.projectPath);
+                setPendingRemoval(null);
+              }}
+              variant="destructive"
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <SearchDialog
-        groups={orderedProjects}
+        groups={searchableProjects}
         onOpenChange={(open) => onSearchOpenChange?.(open)}
         onSelect={(item) => onItemSelect?.(item)}
         open={searchOpen}

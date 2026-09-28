@@ -6,6 +6,8 @@ import { conversationKey, type ConversationRef } from '@/shared/conversation-con
 import { ProjectPickerDialog } from '@/components/conversation/project-picker-dialog';
 import { useStartConversation } from '@/components/conversation/use-start-conversation';
 import { isAppShortcut } from '@/renderer/shortcuts';
+import { visibleProjects } from '@/renderer/project-visibility';
+import { useProjectVisibility } from '@/renderer/use-project-visibility';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -91,9 +93,21 @@ export function AppShell({
   // Lifted out of the sidebar so Mod+K and the empty state can open it.
   const [searchOpen, setSearchOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const projectVisibility = useProjectVisibility();
+  // Every conversation Fractal starts makes its folder active again: that is
+  // how an archived project is unarchived by use, and how a removed one comes
+  // back when it is re-added through New project.
   const selectCreated = (ref: ConversationRef) => {
+    projectVisibility.setStatus(ref.projectPath, 'active');
     setSelectedRef(ref);
     setSelectedItem(null);
+  };
+  const removeProject = (projectPath: string) => {
+    projectVisibility.setStatus(projectPath, 'removed');
+    if (selectedRef?.projectPath === projectPath) {
+      setSelectedRef(null);
+      setSelectedItem(null);
+    }
   };
   const starter = useStartConversation({ providers: history.providers, onCreated: selectCreated });
   const selectedProject = selectedRef && projects.find((project) => project.projectPath === selectedRef.projectPath);
@@ -155,7 +169,9 @@ export function AppShell({
         onConversationCreated={selectCreated}
         onNewProject={actions.addProject}
         onOpenSettings={onOpenSettings}
+        onRemoveProject={removeProject}
         onSearchOpenChange={setSearchOpen}
+        projectVisibility={projectVisibility}
         onResizingChange={setResizing}
         onWidthChange={onSidebarWidthChange}
         onItemSelect={(item) => {
@@ -234,7 +250,7 @@ export function AppShell({
         </header>
         {children({ selectedRef, history, actions })}
       </SidebarInset>
-      <ProjectPickerDialog onOpenChange={setPickerOpen} onPick={(target) => void starter.start(target)} open={pickerOpen} projects={projects} />
+      <ProjectPickerDialog onOpenChange={setPickerOpen} onPick={(target) => void starter.start(target)} open={pickerOpen} projects={visibleProjects(projects, projectVisibility.visibility, 'startable')} />
       {starter.chooser}
     </SidebarProvider>
   );

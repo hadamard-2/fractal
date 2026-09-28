@@ -1,12 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
+import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, type ProjectFilter, type ProjectVisibility, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
 
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder() });
+const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active' });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
+const PROJECT_FILTER_VALUES: readonly string[] = ['active', 'archived', 'all'];
 
 /**
  * Settings files are user-editable JSON (and may come from a newer Fractal),
@@ -42,6 +44,28 @@ function coerceSidebarOrder(value: unknown): SidebarOrder {
   return { projects: coerceStrings(order.projects), chatsByProject };
 }
 
+function coerceProjectVisibility(value: unknown): ProjectVisibility {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return emptyProjectVisibility();
+  const visibility = value as Record<string, unknown>;
+  const removed = coerceStrings(visibility.removed);
+  // A path in both lists counts as removed, the stronger of the two states.
+  return { archived: coerceStrings(visibility.archived).filter((projectPath) => !removed.includes(projectPath)), removed };
+}
+
+function coerceProjectFilter(value: unknown): ProjectFilter {
+  return typeof value === 'string' && PROJECT_FILTER_VALUES.includes(value) ? (value as ProjectFilter) : 'active';
+}
+
+function coerceSettings(record: Record<string, unknown>): FractalSettings {
+  return {
+    theme: coerceTheme(record.theme),
+    defaultCodingAgent: coerceDefaultCodingAgent(record.defaultCodingAgent),
+    sidebarOrder: coerceSidebarOrder(record.sidebarOrder),
+    projectVisibility: coerceProjectVisibility(record.projectVisibility),
+    projectFilter: coerceProjectFilter(record.projectFilter),
+  };
+}
+
 /**
  * App preferences, persisted as JSON in the userData directory. Deliberately
  * synchronous and tiny: settings are read once at startup — before any window
@@ -70,11 +94,11 @@ export class SettingsStore {
     }
     const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? parsed as Record<string, unknown> : {};
-    return { theme: coerceTheme(record.theme), defaultCodingAgent: coerceDefaultCodingAgent(record.defaultCodingAgent), sidebarOrder: coerceSidebarOrder(record.sidebarOrder) };
+    return coerceSettings(record);
   }
 
   save(settings: FractalSettings): FractalSettings {
-    const validated: FractalSettings = { theme: coerceTheme(settings.theme), defaultCodingAgent: coerceDefaultCodingAgent(settings.defaultCodingAgent), sidebarOrder: coerceSidebarOrder(settings.sidebarOrder) };
+    const validated = coerceSettings({ ...settings });
     const tmpPath = `${this.filePath}.tmp`;
     writeFileSync(tmpPath, JSON.stringify(validated, null, 2));
     renameSync(tmpPath, this.filePath);

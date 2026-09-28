@@ -11,10 +11,25 @@ export interface SidebarOrder {
   chatsByProject: Record<string, string[]>;
 }
 
+/**
+ * Project folder paths Fractal hides. Projects come from the agents' own
+ * history, so neither state touches anything on disk: archived projects are
+ * tucked behind the sidebar filter, removed ones are hidden everywhere until a
+ * conversation is started in the folder again.
+ */
+export interface ProjectVisibility {
+  archived: string[];
+  removed: string[];
+}
+
+export type ProjectFilter = 'active' | 'archived' | 'all';
+
 export interface FractalSettings {
   theme: ThemePreference;
   defaultCodingAgent: DefaultCodingAgent;
   sidebarOrder: SidebarOrder;
+  projectVisibility: ProjectVisibility;
+  projectFilter: ProjectFilter;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';

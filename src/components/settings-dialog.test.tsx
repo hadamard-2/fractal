@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 test('loads the coding agent and saves a choice from its selector', async () => {
   let stored: FractalSettings = {
-    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} },
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active',
   };
   const set = vi.fn(async (patch: Partial<FractalSettings>) => {
     stored = { ...stored, ...patch };
