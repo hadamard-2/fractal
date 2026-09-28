@@ -156,8 +156,9 @@ function normalizeItem(item: unknown, turnId: string, observedAt: number, final:
   switch (item.type) {
     case 'userMessage': {
       const text = item.content.filter((content) => content.type === 'text').map((content) => content.text).join('\n');
-      const unknown = item.content.flatMap((content, index) => content.type === 'text' ? [] : [unsupported(`${item.id}:content:${index}`, content.type, observedAt, turnId)]);
-      return [event(item.id, item.type, observedAt, { kind: 'turn-started', turnId, userMessageId: item.id, text }), ...unknown];
+      const attachments = item.content.flatMap((content) => content.type === 'localImage' ? [{ path: content.path, kind: 'image' as const }] : []);
+      const unknown = item.content.flatMap((content, index) => content.type === 'text' || content.type === 'localImage' ? [] : [unsupported(`${item.id}:content:${index}`, content.type, observedAt, turnId)]);
+      return [event(item.id, item.type, observedAt, { kind: 'turn-started', turnId, userMessageId: item.id, text, createdAt: observedAt, ...(attachments.length > 0 ? { attachments } : {}) }), ...unknown];
     }
     case 'agentMessage':
       return [event(item.id, item.type, observedAt, { kind: 'assistant-text', turnId, blockId: item.id, text: item.text, final })];
@@ -284,7 +285,7 @@ function isFileChange(value: unknown): value is { path: string; diff: string } {
 function isThreadItem(value: unknown): value is ThreadItem {
   if (!isObject(value) || typeof value.type !== 'string' || typeof value.id !== 'string') return false;
   switch (value.type) {
-    case 'userMessage': return Array.isArray(value.content) && value.content.every((content) => isObject(content) && typeof content.type === 'string' && (content.type !== 'text' || typeof content.text === 'string'));
+    case 'userMessage': return Array.isArray(value.content) && value.content.every((content) => isObject(content) && typeof content.type === 'string' && (content.type !== 'text' || typeof content.text === 'string') && (content.type !== 'localImage' || typeof content.path === 'string'));
     case 'agentMessage': return typeof value.text === 'string';
     case 'reasoning': return Array.isArray(value.summary) && value.summary.every((part) => typeof part === 'string') && Array.isArray(value.content) && value.content.every((part) => typeof part === 'string');
     case 'commandExecution': return typeof value.command === 'string' && typeof value.status === 'string' && Array.isArray(value.commandActions) && (value.aggregatedOutput === null || typeof value.aggregatedOutput === 'string') && (value.exitCode === null || typeof value.exitCode === 'number');

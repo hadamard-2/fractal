@@ -5,10 +5,11 @@ import type {
   ConversationImage,
   ProviderId,
   UserDecision,
+  UserMessageAttachment,
 } from '@/shared/conversation-contract';
 
 export type NativeEventPayload =
-  | { kind: 'turn-started'; turnId: string; userMessageId: string; text: string; createdAt?: number; images?: ConversationImage[] }
+  | { kind: 'turn-started'; turnId: string; userMessageId: string; text: string; createdAt?: number; images?: ConversationImage[]; attachments?: UserMessageAttachment[] }
   // concludesTurn: the provider marked the message this text belongs to as the one that ended the turn.
   | { kind: 'assistant-text'; turnId: string; blockId?: string; text: string; final: boolean; concludesTurn?: true }
   | { kind: 'action-requested'; turnId: string; actionId: string; actionKind: 'file-read' | 'file-edit' | 'command' | 'search' | 'tool' | 'subagent'; label: string; parentActionId?: string; detail?: string }

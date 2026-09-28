@@ -1,4 +1,5 @@
 import type {
+  ConversationImageType,
   ConversationRef,
   ConversationSummary,
   HarnessCapabilities,
@@ -16,6 +17,17 @@ export interface LoadedConversation {
   events: AsyncIterable<NativeEvent>;
 }
 
+/** An attachment resolved to a file on disk; image is set only when the file sniffs as a supported image. */
+export interface ResolvedAttachment {
+  path: string;
+  image?: ConversationImageType;
+}
+
+export interface AgentPrompt {
+  text: string;
+  attachments?: ResolvedAttachment[];
+}
+
 export interface ConversationRun {
   events: AsyncIterable<NativeEvent>;
   interrupt(): Promise<void>;
@@ -31,5 +43,5 @@ export interface HarnessAdapter {
   loadConversation(ref: ConversationRef): Promise<LoadedConversation>;
   watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe>;
   createConversation(projectPath: string): Promise<ConversationRef>;
-  continueConversation(ref: ConversationRef, prompt: { text: string }): Promise<ConversationRun>;
+  continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;
 }

@@ -199,4 +199,16 @@ describe('Codex native normalization', () => {
     expect(events.find((event) => event.nativeId === 'command-1:status')?.payload).toMatchObject({ kind: 'action-updated', status: 'running', output: 'running output' });
     expect(events.find((event) => event.nativeId === 'running-file:file:a.ts:status')?.payload).toMatchObject({ kind: 'action-updated', status: 'running', patch: 'patch' });
   });
+
+  test('records local images on the user message instead of reporting them unsupported', () => {
+    const thread = structuredClone(threadRead.thread) as typeof threadRead.thread;
+    (thread.turns[0].items[0] as { content: unknown[] }).content = [
+      { type: 'text', text: 'What is this?', text_elements: [] },
+      { type: 'localImage', path: '/tmp/shot.png' },
+      { type: 'skill', name: 'review', path: '/skills/review' },
+    ];
+    const events = normalizeCodexThread(thread as never);
+    expect(events[0].payload).toMatchObject({ kind: 'turn-started', text: 'What is this?', attachments: [{ path: '/tmp/shot.png', kind: 'image' }], createdAt: thread.turns[0].startedAt * 1000 });
+    expect(events.filter((event) => event.nativeId.startsWith('user-1:content:')).map((event) => event.nativeType)).toEqual(['skill']);
+  });
 });

@@ -6,6 +6,7 @@ import type {
   ConversationTurn,
   TurnBlock,
 } from '@/shared/conversation-contract';
+import { splitAttachmentBlock } from '@/main/harness/attachment-block';
 import type { NativeEvent } from '@/main/harness/reconciler';
 
 export type TurnProjectionUpdate = { turn: ConversationTurn; finalized: boolean };
@@ -156,14 +157,17 @@ export class TurnProjector {
 
     const { payload } = event;
     const unanchored = this.takeUnanchoredUnsupported();
+    const split = splitAttachmentBlock(payload.text);
+    const attachments = [...(payload.attachments ?? []), ...split.paths.map((path) => ({ path, kind: 'file' as const }))];
     this.current = {
       id: payload.turnId,
       nativeId: event.nativeId,
       userMessage: {
         id: payload.userMessageId,
-        text: payload.text,
+        text: split.text,
         ...(payload.createdAt === undefined ? {} : { createdAt: payload.createdAt }),
         ...(payload.images === undefined ? {} : { images: payload.images }),
+        ...(attachments.length > 0 ? { attachments } : {}),
       },
       blocks: unanchored.blocks,
       status: 'active',

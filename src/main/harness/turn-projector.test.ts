@@ -285,6 +285,19 @@ describe('projectTurns', () => {
       actions: [{ id: 'child', status: 'failed', completedAt: 7 }],
     });
   });
+
+  test('moves a trailing attachment block into user message attachments after provider images', () => {
+    const [turn] = projectTurns([
+      event('u9', 1, { kind: 'turn-started', turnId: 't9', userMessageId: 'u9', text: 'Look\n\n<attachments>\n/repo/a.ts\n</attachments>', attachments: [{ path: '/tmp/shot.png', kind: 'image' }] }),
+    ]);
+    expect(turn.userMessage.text).toBe('Look');
+    expect(turn.userMessage.attachments).toEqual([{ path: '/tmp/shot.png', kind: 'image' }, { path: '/repo/a.ts', kind: 'file' }]);
+  });
+
+  test('omits attachments when a user message has none', () => {
+    const [turn] = projectTurns([event('u10', 1, { kind: 'turn-started', turnId: 't10', userMessageId: 'u10', text: 'Plain' })]);
+    expect(turn.userMessage).not.toHaveProperty('attachments');
+  });
 });
 
 describe('TurnProjector lifecycle', () => {
