@@ -327,8 +327,8 @@ export function DashboardSidebar({
               providers={providers}
               selected={selected ?? null}
             />}
-            {emptyFilterText && <p className="px-2 py-1 text-xs text-muted-foreground">{emptyFilterText}</p>}
-            {projectVisibility?.error && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Project status could not be loaded or saved.</p>}
+            {emptyFilterText && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">{emptyFilterText}</p>}
+            {projectVisibility?.error && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">Project status could not be loaded or saved.</p>}
             {orderError && <p className="px-2 py-1 text-xs text-muted-foreground" role="status">Sidebar order could not be loaded or saved.</p>}
             {error && projects.length === 0 && (
               <p className="px-2 py-1 text-muted-foreground text-xs">
