@@ -7,6 +7,7 @@ import type { ConversationTurn as ConversationTurnData, TurnBlock, UserDecision 
 import { AgentAction, UnsupportedActivity } from './agent-action';
 import { BlockingRequest } from './blocking-request';
 import { ConversationImages } from './conversation-images';
+import { MessageAttachments } from './message-attachments';
 import { WorkPacket, workPacketSummary } from './work-packet';
 
 type ResolveRequest = (requestId: string, decision: UserDecision) => void | Promise<void>;
@@ -91,6 +92,7 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
     <article aria-label="Conversation turn" className="space-y-4">
       <Message from="user">
         {turn.userMessage.images && <ConversationImages className="justify-end" images={turn.userMessage.images} />}
+        {turn.userMessage.attachments && <MessageAttachments attachments={turn.userMessage.attachments} sentAt={turn.userMessage.createdAt} />}
         {turn.userMessage.text && <MessageContent><MessageResponse className="max-w-none text-sm leading-6">{turn.userMessage.text}</MessageResponse></MessageContent>}
       </Message>
       <div className="space-y-4" aria-label="Agent response">
