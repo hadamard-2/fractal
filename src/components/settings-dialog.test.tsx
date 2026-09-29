@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 test('loads the coding agent and saves a choice from its selector', async () => {
   let stored: FractalSettings = {
-    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active',
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true,
   };
   const set = vi.fn(async (patch: Partial<FractalSettings>) => {
     stored = { ...stored, ...patch };
@@ -45,4 +45,24 @@ test('shows Claude Code when settings came from an older payload without an agen
   render(<SettingsDialog open onOpenChange={vi.fn()} />);
   const codingAgent = await screen.findByRole('combobox', { name: 'Coding agent' });
   await waitFor(() => expect(codingAgent.textContent).toContain('Claude Code'));
+});
+
+test('turns agent color tags off, reporting the change and reverting it if the save fails', async () => {
+  const stored: FractalSettings = {
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true,
+  };
+  const set = vi.fn(async () => { throw new Error('disk full'); });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: {
+    settings: { get: async () => stored, set },
+  } });
+  const onChange = vi.fn();
+
+  render(<SettingsDialog open onOpenChange={vi.fn()} onShowAgentColorTagsChange={onChange} />);
+  const toggle = await screen.findByRole('switch', { name: 'Agent color tags' });
+  await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
+
+  await userEvent.setup().click(toggle);
+  expect(set).toHaveBeenCalledWith({ showAgentColorTags: false });
+  await waitFor(() => expect(onChange.mock.calls).toEqual([[false], [true]]));
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
 });

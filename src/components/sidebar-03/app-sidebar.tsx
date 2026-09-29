@@ -163,6 +163,7 @@ export function DashboardSidebar({
   onSearchOpenChange,
   projectVisibility,
   onRemoveProject,
+  showAgentColorTags,
   width,
   onWidthChange,
   onResizingChange,
@@ -194,6 +195,8 @@ export function DashboardSidebar({
   // Hides a project after the user confirms; AppShell also closes its open
   // conversation.
   onRemoveProject?: (projectPath: string) => void;
+  // Whether chat rows show their agent's color dot. Defaults to shown.
+  showAgentColorTags?: boolean;
   // Chosen sidebar width in px, owned by App for the same reason as the
   // open/collapsed state. Null means the 16rem default.
   width?: number | null;
@@ -326,6 +329,7 @@ export function DashboardSidebar({
               }}
               providers={providers}
               selected={selected ?? null}
+              showAgentColorTags={showAgentColorTags}
             />}
             {emptyFilterText && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">{emptyFilterText}</p>}
             {projectVisibility?.error && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden" role="status">Project status could not be loaded or saved.</p>}

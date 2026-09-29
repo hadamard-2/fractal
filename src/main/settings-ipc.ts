@@ -11,6 +11,7 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
     ...(patch.sidebarOrder !== undefined ? { sidebarOrder: patch.sidebarOrder } : {}),
     ...(patch.projectVisibility !== undefined ? { projectVisibility: patch.projectVisibility } : {}),
     ...(patch.projectFilter !== undefined ? { projectFilter: patch.projectFilter } : {}),
+    ...(patch.showAgentColorTags !== undefined ? { showAgentColorTags: patch.showAgentColorTags } : {}),
   };
 }
 

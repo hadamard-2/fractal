@@ -61,6 +61,7 @@ export function AppShell({
   onOpenSettings,
   insetRef,
   onProjectPathChange,
+  showAgentColorTags,
   children,
 }: {
   // Controlled by App so the open/collapsed state remains stable.
@@ -75,6 +76,8 @@ export function AppShell({
   insetRef?: Ref<HTMLElement>;
   // The selected conversation's project, where new terminals start.
   onProjectPathChange?: (path: string | null) => void;
+  // The agent-color-tags setting, held by App beside the settings dialog.
+  showAgentColorTags?: boolean;
   children: (context: ShellContext) => ReactNode;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
@@ -172,6 +175,7 @@ export function AppShell({
         onRemoveProject={removeProject}
         onSearchOpenChange={setSearchOpen}
         projectVisibility={projectVisibility}
+        showAgentColorTags={showAgentColorTags}
         onResizingChange={setResizing}
         onWidthChange={onSidebarWidthChange}
         onItemSelect={(item) => {

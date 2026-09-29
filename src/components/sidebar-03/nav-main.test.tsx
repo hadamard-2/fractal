@@ -152,6 +152,18 @@ describe('NavMain', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe('Claude Code');
   });
 
+  test('hides provider markers when agent color tags are off but keeps the agent in the name', async () => {
+    render(
+      <SidebarProvider>
+        <NavMain groups={[fractalGroup]} onCreated={vi.fn()} onSelect={vi.fn()} providers={[codex]} selected={null} showAgentColorTags={false} />
+      </SidebarProvider>
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
+    const claudeChat = screen.getByRole('button', { name: 'Fix parser, Claude Code conversation, Working elsewhere' });
+    expect(claudeChat.querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+    expect(screen.getByRole('button', { name: /Review IPC, Codex conversation/ }).querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+  });
+
   test('keeps an explicitly collapsed project closed when its summaries refresh', async () => {
     const user = userEvent.setup();
     const view = renderNav();
@@ -198,7 +210,7 @@ describe('NavMain', () => {
     const user = userEvent.setup();
     const create = vi.fn(async () => fractalGroup.conversations[0].ref);
     const onCreated = vi.fn();
-    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active' }) } } });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true }) } } });
     renderNav([fractalGroup], null, vi.fn(), onCreated);
 
     const project = screen.getByRole('button', { name: 'Fractal' });

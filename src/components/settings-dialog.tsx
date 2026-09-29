@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, type ThemePreference } from '@/shared/settings-contract';
 
@@ -34,9 +35,13 @@ const CODING_AGENT_OPTIONS = [
 export function SettingsDialog({
   open,
   onOpenChange,
+  onShowAgentColorTagsChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // App mirrors this one setting for the sidebar, which doesn't reload
+  // settings on its own; called optimistically and again on revert.
+  onShowAgentColorTagsChange?: (show: boolean) => void;
 }) {
   const [settings, setSettings] = useState<FractalSettings | null>(null);
 
@@ -77,6 +82,20 @@ export function SettingsDialog({
       .set({ defaultCodingAgent })
       .then(setSettings)
       .catch(() => setSettings(previous));
+  };
+
+  const setShowAgentColorTags = (showAgentColorTags: boolean) => {
+    if (!settings || settings.showAgentColorTags === showAgentColorTags) return;
+    const previous = settings;
+    setSettings({ ...previous, showAgentColorTags });
+    onShowAgentColorTagsChange?.(showAgentColorTags);
+    window.fractal.settings
+      .set({ showAgentColorTags })
+      .then(setSettings)
+      .catch(() => {
+        setSettings(previous);
+        onShowAgentColorTagsChange?.(previous.showAgentColorTags);
+      });
   };
 
   return (
@@ -157,6 +176,21 @@ export function SettingsDialog({
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
+              <div className="mt-6 flex items-center justify-between gap-6">
+                <div className="flex flex-col gap-1">
+                  <h3 id="agent-color-tags-heading" className="text-sm font-medium">Agent color tags</h3>
+                  <p id="agent-color-tags-description" className="text-sm text-muted-foreground">
+                    Tag sidebar chats with Claude Code orange or Codex blue.
+                  </p>
+                </div>
+                <Switch
+                  aria-describedby="agent-color-tags-description"
+                  aria-labelledby="agent-color-tags-heading"
+                  checked={settings?.showAgentColorTags ?? true}
+                  disabled={!settings}
+                  onCheckedChange={setShowAgentColorTags}
+                />
+              </div>
             </section>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, ty
 
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active' });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', showAgentColorTags: true });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
@@ -56,6 +56,10 @@ function coerceProjectFilter(value: unknown): ProjectFilter {
   return typeof value === 'string' && PROJECT_FILTER_VALUES.includes(value) ? (value as ProjectFilter) : 'active';
 }
 
+function coerceBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 function coerceSettings(record: Record<string, unknown>): FractalSettings {
   return {
     theme: coerceTheme(record.theme),
@@ -63,6 +67,7 @@ function coerceSettings(record: Record<string, unknown>): FractalSettings {
     sidebarOrder: coerceSidebarOrder(record.sidebarOrder),
     projectVisibility: coerceProjectVisibility(record.projectVisibility),
     projectFilter: coerceProjectFilter(record.projectFilter),
+    showAgentColorTags: coerceBoolean(record.showAgentColorTags, true),
   };
 }
 

@@ -23,6 +23,9 @@ export default function App() {
   // reachable from every mode (Cmd+, works even where the sidebar — and thus
   // the footer button — isn't mounted), and stay mounted across mode changes.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Mirrored here for the sidebar, which never reloads settings itself; the
+  // dialog reports changes back. Starts on, the stored default.
+  const [showAgentColorTags, setShowAgentColorTags] = useState(true);
   // The right panel is app-level: one instance beside every mode, so its
   // tabs and shells survive mode changes. Width is null until first open.
   const [rightOpen, setRightOpen] = useState(false);
@@ -34,6 +37,21 @@ export default function App() {
   // The home screen is Execute with nothing selected; the selected project is
   // null exactly then. The mode toggle stays out of it.
   const onHomeScreen = mode === 'execute' && projectPath === null;
+
+  useEffect(() => {
+    let cancelled = false;
+    window.fractal.settings
+      .get()
+      .then((settings) => {
+        if (!cancelled) setShowAgentColorTags(settings.showAgentColorTags);
+      })
+      .catch(() => {
+        // Keep the default rather than guess; the dialog shows the same failure.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Cmd+, (Ctrl+, elsewhere) — the canonical application-settings shortcut.
   // Matched on `code` like main.ts's window shortcuts, so it survives
@@ -136,6 +154,7 @@ export default function App() {
             sidebarWidth={sidebarWidth}
             onSidebarWidthChange={setSidebarWidth}
             onOpenSettings={() => setSettingsOpen(true)}
+            showAgentColorTags={showAgentColorTags}
           >
             {(shell) => (
               <>
@@ -148,7 +167,7 @@ export default function App() {
         </RightWorkspace>
       </div>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onShowAgentColorTagsChange={setShowAgentColorTags} />
     </div>
   );
 }

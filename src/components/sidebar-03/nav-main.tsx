@@ -102,6 +102,7 @@ export default function NavMain({
   onMoveProject,
   onMoveChat,
   projectMenu,
+  showAgentColorTags = true,
 }: {
   groups: ProjectConversationGroup[];
   providers: HarnessStatus[];
@@ -111,6 +112,8 @@ export default function NavMain({
   onMoveProject?: (source: string, target: string) => void;
   onMoveChat?: (projectPath: string, source: string, target: string) => void;
   projectMenu?: ProjectMenuActions;
+  // Off hides the dot only; the row's accessible name still carries the agent.
+  showAgentColorTags?: boolean;
 }) {
   const { state } = useSidebar();
   const [openProjects, setOpenProjects] = useState<Set<string>>(() =>
@@ -239,12 +242,14 @@ export default function NavMain({
                             type="button"
                           >
                             <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${conversation.ref.provider === 'claude' ? 'bg-[#D97757]' : 'bg-[#3941FF]'}`} />
-                              </TooltipTrigger>
-                              <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
-                            </Tooltip>
+                            {showAgentColorTags && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${conversation.ref.provider === 'claude' ? 'bg-[#D97757]' : 'bg-[#3941FF]'}`} />
+                                </TooltipTrigger>
+                                <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
+                              </Tooltip>
+                            )}
                           </button>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>

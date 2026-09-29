@@ -30,6 +30,8 @@ export interface FractalSettings {
   sidebarOrder: SidebarOrder;
   projectVisibility: ProjectVisibility;
   projectFilter: ProjectFilter;
+  /** Colored per-agent dot on each sidebar chat row. */
+  showAgentColorTags: boolean;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';
