@@ -6,20 +6,36 @@ import started from 'electron-squirrel-startup';
 import { registerConversationIpc, disposeConversationIpc } from '@/main/agent-ipc';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
-import { CodexAppServer } from '@/main/harness/codex/codex-app-server';
+import { CodexAppServer, codexSpawner } from '@/main/harness/codex/codex-app-server';
 import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
+import { configuredExecutable } from '@/main/harness/executable';
 import { registerSettingsIpc } from '@/main/settings-ipc';
+import { mergeSearchPath, resolveLoginShellPath } from '@/main/shell-environment';
 import { registerTerminalIpc } from '@/main/terminal-ipc';
 import { TerminalService } from '@/main/terminal-service';
 import { createNativePty } from '@/main/terminal-pty';
+import type { AgentEnvironment } from '@/shared/settings-contract';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+// Agents are launched by bare name, so they must be on PATH — but a launch
+// from a desktop entry, Finder or the Dock inherits the session's PATH, not
+// the one the user's shell sets up. Started at load so the shell's startup
+// files run while Electron initialises; agents start only after it settles.
+const loginShellPath = resolveLoginShellPath({ platform: process.platform, env: process.env }).then((result) => {
+  if (result.path) process.env.PATH = mergeSearchPath(process.env.PATH, result.path);
+  return result.resolution;
+});
+const agentEnvironment = async (): Promise<AgentEnvironment> => ({
+  shellPath: await loginShellPath,
+  searchPath: (process.env.PATH ?? '').split(path.delimiter).filter(Boolean),
+});
 
 // The app draws its own title bar, so the native File/Edit/View menu is removed.
 // That also drops the accelerators the menu provided (Ctrl+R reload, Ctrl+Shift+I
@@ -207,12 +223,18 @@ const loadWindow = (mainWindow: BrowserWindow) => {
 app.on('ready', () => {
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
-  registerSettingsIpc();
+  const settingsStore = registerSettingsIpc(agentEnvironment);
   terminalService = new TerminalService(createNativePty);
   terminalRegistration = registerTerminalIpc(terminalService, () => mainWindowRef);
   const window = createWindow();
   conversationStartup = (async () => {
-    codexServer = await CodexAppServer.start(undefined, conversationStartupController.signal);
+    await loginShellPath;
+    if (shutdown) return;
+    // Read once: a changed location takes effect on the next launch.
+    const { agentExecutables } = settingsStore.load();
+    const claudeExecutable = configuredExecutable(agentExecutables.claude, 'claude', homedir());
+    const codexExecutable = configuredExecutable(agentExecutables.codex, 'codex', homedir());
+    codexServer = await CodexAppServer.start(codexSpawner(codexExecutable), conversationStartupController.signal);
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
@@ -222,8 +244,9 @@ app.on('ready', () => {
         realpath: canonicalPath,
         tempDir: app.getPath('temp'),
         ownedProcesses: claudeOwnedProcesses,
-        probe: () => probeClaude(defaultClaudeExec),
-        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec }),
+        executable: claudeExecutable,
+        probe: () => probeClaude(defaultClaudeExec, claudeExecutable),
+        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec, executable: claudeExecutable }),
       }),
     ], canonicalPath);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));

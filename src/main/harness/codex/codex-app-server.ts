@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { executableNotFoundMessage } from '@/main/harness/executable';
 import { app } from 'electron';
 import type { InitializeParams, InitializeResponse, ServerNotification, ServerRequest } from '@/main/harness/codex/generated';
 import type { ThreadListParams } from '@/main/harness/codex/generated/v2/ThreadListParams';
@@ -50,7 +51,7 @@ export class CodexAppServer {
 
   private constructor(private readonly spawnProcess: () => CodexProcess) {}
 
-  static async start(spawnProcess: () => CodexProcess = spawnCodexProcess, signal?: AbortSignal): Promise<CodexAppServer> {
+  static async start(spawnProcess: () => CodexProcess = codexSpawner('codex'), signal?: AbortSignal): Promise<CodexAppServer> {
     if (signal?.aborted) throw new Error(STARTUP_CANCELLED);
     const server = new CodexAppServer(spawnProcess);
     if (!signal) { await server.connect(); return server; }
@@ -175,7 +176,9 @@ export class CodexAppServer {
     const exited = error.message.startsWith('Codex App Server exited');
     if (process && !exited) terminateProcess(process);
     this.setStatus({ availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) });
-    if (!this.disposed && !this.restarting) {
+    // A missing executable won't appear within the retry window; retrying
+    // would only replace the status that names it with a generic one.
+    if (!this.disposed && !this.restarting && !isMissingExecutable(error)) {
       this.restarting = this.reconnectAfterExit().finally(() => { this.restarting = undefined; });
     }
   }
@@ -236,16 +239,26 @@ function terminateProcess(process: CodexProcess): void {
   try { process.kill(); } catch (error) { release(); throw error; }
 }
 
-function spawnCodexProcess(): CodexProcess {
-  const process = spawn('codex', ['app-server', '--stdio'], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-  if (!process.stdin || !process.stdout || !process.stderr) {
-    process.kill();
-    throw new Error('Codex App Server did not provide piped stdio');
-  }
-  return process as CodexProcess;
+/** Launches `executable app-server --stdio`; the executable is a bare name looked up on PATH or a path. */
+export function codexSpawner(executable: string): () => CodexProcess {
+  return () => {
+    const process = spawn(executable, ['app-server', '--stdio'], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (!process.stdin || !process.stdout || !process.stderr) {
+      process.kill();
+      throw new Error('Codex App Server did not provide piped stdio');
+    }
+    return process as CodexProcess;
+  };
+}
+
+function isMissingExecutable(error: unknown): boolean {
+  return /ENOENT|not found/i.test(error instanceof Error ? error.message : String(error));
 }
 
 function unavailableMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  return /ENOENT|not found/i.test(detail) ? 'Codex executable is unavailable' : `Codex App Server initialization failed: ${detail}`;
+  if (!isMissingExecutable(error)) return `Codex App Server initialization failed: ${detail}`;
+  // Node's spawn errors carry the executable they tried as `path`.
+  const attempted = (error as { path?: unknown }).path;
+  return executableNotFoundMessage(typeof attempted === 'string' ? attempted : 'codex');
 }

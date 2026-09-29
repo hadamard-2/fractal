@@ -24,6 +24,28 @@ export interface ProjectVisibility {
 
 export type ProjectFilter = 'active' | 'archived' | 'all';
 
+/**
+ * Where to find each agent's executable. An empty string means the bare name
+ * (`claude`, `codex`) is looked up on PATH; anything else is used as given.
+ */
+export interface AgentExecutables {
+  claude: string;
+  codex: string;
+}
+
+/** Whether Fractal could add the login shell's PATH to its own at startup. */
+export type ShellPathResolution =
+  | { status: 'resolved'; shell: string }
+  | { status: 'failed'; shell: string; reason: string }
+  | { status: 'skipped'; reason: string };
+
+/** Where Fractal looks for agents given by bare name. */
+export interface AgentEnvironment {
+  shellPath: ShellPathResolution;
+  /** The PATH entries in search order. */
+  searchPath: string[];
+}
+
 export interface FractalSettings {
   theme: ThemePreference;
   defaultCodingAgent: DefaultCodingAgent;
@@ -32,6 +54,7 @@ export interface FractalSettings {
   projectFilter: ProjectFilter;
   /** Colored per-agent dot on each sidebar chat row. */
   showAgentColorTags: boolean;
+  agentExecutables: AgentExecutables;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';
@@ -39,7 +62,8 @@ export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';
 export type SettingsInvokeRequest =
   | { method: 'get' }
   | { method: 'set'; patch: Partial<FractalSettings> }
-  | { method: 'openDataFolder' };
+  | { method: 'openDataFolder' }
+  | { method: 'agentEnvironment' };
 
 export interface FractalSettingsApi {
   get(): Promise<FractalSettings>;
@@ -47,4 +71,6 @@ export interface FractalSettingsApi {
   set(patch: Partial<FractalSettings>): Promise<FractalSettings>;
   /** Reveals the app data folder (conversations, settings) in the OS file manager. */
   openDataFolder(): Promise<void>;
+  /** How Fractal resolved the PATH it searches for agents given by bare name. */
+  agentEnvironment(): Promise<AgentEnvironment>;
 }

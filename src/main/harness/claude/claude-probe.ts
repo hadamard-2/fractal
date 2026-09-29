@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
+import { executableNotFoundMessage } from '@/main/harness/executable';
 import type { ConversationRef, ConversationRuntime, HarnessStatus } from '@/shared/conversation-contract';
 
-export interface ClaudeExecResult { exitCode: number; stdout?: string; stderr?: string }
+/** `launchError` is the OS error code (e.g. ENOENT) when the executable could not be started at all. */
+export interface ClaudeExecResult { exitCode: number; stdout?: string; stderr?: string; launchError?: string }
 export type ClaudeExec = (file: string, args: string[], options: { timeoutMs: number }) => Promise<ClaudeExecResult>;
 
 export interface ClaudeCapabilityEvidence {
@@ -52,7 +54,10 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     questions: evidence.mcpConfig && evidence.permissionPromptTool && evidence.askUserQuestion,
     interrupt: evidence.streamJson,
   };
-  if (version.exitCode !== 0) return { provider: 'claude', availability: 'unavailable', message: 'Claude executable is unavailable.', capabilities, evidence };
+  if (version.exitCode !== 0) {
+    const message = version.launchError === 'ENOENT' ? executableNotFoundMessage(executable) : 'Claude executable is unavailable.';
+    return { provider: 'claude', availability: 'unavailable', message, capabilities, evidence };
+  }
   const versionText = firstLine(version.stdout);
   if (!authenticated) return { provider: 'claude', availability: 'unauthenticated', ...(versionText ? { version: versionText } : {}), message: 'Claude authentication was not confirmed noninteractively.', capabilities, evidence };
   return { provider: 'claude', availability: 'available', ...(versionText ? { version: versionText } : {}), capabilities, evidence };
@@ -131,9 +136,9 @@ async function safeExec(exec: ClaudeExec, executable: string, args: string[]): P
 export function defaultClaudeExec(file: string, args: string[], options: { timeoutMs: number }): Promise<ClaudeExecResult> {
   return new Promise((resolve) => {
     execFile(file, args, { timeout: options.timeoutMs, encoding: 'utf8', maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
-      const exitCode = typeof (error as NodeJS.ErrnoException & { code?: unknown } | null)?.code === 'number'
-        ? (error as unknown as { code: number }).code : error ? 1 : 0;
-      resolve({ exitCode, stdout, stderr });
+      const code = (error as { code?: unknown } | null)?.code;
+      const exitCode = typeof code === 'number' ? code : error ? 1 : 0;
+      resolve({ exitCode, stdout, stderr, ...(typeof code === 'string' ? { launchError: code } : {}) });
     });
   });
 }

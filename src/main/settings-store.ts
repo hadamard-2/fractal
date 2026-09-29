@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_CODING_AGENT, type DefaultCodingAgent, type FractalSettings, type ProjectFilter, type ProjectVisibility, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
+import { DEFAULT_CODING_AGENT, type AgentExecutables, type DefaultCodingAgent, type FractalSettings, type ProjectFilter, type ProjectVisibility, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
 
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', showAgentColorTags: true });
+const emptyAgentExecutables = (): AgentExecutables => ({ claude: '', codex: '' });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', showAgentColorTags: true, agentExecutables: emptyAgentExecutables() });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
@@ -60,6 +61,13 @@ function coerceBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function coerceAgentExecutables(value: unknown): AgentExecutables {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return emptyAgentExecutables();
+  const executables = value as Record<string, unknown>;
+  const coerce = (item: unknown): string => typeof item === 'string' ? item.trim() : '';
+  return { claude: coerce(executables.claude), codex: coerce(executables.codex) };
+}
+
 function coerceSettings(record: Record<string, unknown>): FractalSettings {
   return {
     theme: coerceTheme(record.theme),
@@ -68,6 +76,7 @@ function coerceSettings(record: Record<string, unknown>): FractalSettings {
     projectVisibility: coerceProjectVisibility(record.projectVisibility),
     projectFilter: coerceProjectFilter(record.projectFilter),
     showAgentColorTags: coerceBoolean(record.showAgentColorTags, true),
+    agentExecutables: coerceAgentExecutables(record.agentExecutables),
   };
 }
 

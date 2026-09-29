@@ -20,7 +20,7 @@ const group = (projectPath: string, ids: string[]): ProjectConversationGroup => 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 test('persists drag order and keeps new native items ahead of that order on refresh', async () => {
-  const settings: FractalSettings = { theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true };
+  const settings: FractalSettings = { theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' } };
   const set = vi.fn(async (patch: Partial<FractalSettings>) => ({ ...settings, ...patch }));
   Object.defineProperty(window, 'fractal', { configurable: true, value: { settings: { get: async () => settings, set } } });
   const initial = [group('/a', ['newer', 'older']), group('/b', ['other'])];

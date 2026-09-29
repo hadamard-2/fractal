@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
-import { detectClaudeRuntime, probeClaude, type ClaudeExec, type ClaudeExecResult } from './claude-probe';
+import { defaultClaudeExec, detectClaudeRuntime, probeClaude, type ClaudeExec, type ClaudeExecResult } from './claude-probe';
 
 const ref = { provider: 'claude' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
 
-function fakeExec(results: Record<string, { exitCode: number; stdout?: string; stderr?: string }>): ClaudeExec {
+function fakeExec(results: Record<string, ClaudeExecResult>): ClaudeExec {
   return vi.fn(async (_file, args) => results[args.join(' ')] ?? { exitCode: 127, stdout: '', stderr: '' });
 }
 
@@ -13,6 +13,23 @@ describe('probeClaude', () => {
     await expect(probeClaude(exec)).resolves.toMatchObject({ provider: 'claude', availability: 'unavailable' });
     expect(exec).toHaveBeenCalledTimes(3);
     expect(exec).toHaveBeenCalledWith('claude', ['--version'], { timeoutMs: 5_000 });
+  });
+
+  test('names the executable it could not find', async () => {
+    const exec = fakeExec({ '--version': { exitCode: 1, launchError: 'ENOENT' } });
+    await expect(probeClaude(exec)).resolves.toMatchObject({
+      availability: 'unavailable', message: "Couldn't find \"claude\" on the PATH Fractal searches. Set its location in Settings.",
+    });
+    await expect(probeClaude(exec, '/opt/claude')).resolves.toMatchObject({ message: "Couldn't find /opt/claude. Check its location in Settings." });
+  });
+
+  test('keeps the general message when the executable exists but fails', async () => {
+    const exec = fakeExec({ '--version': { exitCode: 127, stderr: "env: 'node': No such file or directory" } });
+    await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unavailable', message: 'Claude executable is unavailable.' });
+  });
+
+  test('the default exec reports a missing executable as a launch error', async () => {
+    await expect(defaultClaudeExec('/nonexistent/fractal-claude', ['--version'], { timeoutMs: 5_000 })).resolves.toMatchObject({ launchError: 'ENOENT' });
   });
 
   test('derives each capability independently and accepts only documented noninteractive authentication evidence', async () => {

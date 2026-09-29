@@ -1,6 +1,6 @@
 import { app, ipcMain, nativeTheme, shell } from 'electron';
 import { SettingsStore } from '@/main/settings-store';
-import type { FractalSettings, SettingsInvokeRequest } from '@/shared/settings-contract';
+import type { AgentEnvironment, FractalSettings, SettingsInvokeRequest } from '@/shared/settings-contract';
 import { SETTINGS_INVOKE_CHANNEL } from '@/shared/settings-contract';
 
 /** IPC payloads are untrusted: keep only keys we know. Values are normalized by the store. */
@@ -12,6 +12,7 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
     ...(patch.projectVisibility !== undefined ? { projectVisibility: patch.projectVisibility } : {}),
     ...(patch.projectFilter !== undefined ? { projectFilter: patch.projectFilter } : {}),
     ...(patch.showAgentColorTags !== undefined ? { showAgentColorTags: patch.showAgentColorTags } : {}),
+    ...(patch.agentExecutables !== undefined ? { agentExecutables: patch.agentExecutables } : {}),
   };
 }
 
@@ -25,8 +26,11 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
  * registration, which runs before the first window loads, so the very first
  * frame already has the right scheme and there is no light-mode flash on
  * startup in a dark theme.
+ *
+ * Returns the store so startup can read settings the main process acts on
+ * (agent executables) from the same instance.
  */
-export function registerSettingsIpc(): void {
+export function registerSettingsIpc(agentEnvironment: () => Promise<AgentEnvironment>): SettingsStore {
   const store = new SettingsStore(app.getPath('userData'));
   nativeTheme.themeSource = store.load().theme;
 
@@ -46,6 +50,8 @@ export function registerSettingsIpc(): void {
         await shell.openPath(app.getPath('userData'));
         return;
       }
+      case 'agentEnvironment':
+        return agentEnvironment();
       default: {
         const unreachable: never = req;
         throw new Error(
@@ -54,4 +60,5 @@ export function registerSettingsIpc(): void {
       }
     }
   });
+  return store;
 }

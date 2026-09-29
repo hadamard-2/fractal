@@ -1,7 +1,7 @@
 import { EventEmitter, getEventListeners } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, test, vi } from 'vitest';
-import { CodexAppServer, type CodexProcess } from '@/main/harness/codex/codex-app-server';
+import { CodexAppServer, codexSpawner, type CodexProcess } from '@/main/harness/codex/codex-app-server';
 
 vi.mock('electron', () => ({ app: { getVersion: () => '1.2.3' } }));
 
@@ -169,7 +169,7 @@ describe('CodexAppServer', () => {
     const starting = CodexAppServer.start(() => process, controller.signal);
     process.failProcess(Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' }));
     const server = await starting;
-    expect(server.status).toMatchObject({ availability: 'unavailable', message: 'Codex executable is unavailable' });
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: "Couldn't find \"codex\" on the PATH Fractal searches. Set its location in Settings." });
     expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
     controller.abort(); await server.dispose();
     expect(process.killCalls).toBe(1);
@@ -235,7 +235,13 @@ describe('CodexAppServer', () => {
       throw missing;
     });
 
-    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('Codex executable') });
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining("Couldn't find \"codex\"") });
+  });
+
+  test('a configured executable that does not exist is named in the status', async () => {
+    const server = await CodexAppServer.start(codexSpawner('/nonexistent/fractal-codex'));
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: "Couldn't find /nonexistent/fractal-codex. Check its location in Settings." });
+    await server.dispose();
   });
 
   test('becomes unavailable when an initialized process exits', async () => {
@@ -264,6 +270,20 @@ describe('CodexAppServer', () => {
       expect(spawn).toHaveBeenCalledTimes(2); initialize(second);
       await vi.waitFor(() => expect(server.status.availability).toBe('available'));
       expect(statuses).toEqual(['unavailable', 'available']);
+      await server.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+
+  test('does not retry an executable that does not exist, so its status keeps naming it', async () => {
+    vi.useFakeTimers();
+    try {
+      const process = new FakeCodexProcess(); const spawn = vi.fn(() => process);
+      const starting = CodexAppServer.start(spawn);
+      process.failProcess(Object.assign(new Error('spawn /opt/codex ENOENT'), { code: 'ENOENT', path: '/opt/codex' }));
+      const server = await starting;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(server.status).toEqual({ availability: 'unavailable', message: "Couldn't find /opt/codex. Check its location in Settings." });
       await server.dispose();
     } finally { vi.useRealTimers(); }
   });
@@ -412,7 +432,7 @@ describe('CodexAppServer', () => {
 
     const server = await starting;
 
-    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining('Codex executable') });
+    expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining("Couldn't find \"codex\"") });
     expect(process.killCalls).toBe(1);
   });
 });

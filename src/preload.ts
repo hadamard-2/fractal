@@ -39,6 +39,7 @@ const settings: FractalSettingsApi = {
   get: () => invokeSettings({ method: 'get' }),
   set: (patch) => invokeSettings({ method: 'set', patch }),
   openDataFolder: () => invokeSettings({ method: 'openDataFolder' }),
+  agentEnvironment: () => invokeSettings({ method: 'agentEnvironment' }),
 };
 
 const terminals: TerminalApi = {
