@@ -20,7 +20,7 @@ vi.mock('electron', async () => {
     isDestroyed() { return false; }
     constructor(public options: { webPreferences: Record<string, unknown> }) { super(); state.windows.push(this); state.events.push('window'); }
   }
-  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() } };
+  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() }, ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } };
 });
 vi.mock('electron-squirrel-startup', () => ({ default: false }));
 vi.mock('@/main/settings-ipc', () => ({ registerSettingsIpc: () => state.events.push('settings') }));

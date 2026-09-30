@@ -5,6 +5,7 @@ import * as boundary from '@/main/agent-ipc';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import type { HarnessAdapter } from '@/main/harness/types';
+import type { ModelChoices } from '@/main/model-choices';
 
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>(),
@@ -44,7 +45,7 @@ class Sender extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   destroy() { this.destroyed = true; this.emit('destroyed'); }
 }
-function fixture() {
+function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>) {
   const service = {
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
@@ -55,7 +56,7 @@ function fixture() {
   const sender = new Sender();
   let current = sender;
   const getWindow = () => ({ webContents: current, isDestroyed: () => current.destroyed }) as unknown as BrowserWindow;
-  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow, { attachmentsRoot: '/data/attachments' });
+  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow, { attachmentsRoot: '/data/attachments', ...(modelChoices ? { modelChoices } : {}) });
   const registration = register();
   const invokeAs = async (source: Sender, channel: string, ...args: unknown[]) => {
     const handler = electron.handlers.get(`fractal:conversations:${channel}`);
@@ -309,5 +310,27 @@ describe('conversation IPC', () => {
     expect(electron.openPath).toHaveBeenCalledWith('/repo/notes.md');
     await expect(f.invoke('open-attachment', ref, '/etc/passwd', 'open')).rejects.toThrow('Attachment is not part of this conversation');
     await expect(f.invoke('open-attachment', ref, '/repo/notes.md', 'delete')).rejects.toThrow('Invalid attachment action');
+  });
+
+  test('seeds a created conversation and records the choice each prompt was sent with', async () => {
+    const modelChoices = { seed: vi.fn(), recordSend: vi.fn() };
+    const f = fixture(modelChoices);
+    f.service.list.mockResolvedValue({ projects: [{ projectPath: '/tmp', displayName: 'tmp', conversations: [] }], providers: [] });
+    await f.invoke('create', { provider: 'codex', projectPath: '/tmp' });
+    expect(modelChoices.seed).toHaveBeenCalledWith(ref);
+    await f.invoke('open', ref, loadId);
+    await f.invoke('continue', ref, { text: 'Go', model: 'gpt-5.5', effort: 'high' });
+    expect(modelChoices.recordSend).toHaveBeenLastCalledWith(ref, { model: 'gpt-5.5', effort: 'high' });
+    await f.invoke('continue', ref, { text: 'Again' });
+    expect(modelChoices.recordSend).toHaveBeenLastCalledWith(ref, null);
+  });
+
+  test('a failing choice store does not fail creating or sending', async () => {
+    const modelChoices = { seed: vi.fn(() => { throw new Error('disk full'); }), recordSend: vi.fn(() => { throw new Error('disk full'); }) };
+    const f = fixture(modelChoices);
+    f.service.list.mockResolvedValue({ projects: [{ projectPath: '/tmp', displayName: 'tmp', conversations: [] }], providers: [] });
+    await expect(f.invoke('create', { provider: 'codex', projectPath: '/tmp' })).resolves.toEqual(ref);
+    await f.invoke('open', ref, loadId);
+    await expect(f.invoke('continue', ref, { text: 'Go', model: 'gpt-5.5' })).resolves.toBeUndefined();
   });
 });

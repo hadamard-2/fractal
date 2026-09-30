@@ -11,6 +11,9 @@ import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
+import { ModelChoiceStore } from '@/main/model-choice-store';
+import { ModelChoices } from '@/main/model-choices';
+import { registerModelIpc } from '@/main/model-ipc';
 import { registerSettingsIpc } from '@/main/settings-ipc';
 import { registerTerminalIpc } from '@/main/terminal-ipc';
 import { TerminalService } from '@/main/terminal-service';
@@ -137,6 +140,7 @@ let quitting = false;
 let shutdown: Promise<void> | undefined;
 let terminalService: TerminalService | undefined;
 let terminalRegistration: { dispose(): void } | undefined;
+let modelRegistration: { dispose(): void } | undefined;
 
 const createWindow = () => {
   /*
@@ -216,18 +220,21 @@ app.on('ready', () => {
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
-    const registry = new ConversationRegistry([
-      new CodexAdapter(codexServer, { realpath: canonicalPath }),
-      new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
-        realpath: canonicalPath,
-        tempDir: app.getPath('temp'),
-        ownedProcesses: claudeOwnedProcesses,
-        probe: () => probeClaude(defaultClaudeExec),
-        runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec }),
-      }),
-    ], canonicalPath);
+    const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath });
+    const claudeAdapter = new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
+      realpath: canonicalPath,
+      tempDir: app.getPath('temp'),
+      ownedProcesses: claudeOwnedProcesses,
+      probe: () => probeClaude(defaultClaudeExec),
+      runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec }),
+    });
+    const registry = new ConversationRegistry([codexAdapter, claudeAdapter], canonicalPath);
+    const modelChoices = new ModelChoices([codexAdapter, claudeAdapter], new ModelChoiceStore(app.getPath('userData')));
+    // Once per launch, in the background; until a list arrives the picker shows only the current choice.
+    void modelChoices.fetchCatalogs();
+    modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
-    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments') });
+    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices });
     loadWindow(window);
   })();
   // Startup failures never forward native exception details into the renderer.
@@ -242,6 +249,7 @@ app.on('before-quit', (event) => {
     conversationStartupController.abort();
     terminalRegistration?.dispose();
     terminalService?.dispose();
+    modelRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();

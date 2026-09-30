@@ -6,6 +6,7 @@ import { AttachmentError, resolveAttachments } from '@/main/attachments/resolve'
 import { readAttachmentPreview } from '@/main/attachments/preview';
 import type { ConversationService } from '@/main/conversation-service';
 import { canonicalizeProjectPath } from '@/main/harness/project-path';
+import type { ModelChoices } from '@/main/model-choices';
 import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
 import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 
@@ -14,11 +15,19 @@ type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
 type Registration = { emit: (payload: unknown) => void; dispose: () => Promise<void> };
 let activeRegistration: { service: ConversationService; registration: Registration } | undefined;
 
-export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string }): Registration {
+export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'> }): Registration {
   if (activeRegistration) {
     if (activeRegistration.service !== service) throw new Error('Conversation IPC is already registered');
     return activeRegistration.registration;
   }
+  // The choice store is a convenience: a failed write leaves the conversation on its agent's default rather than failing it.
+  const seedChoice = (ref: ConversationRef): ConversationRef => {
+    try { options.modelChoices?.seed(ref); } catch { /* See above. */ }
+    return ref;
+  };
+  const recordChoice = (ref: ConversationRef, model: string | undefined, effort: string | undefined): void => {
+    try { options.modelChoices?.recordSend(ref, model ? { model, ...(effort ? { effort } : {}) } : null); } catch { /* See above. */ }
+  };
   const owners = new Map<WebContents, Owner>();
   const loads = new Map<string, OwnedLoad>();
   const loadIds = new Map<string, OwnedLoad>();
@@ -149,19 +158,22 @@ export function registerConversationIpc(service: ConversationService, getWindow:
           const { projects } = await service.list();
           assertLive(owner);
           if (!projects.some((project) => project.projectPath === projectPath)) throw new Error('Project is not available');
-          return parseConversationRef(await service.create(provider, projectPath));
+          return seedChoice(parseConversationRef(await service.create(provider, projectPath)));
         }
         const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
         assertLive(owner);
         if (result.canceled || !result.filePaths[0]) return null;
         const projectPath = await canonicalizeProjectPath(result.filePaths[0], realpath);
         assertLive(owner);
-        return parseConversationRef(await service.create(provider, projectPath));
+        return seedChoice(parseConversationRef(await service.create(provider, projectPath)));
       };
     });
     invoke(CHANNELS.continue, 2, ([input, promptInput], owner) => {
       const ref = parseConversationRef(input), prompt = parsePromptInput(promptInput); requireLoad(owner, ref);
-      return async () => service.continue(ref, await resolveAttachments(prompt, { root: options.attachmentsRoot, ref }), String(owner.sender.id));
+      return async () => {
+        await service.continue(ref, await resolveAttachments(prompt, { root: options.attachmentsRoot, ref }), String(owner.sender.id));
+        recordChoice(ref, prompt.model, prompt.effort);
+      };
     });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {
       const ref = parseConversationRef(input); requireLoad(owner, ref);

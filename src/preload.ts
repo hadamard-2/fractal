@@ -2,9 +2,9 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AttachmentsApi, ConversationApi } from '@/shared/conversation-contract';
+import type { AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
-import { CONVERSATION_CHANNELS as CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
+import { CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
   SETTINGS_INVOKE_CHANNEL,
   type FractalSettingsApi,
@@ -35,6 +35,11 @@ const conversations: ConversationApi = {
   },
 };
 
+const models: ModelsApi = {
+  list: (ref) => ipcRenderer.invoke(MODEL_CHANNELS.list, ref),
+  choose: (ref, choice) => ipcRenderer.invoke(MODEL_CHANNELS.choose, ref, choice),
+};
+
 const settings: FractalSettingsApi = {
   get: () => invokeSettings({ method: 'get' }),
   set: (patch) => invokeSettings({ method: 'set', patch }),
@@ -59,4 +64,4 @@ const attachments: AttachmentsApi = {
   pathFor: (file) => webUtils.getPathForFile(file),
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, settings, terminals, attachments });
+contextBridge.exposeInMainWorld('fractal', { conversations, models, settings, terminals, attachments });
