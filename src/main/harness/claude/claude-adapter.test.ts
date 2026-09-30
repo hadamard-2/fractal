@@ -67,7 +67,8 @@ describe('Claude adapter', () => {
 
     await adapter.renameConversation(session, 'Renamed chat');
     expect((await readFile(file, 'utf8')).trimEnd().split('\n').at(-1)).toBe('{"type":"custom-title","customTitle":"Renamed chat","sessionId":"session-1"}');
-    expect((await adapter.listConversations()).find((item) => item.ref.nativeSessionId === 'session-1')?.title).toBe('Renamed chat');
+    // The untimestamped rename record must not count as activity.
+    expect((await adapter.listConversations()).find((item) => item.ref.nativeSessionId === 'session-1')).toMatchObject({ title: 'Renamed chat', updatedAt: Date.parse('2026-09-01T10:00:00.000Z') });
 
     await appendFile(file, '{"type":"assistant","partial":');
     await expect(adapter.renameConversation(session, 'Again')).rejects.toThrow('being written');

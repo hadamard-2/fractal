@@ -197,12 +197,13 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
     const first = scanRecords(firstBytes, true, fileStat.size <= SUMMARY_SCAN_BYTES);
     const last = scanRecords(lastBytes, lastStart === 0, true);
     const firstRecord = first.records[0];
-    const lastRecord = last.records.at(-1) ?? firstRecord;
     const identity = conversationIdentity(filePath);
     const projectPath = stringAt(first.records, 'cwd') ?? stringAt(last.records, 'cwd');
     if (!projectPath) return undefined;
     const createdAt = timestampAt(firstRecord) ?? fileStat.birthtimeMs;
-    const updatedAt = timestampAt(lastRecord) ?? fileStat.mtimeMs;
+    // Metadata records such as custom-title carry no timestamp, so a rename
+    // appended at the end doesn't count as activity; the file's mtime would.
+    const updatedAt = last.records.map(timestampAt).findLast((value) => value !== undefined) ?? fileStat.mtimeMs;
     const title = namedTitle([...first.records, ...last.records]) ?? titleFrom(first.records) ?? 'Claude conversation';
     const captureCompleteness: CaptureCompleteness = first.incomplete || last.incomplete || first.malformed || last.malformed || first.unsupported || last.unsupported
       ? 'partial'
