@@ -38,6 +38,14 @@ describe('runClaudeTurn', () => {
     ], { cwd: '/work/fractal', shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
   });
 
+  test('passes the chosen model and effort as flags', async () => {
+    const child = fakeProcess(); const spawnProcess = vi.fn(() => child);
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess, model: 'opus', effort: 'high', rereadNative: async () => [] });
+    child.finish(); await collect(run.events);
+    const args = (spawnProcess.mock.calls[0] as unknown as [string, string[]])[1];
+    expect(args.slice(-4)).toEqual(['--model', 'opus', '--effort', 'high']);
+  });
+
   test('puts image blocks after the text and drops an empty text block', async () => {
     const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' };
     const withText = fakeProcess();

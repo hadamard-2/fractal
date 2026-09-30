@@ -244,6 +244,14 @@ describe('Codex native continuation', () => {
     await run.dispose();
   });
 
+  test('sends the chosen model and effort on turn/start', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Go', model: 'gpt-5.5', effort: 'high' });
+    expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'text', text: 'Go', text_elements: [] }], model: 'gpt-5.5', effort: 'high' } });
+    await run.dispose();
+  });
+
   test('routes an approval once, fails closed for unsupported decisions, and interrupts once', async () => {
     const server = createFakeAppServer();
     const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });

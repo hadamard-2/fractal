@@ -17,6 +17,10 @@ describe('resolveAttachments', () => {
     await expect(resolveAttachments({ text: 'Hi' }, { root, ref })).resolves.toEqual({ text: 'Hi' });
   });
 
+  test('carries the model choice through unchanged', async () => {
+    await expect(resolveAttachments({ text: 'Hi', model: 'opus', effort: 'high' }, { root, ref })).resolves.toEqual({ text: 'Hi', model: 'opus', effort: 'high' });
+  });
+
   test('writes pasted bytes under the conversation folder and marks them by sniffed type', async () => {
     const result = await resolveAttachments({ text: '', attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/jpeg', data: PNG.toString('base64') }] }, { root, ref });
     const [attachment] = result.attachments ?? [];

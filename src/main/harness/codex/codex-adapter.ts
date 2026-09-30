@@ -230,6 +230,9 @@ export class CodexAdapter implements HarnessAdapter {
       const started = await this.server.request('turn/start', {
         threadId: ref.nativeSessionId,
         input: codexTurnInput(prompt),
+        // Codex applies both to this turn and the thread's later turns.
+        ...(prompt.model ? { model: prompt.model } : {}),
+        ...(prompt.effort ? { effort: prompt.effort } : {}),
       });
       turnId = started.turn.id;
       for (const traffic of bufferedTraffic.splice(0)) {
