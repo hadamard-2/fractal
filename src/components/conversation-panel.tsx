@@ -68,7 +68,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   }) : turn), [state.turns, state.requests]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
-    if (!eligible || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
+    if (!eligible || !modelChoice.loaded || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
     let attachments: PromptAttachment[];
     try { attachments = promptAttachments(message.files); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
@@ -136,7 +136,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
               {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
                 <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
               )}
-              <ComposerSubmit blocked={!eligible} hasText={Boolean(input.trim())} sending={sending} />
+              <ComposerSubmit blocked={!eligible || !modelChoice.loaded} hasText={Boolean(input.trim())} sending={sending} />
             </div>
           </PromptInputFooter>
         </PromptInput>

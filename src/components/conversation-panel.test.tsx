@@ -263,6 +263,25 @@ test('lists an off-catalog model the conversation last ran on', async () => {
   expect(screen.queryByRole('combobox', { name: 'Effort' })).toBeNull();
 });
 
+test('blocks submit until the model choice has loaded, then sends it', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  let settle: (result: { models: AgentModel[]; choice: ModelChoice | null }) => void = () => undefined;
+  const models: ModelsApi = { list: vi.fn(() => new Promise<{ models: AgentModel[]; choice: ModelChoice | null }>((resolve) => { settle = resolve; })), choose: vi.fn(async () => undefined) };
+  Object.assign(window.fractal, { models });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const user = userEvent.setup();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(send).not.toHaveBeenCalled();
+  act(() => settle({ models: [], choice: { model: 'opus' } }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(false));
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', model: 'opus' }));
+});
+
 test('falls back to the agent default when the model list is unavailable', async () => {
   const send = vi.fn<ConversationApi['continue']>(async () => undefined);
   install('idle', send);
