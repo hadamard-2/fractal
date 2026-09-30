@@ -88,6 +88,33 @@ export type PromptAttachment =
 export interface PromptInput {
   text: string;
   attachments?: PromptAttachment[];
+  /** Absent means the agent's own default model. */
+  model?: string;
+  /** Only sent together with `model`. */
+  effort?: string;
+}
+
+/** A model an agent offers, as its own picker lists it. `id` is what goes back to the agent. */
+export interface AgentModel {
+  id: string;
+  label: string;
+  description?: string;
+  /** Effort levels this model accepts; empty when it takes none. */
+  efforts: string[];
+  defaultEffort?: string;
+}
+
+/** The model and effort a conversation's next turn runs with. A missing effort means the agent's default for that model. */
+export interface ModelChoice {
+  model: string;
+  effort?: string;
+}
+
+export interface ModelsApi {
+  /** The agent's catalog (empty until its startup fetch finishes) and the conversation's resolved choice; null means the agent's default. */
+  list(ref: ConversationRef): Promise<{ models: AgentModel[]; choice: ModelChoice | null }>;
+  /** Saves the conversation's choice for its next turns. */
+  choose(ref: ConversationRef, choice: ModelChoice): Promise<void>;
 }
 
 /** An attachment recorded on a sent user message, by path; contents are fetched through previewAttachment. */

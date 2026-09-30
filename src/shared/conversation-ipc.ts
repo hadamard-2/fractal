@@ -14,6 +14,7 @@ import {
   type ConversationStreamEvent,
   type ConversationSummary,
   type ConversationTurn,
+  type ModelChoice,
   type PromptAttachment,
   type PromptInput,
   type ProviderId,
@@ -31,12 +32,15 @@ export const CONVERSATION_CHANNELS = {
   rename: 'fractal:conversations:rename',
 } as const;
 
+export const MODEL_CHANNELS = { list: 'fractal:models:list', choose: 'fractal:models:choose' } as const;
+
 const MAX_TEXT_LENGTH = 1_000_000;
 const MAX_DECISION_TEXT_LENGTH = 100_000;
 const MAX_SESSION_ID_LENGTH = 512;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_HISTORY_TURNS = 50;
 const MAX_ATTACHMENT_NAME_LENGTH = 1_024;
+const MAX_MODEL_FIELD_LENGTH = 200;
 // Fractal's own cap: long enough for any title a person types, short enough
 // to keep a sidebar row and a history record reasonable.
 export const MAX_CONVERSATION_TITLE_LENGTH = 200;
@@ -154,7 +158,19 @@ export function parsePromptInput(value: unknown): PromptInput {
   if (value.text.length > MAX_TEXT_LENGTH) throw new Error('Prompt is too large');
   const attachments = value.attachments === undefined ? [] : parsePromptAttachments(value.attachments);
   if (value.text.trim().length === 0 && attachments.length === 0) throw new Error('Prompt cannot be empty');
-  return attachments.length > 0 ? { text: value.text, attachments } : { text: value.text };
+  const choice = value.model === undefined && value.effort === undefined
+    ? null
+    : parseModelChoice(value.effort === undefined ? { model: value.model } : { model: value.model, effort: value.effort });
+  return { text: value.text, ...(attachments.length > 0 ? { attachments } : {}), ...(choice ?? {}) };
+}
+
+/** A model choice from the renderer; null is the agent's own default. */
+export function parseModelChoice(value: unknown): ModelChoice | null {
+  if (value === null) return null;
+  if (!plainObject(value) || !nonblankText(value.model, MAX_MODEL_FIELD_LENGTH)) throw new Error('Invalid model choice');
+  if (value.effort === undefined) return { model: value.model };
+  if (!nonblankText(value.effort, MAX_MODEL_FIELD_LENGTH)) throw new Error('Invalid model choice');
+  return { model: value.model, effort: value.effort };
 }
 
 function parsePromptAttachments(value: unknown): PromptAttachment[] {
