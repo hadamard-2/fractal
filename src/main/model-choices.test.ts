@@ -50,6 +50,21 @@ describe('ModelChoices', () => {
     await expect(new ModelChoices([{ provider: 'claude', readLastRun }], memoryStore()).resolve(claudeRef)).resolves.toBeNull();
   });
 
+  test('reads a conversation\'s last run at most once per launch, and retries after a throw', async () => {
+    const store = memoryStore();
+    const readLastRun = vi.fn(async (): Promise<ModelChoice | undefined> => undefined);
+    const choices = new ModelChoices([{ provider: 'claude', readLastRun }], store);
+    await expect(choices.resolve(claudeRef)).resolves.toBeNull();
+    await expect(choices.resolve(claudeRef)).resolves.toBeNull();
+    expect(readLastRun).toHaveBeenCalledOnce();
+
+    const flaky = vi.fn(async (): Promise<ModelChoice | undefined> => { throw new Error('busy'); });
+    const retrying = new ModelChoices([{ provider: 'claude', readLastRun: flaky }], memoryStore());
+    await expect(retrying.resolve(claudeRef)).resolves.toBeNull();
+    await expect(retrying.resolve(claudeRef)).resolves.toBeNull();
+    expect(flaky).toHaveBeenCalledTimes(2);
+  });
+
   test('seeds a new conversation from the last choice sent with its agent', () => {
     const store = memoryStore();
     const choices = new ModelChoices([], store);

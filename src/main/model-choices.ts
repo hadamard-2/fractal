@@ -13,6 +13,7 @@ type ChoiceStore = Pick<ModelChoiceStore, 'get' | 'set' | 'lastUsed' | 'setLastU
 export class ModelChoices {
   private readonly sources = new Map<ProviderId, ModelSource>();
   private readonly catalogs = new Map<ProviderId, AgentModel[]>();
+  private readonly lastRuns = new Map<string, ModelChoice | null>();
 
   constructor(sources: ModelSource[], private readonly store: ChoiceStore) {
     for (const source of sources) this.sources.set(source.provider, source);
@@ -31,8 +32,13 @@ export class ModelChoices {
   async resolve(ref: ConversationRef): Promise<ModelChoice | null> {
     const saved = this.store.get(conversationKey(ref));
     if (saved) return saved;
-    try { return await this.sources.get(ref.provider)?.readLastRun?.(ref) ?? null; }
-    catch { return null; }
+    const key = conversationKey(ref);
+    if (this.lastRuns.has(key)) return this.lastRuns.get(key) ?? null;
+    try {
+      const result = await this.sources.get(ref.provider)?.readLastRun?.(ref) ?? null;
+      this.lastRuns.set(key, result);
+      return result;
+    } catch { return null; }
   }
 
   /** A new conversation starts from the last choice sent with its agent. */
