@@ -8,6 +8,8 @@ const state = vi.hoisted(() => ({
   register: vi.fn(() => ({ emit: vi.fn() })), disposeIpc: vi.fn(async () => undefined),
   registerTerminal: vi.fn(() => ({ dispose: () => { state.events.push('terminal-ipc-dispose'); } })),
   disposeTerminalService: vi.fn(() => { state.events.push('terminal-service-dispose'); }),
+  fetchCatalogs: vi.fn(async () => undefined),
+  registerModel: vi.fn(() => ({ dispose: () => { state.events.push('model-ipc-dispose'); } })),
 }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
@@ -30,6 +32,9 @@ vi.mock('@/main/terminal-service', () => ({ TerminalService: class { dispose = s
 vi.mock('@/main/terminal-pty', () => ({ createNativePty: vi.fn() }));
 vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { start: state.start } }));
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
+vi.mock('@/main/model-choices', () => ({ ModelChoices: class { fetchCatalogs = state.fetchCatalogs; } }));
+vi.mock('@/main/model-choice-store', () => ({ ModelChoiceStore: class {} }));
+vi.mock('@/main/model-ipc', () => ({ registerModelIpc: state.registerModel }));
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); state.events = []; state.windows = [];
   vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined); vi.stubGlobal('MAIN_WINDOW_VITE_NAME', 'main_window');
@@ -47,12 +52,15 @@ describe('main conversation lifecycle', () => {
     await vi.waitFor(() => expect(state.windows[0].loadFile).toHaveBeenCalledTimes(1));
     expect(state.register).toHaveBeenCalledTimes(1);
     expect(state.registerTerminal).toHaveBeenCalledTimes(1);
+    expect(state.registerModel).toHaveBeenCalledTimes(1);
+    expect(state.fetchCatalogs).toHaveBeenCalledTimes(1);
     expect(state.windows[0].options.webPreferences).toMatchObject({ contextIsolation: true, nodeIntegration: false });
     const event = { preventDefault: vi.fn() }; state.app.emit('before-quit', event);
     await vi.waitFor(() => expect(state.app.quit).toHaveBeenCalledTimes(1));
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(state.disposeIpc).toHaveBeenCalledTimes(1); expect(state.disposeService).toHaveBeenCalledTimes(1); expect(state.disposeServer).toHaveBeenCalledTimes(1);
     expect(state.events).toContain('terminal-ipc-dispose');
+    expect(state.events).toContain('model-ipc-dispose');
     expect(state.disposeTerminalService).toHaveBeenCalledTimes(1);
     state.app.emit('before-quit', { preventDefault: vi.fn(() => { throw new Error('Final quit must proceed'); }) });
   });
