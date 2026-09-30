@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { conversationReducer, initialConversationState } from '@/renderer/conversation-reducer';
 import { parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
-import type { ConversationRef, PromptAttachment, UserDecision } from '@/shared/conversation-contract';
+import type { ConversationRef, ModelChoice, PromptAttachment, UserDecision } from '@/shared/conversation-contract';
 
 type ActiveLoad = { ref: ConversationRef; loadId: string; token: number };
 
@@ -90,11 +90,11 @@ export function useConversation(ref: ConversationRef | null) {
       if (activeLoad.current === active && generation.current === active.token) throw cause;
     }), []);
 
-  const send = useCallback((text: string, attachments: PromptAttachment[] = []): Promise<void | undefined> | undefined => {
+  const send = useCallback((text: string, attachments: PromptAttachment[] = [], choice: ModelChoice | null = null): Promise<void | undefined> | undefined => {
     const active = currentActiveLoad(state.ref, state.loadId);
     if (!canSend || !active || !state.ref) return undefined;
     try {
-      const prompt = parsePromptInput(attachments.length > 0 ? { text, attachments } : { text });
+      const prompt = parsePromptInput({ text, ...(attachments.length > 0 ? { attachments } : {}), ...(choice ?? {}) });
       return containActionSettlement(window.fractal.conversations.continue(state.ref, prompt), active);
     } catch {
       // The bridge never sees malformed renderer input.
