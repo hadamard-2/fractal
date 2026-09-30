@@ -290,3 +290,38 @@ describe('project status', () => {
     expect(await screen.findByText('Pick up a thread')).toBeTruthy();
   });
 });
+
+test('shows placeholder rows and a busy button only until history first loads', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  const listeners = new Set<(event: ConversationStreamEvent) => void>();
+  const first: Array<(history: Awaited<ReturnType<ConversationApi['list']>>) => void> = [];
+  const history = { projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Chat', updatedAt: 1, runtime: 'idle' as const, captureCompleteness: 'complete' as const }] }], providers: [{ provider: 'codex' as const, availability: 'available' as const, capabilities: { ...capabilities, create: true } }] };
+  let pendingRefresh = false;
+  const api: ConversationApi = {
+    // Every list the sidebar and shell make before release waits; after it, a
+    // refresh never settles, so a returning placeholder would stay visible.
+    list: () => pendingRefresh ? new Promise(() => undefined) : new Promise((resolve) => { first.push(resolve); }),
+    open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined,
+    onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
+  render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+
+  expect(await screen.findByRole('status', { name: 'Loading projects' })).toBeTruthy();
+  const button = screen.getByRole('button', { name: /New conversation/ }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  expect(button.getAttribute('aria-busy')).toBe('true');
+  expect(screen.queryByText(/Loading your conversations/)).toBeNull();
+
+  pendingRefresh = true;
+  await act(async () => { for (const resolve of first) resolve(history); });
+  await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading projects' })).toBeNull());
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute('aria-busy')).toBeNull();
+
+  act(() => { for (const listener of listeners) listener({ type: 'summary.updated', ref, loadId: 'history-list-refresh', seq: 0, summary: history.projects[0].conversations[0] }); });
+  expect(screen.queryByRole('status', { name: 'Loading projects' })).toBeNull();
+  expect(button.disabled).toBe(false);
+  expect(screen.getByRole('button', { name: 'Fractal' })).toBeTruthy();
+});

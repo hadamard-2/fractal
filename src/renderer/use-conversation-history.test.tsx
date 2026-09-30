@@ -160,4 +160,33 @@ describe('useConversationHistory', () => {
     expect(result.current.projects).toEqual(refreshedProjects);
     unmount();
   });
+
+  test('reports loaded once the first list settles and keeps it through later refreshes', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    let resolveFirst!: (history: History) => void;
+    const list = vi.fn<ConversationApi['list']>()
+      .mockReturnValueOnce(new Promise<History>((resolve) => { resolveFirst = resolve; }))
+      .mockReturnValueOnce(new Promise<History>(() => undefined));
+    installConversations(list, vi.fn((nextListener) => {
+      listener = nextListener;
+      return vi.fn();
+    }));
+
+    const { result, unmount } = renderHook(() => useConversationHistory());
+    expect(result.current.loaded).toBe(false);
+    await act(async () => resolveFirst({ projects, providers }));
+    expect(result.current.loaded).toBe(true);
+    act(() => listener?.(summaryUpdated()));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.loaded).toBe(true);
+    unmount();
+  });
+
+  test('counts a failed first list as loaded, so waiting UI gives way to the error', async () => {
+    installConversations(vi.fn<ConversationApi['list']>().mockRejectedValueOnce(new Error('down')), vi.fn(() => vi.fn()));
+    const { result, unmount } = renderHook(() => useConversationHistory());
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.error?.message).toBe('down');
+    unmount();
+  });
 });

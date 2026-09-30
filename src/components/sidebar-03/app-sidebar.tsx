@@ -5,6 +5,7 @@ import { FolderPlus, ListFilter, Search } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Sidebar,
@@ -49,6 +50,9 @@ const SIDEBAR_DRAG_FLOOR = 120;
 
 const clampSidebarWidth = (width: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_DRAG_FLOOR, width));
+
+// Varied so the placeholder reads as a list of names rather than a grid.
+const PLACEHOLDER_WIDTHS = ['w-32', 'w-24', 'w-40', 'w-28', 'w-20'];
 
 const FILTER_LABELS: Record<ProjectFilter, string> = { active: 'Active', archived: 'Archived', all: 'All' };
 const EMPTY_FILTER_TEXT: Partial<Record<ProjectFilter, string>> = { active: 'No active projects.', archived: 'No archived projects.' };
@@ -209,7 +213,7 @@ export function DashboardSidebar({
   onCollapse?: () => void;
 }) {
   const { state } = useSidebar();
-  const { projects, providers, error, refresh } = useConversationHistory();
+  const { projects, providers, loaded, error, refresh } = useConversationHistory();
   const renameChat = async (ref: ConversationRef, title: string) => {
     await window.fractal.conversations.rename(ref, title);
     await Promise.all([refresh(), onConversationRenamed?.()]);
@@ -324,6 +328,20 @@ export function DashboardSidebar({
             </DropdownMenu>
           )}
           <SidebarGroupContent className="sidebar-projects-fade min-h-0 w-[calc(100%+0.5rem)] flex-1 overflow-x-hidden overflow-y-auto pb-10 pr-1">
+            {/*
+              Placeholder rows until the first history list and the saved
+              order are in. Later refreshes keep the real rows on screen.
+            */}
+            {!(loaded && orderReady) && (
+              <div aria-label="Loading projects" className="space-y-1 group-data-[collapsible=icon]:hidden" role="status">
+                {PLACEHOLDER_WIDTHS.map((width) => (
+                  <div className="flex h-8 items-center gap-2 px-2" key={width}>
+                    <Skeleton className="size-4 shrink-0 rounded-sm" />
+                    <Skeleton className={cn('h-3', width)} />
+                  </div>
+                ))}
+              </div>
+            )}
             {orderReady && <NavMain
               onCreated={(ref) => onConversationCreated?.(ref)}
               onMoveChat={moveChat}

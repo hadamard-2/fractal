@@ -8,6 +8,10 @@ export function useConversationHistory() {
   const [projects, setProjects] = useState<ProjectConversationGroup[]>([]);
   const [providers, setProviders] = useState<HarnessStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  // True once the first list has settled, success or failure. Unlike
+  // `loading`, it never goes back: refreshes after a summary update are
+  // background work, and UI waiting for history to exist keys off this.
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const mounted = useRef(false);
   const latestRequest = useRef(0);
@@ -26,7 +30,10 @@ export function useConversationHistory() {
       if (!mounted.current || request !== latestRequest.current) return;
       setError(cause instanceof Error ? cause : new Error(String(cause)));
     } finally {
-      if (mounted.current && request === latestRequest.current) setLoading(false);
+      if (mounted.current && request === latestRequest.current) {
+        setLoading(false);
+        setLoaded(true);
+      }
     }
   }, []);
 
@@ -43,7 +50,7 @@ export function useConversationHistory() {
     };
   }, [refresh]);
 
-  return { projects, providers, loading, error, refresh };
+  return { projects, providers, loading, loaded, error, refresh };
 }
 
 export type ConversationHistory = ReturnType<typeof useConversationHistory>;

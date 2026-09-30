@@ -1,6 +1,5 @@
-import { Plus } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import { ConversationPanel } from '@/components/conversation-panel';
-import { FractalMark } from '@/components/fractal-mark';
 import { providerName } from '@/components/sidebar-03/nav-main';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -41,7 +40,7 @@ function Notice({ children, detail }: { children: string; detail?: string }) {
  * session isn't torn down by a mode switch.
  */
 export function ExecuteMode({ active = true, selectedRef, history, actions }: ShellContext & { active?: boolean }) {
-  const { providers, loading, error } = history;
+  const { providers, loaded, error } = history;
   const shortcuts = [
     ['Search conversations', `${MOD_KEY_LABEL} K`],
     ['Add a project', `${MOD_KEY_LABEL} O`],
@@ -56,14 +55,11 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
           any provider trouble as a quiet notice rather than raw status text.
         */
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8 text-center">
-          <div className="mb-16 flex items-center gap-3 text-muted-foreground">
-            <FractalMark className="size-10" monochrome />
-            <span className="text-3xl font-semibold tracking-tight">Fractal</span>
-          </div>
           <h2 className="text-base font-medium">Pick up a thread</h2>
           <p className="mt-1 text-sm text-muted-foreground">Choose a conversation from the sidebar, or start one in a project.</p>
-          <Button className="mt-5" disabled={!actions.canStart} onClick={actions.newConversation}>
-            <Plus aria-hidden />
+          {/* Until history loads, which agents can start one isn't known yet; the button waits visibly. */}
+          <Button aria-busy={!loaded || undefined} className="mt-5" disabled={!loaded || !actions.canStart} onClick={actions.newConversation}>
+            {loaded ? <Plus aria-hidden /> : <Loader2 aria-hidden className="animate-spin" />}
             New conversation
             <kbd className="ml-1 font-mono text-[11px] font-medium opacity-60">{MOD_KEY_LABEL} N</kbd>
           </Button>
@@ -76,7 +72,6 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
             ))}
           </dl>
           <div className="mt-7 flex flex-col items-center gap-2">
-            {loading && <p className="text-xs text-muted-foreground" role="status">Loading your conversations…</p>}
             {error && <Notice detail={error.message}>Your conversations couldn't be loaded</Notice>}
             {providers.filter((provider) => provider.availability !== 'available').map((provider) => (
               <Notice detail={provider.message} key={provider.provider}>
