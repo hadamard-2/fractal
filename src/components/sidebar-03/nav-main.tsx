@@ -3,8 +3,8 @@
 import { PointerActivationConstraints, PointerSensor } from '@dnd-kit/dom';
 import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react';
 import { isSortable, useSortable, type UseSortableInput } from '@dnd-kit/react/sortable';
-import { Archive, ArchiveRestore, Folder, FolderOpen, FolderX } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Archive, ArchiveRestore, Folder, FolderOpen, FolderX, Pencil } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
@@ -19,7 +19,8 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { conversationKey, type ConversationRef, type ConversationRuntime, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ConversationRuntime, type ConversationSummary, type HarnessStatus, type ProjectConversationGroup } from '@/shared/conversation-contract';
+import { MAX_CONVERSATION_TITLE_LENGTH } from '@/shared/conversation-ipc';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
@@ -59,6 +60,65 @@ const sortableTransition = {
   easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
   idle: true,
 };
+
+// A turn in flight may be writing the chat's history, so renaming waits for it.
+const BUSY_RUNTIMES: ReadonlySet<ConversationRuntime> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
+
+function canRename(conversation: ConversationSummary, providers: HarnessStatus[]) {
+  return conversation.parentId === undefined
+    && !BUSY_RUNTIMES.has(conversation.runtime)
+    && providers.some((status) => status.provider === conversation.ref.provider && status.availability === 'available');
+}
+
+/** Inline title field for a chat row. Enter saves; Escape or leaving the field cancels. */
+function ChatTitleEditor({ title, onSave, onDone }: { title: string; onSave: (title: string) => Promise<void>; onDone: () => void }) {
+  const [value, setValue] = useState(title);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
+  useEffect(() => { inputRef.current?.select(); }, []);
+
+  const commit = async () => {
+    const next = value.trim();
+    if (!next || next === title) { onDone(); return; }
+    setSaving(true);
+    setFailed(false);
+    try {
+      await onSave(next);
+      onDone();
+    } catch {
+      // Keep the field open with what was typed, so a retry is one Enter away.
+      setFailed(true);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <input
+        aria-describedby={failed ? errorId : undefined}
+        aria-invalid={failed || undefined}
+        aria-label="Chat name"
+        autoFocus
+        className={cn('h-7 w-full rounded-md bg-sidebar-accent px-4 text-foreground text-sm outline-none ring-1 ring-sidebar-ring', failed && 'ring-destructive')}
+        disabled={saving}
+        maxLength={MAX_CONVERSATION_TITLE_LENGTH}
+        onBlur={() => { if (!saving) onDone(); }}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          // Keep typing inside the field: no row activation, drag, or app shortcut sees it.
+          event.stopPropagation();
+          if (event.key === 'Enter') { event.preventDefault(); void commit(); }
+          else if (event.key === 'Escape') { event.preventDefault(); onDone(); }
+        }}
+        ref={inputRef}
+        value={value}
+      />
+      {failed && <p className="px-4 pt-1 text-destructive text-xs" id={errorId} role="alert">Couldn't rename. Press Enter to retry.</p>}
+    </div>
+  );
+}
 
 function SortableRow({
   id,
@@ -102,6 +162,7 @@ export default function NavMain({
   onMoveProject,
   onMoveChat,
   projectMenu,
+  onRenameChat,
   showAgentColorTags = true,
 }: {
   groups: ProjectConversationGroup[];
@@ -112,6 +173,9 @@ export default function NavMain({
   onMoveProject?: (source: string, target: string) => void;
   onMoveChat?: (projectPath: string, source: string, target: string) => void;
   projectMenu?: ProjectMenuActions;
+  // Renames a chat in its agent's history and refreshes; rejects to keep the
+  // editor open. Absent, chat rows have no right-click menu.
+  onRenameChat?: (ref: ConversationRef, title: string) => Promise<void>;
   // Off hides the dot only; the row's accessible name still carries the agent.
   showAgentColorTags?: boolean;
 }) {
@@ -120,6 +184,14 @@ export default function NavMain({
     new Set(selected ? [selected.projectPath] : [])
   );
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  // The row whose right-click menu is open, highlighted like a hover. Tracked
+  // here because a project row's data-state belongs to its Collapsible.
+  const [menuRow, setMenuRow] = useState<string | null>(null);
+  const [editingChat, setEditingChat] = useState<string | null>(null);
+  // Set when Rename is picked, so the closing menu doesn't pull focus back
+  // to the row and blur the field that just opened.
+  const renamePicked = useRef(false);
+  const trackMenu = (row: string) => (open: boolean) => setMenuRow((current) => open ? row : current === row ? null : current);
   const isCollapsed = state === 'collapsed';
 
   const handleDragEnd = ({ canceled, operation }: DragEndEvent) => {
@@ -188,11 +260,11 @@ export default function NavMain({
               }}
               open={isOpen}
             >
-              <ContextMenu>
+              <ContextMenu onOpenChange={trackMenu(`project:${group.projectPath}`)}>
               <ContextMenuTrigger asChild disabled={!projectMenu}>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton
-                  className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]')}
+                  className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]', menuRow === `project:${group.projectPath}` && 'bg-sidebar-accent text-sidebar-accent-foreground')}
                   ref={onMoveProject && !isOpen ? handleRef : undefined}
                   type="button"
                 >
@@ -220,16 +292,26 @@ export default function NavMain({
                   {visibleConversations.map((conversation, chatIndex) => {
                     const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
                     const chatId = conversationKey(conversation.ref);
+                    const isEditing = editingChat === chatId;
                     return (
-                      <SortableRow disabled={!onMoveChat} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
+                      <SortableRow disabled={!onMoveChat || isEditing} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
                       {({ ref: chatRef, handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget }) => (
                       <SidebarMenuSubItem
                         className={cn('h-auto', isChatDragging && 'z-20')}
                         ref={chatRef}
                       >
+                        {isEditing && onRenameChat ? (
+                          <ChatTitleEditor
+                            onDone={() => setEditingChat(null)}
+                            onSave={(title) => onRenameChat(conversation.ref, title)}
+                            title={conversation.title}
+                          />
+                        ) : (
+                        <ContextMenu onOpenChange={trackMenu(`chat:${chatId}`)}>
+                        <ContextMenuTrigger asChild disabled={!onRenameChat}>
                         <SidebarMenuSubButton asChild isActive={isSelected}>
                           <button
-                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]')}
+                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]', menuRow === `chat:${chatId}` && 'bg-sidebar-accent text-foreground')}
                             aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(conversation.runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
                             ref={chatHandleRef}
@@ -252,6 +334,23 @@ export default function NavMain({
                             )}
                           </button>
                         </SidebarMenuSubButton>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent
+                          className="min-w-44"
+                          onCloseAutoFocus={(event) => {
+                            if (renamePicked.current) event.preventDefault();
+                            renamePicked.current = false;
+                          }}
+                        >
+                          <ContextMenuItem
+                            disabled={!canRename(conversation, providers)}
+                            onSelect={() => { renamePicked.current = true; setEditingChat(chatId); }}
+                          >
+                            <Pencil />Rename
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                        </ContextMenu>
+                        )}
                       </SidebarMenuSubItem>
                       )}
                       </SortableRow>

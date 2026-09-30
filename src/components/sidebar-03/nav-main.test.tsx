@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
@@ -162,6 +162,92 @@ describe('NavMain', () => {
     const claudeChat = screen.getByRole('button', { name: 'Fix parser, Claude Code conversation, Working elsewhere' });
     expect(claudeChat.querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
     expect(screen.getByRole('button', { name: /Review IPC, Codex conversation/ }).querySelector('[data-slot="tooltip-trigger"]')).toBeNull();
+  });
+
+  test('highlights a project or chat row while its right-click menu is open', async () => {
+    render(
+      <SidebarProvider>
+        <NavMain groups={[atlasGroup]} onCreated={vi.fn()} onRenameChat={vi.fn()} onSelect={vi.fn()} projectMenu={{ statusOf: () => 'active', onToggleArchive: vi.fn(), onRemove: vi.fn() }} providers={[codex]} selected={null} />
+      </SidebarProvider>
+    );
+    const project = screen.getByRole('button', { name: 'Atlas' });
+    fireEvent.contextMenu(project);
+    expect(await screen.findByRole('menuitem', { name: 'Archive project' })).toBeTruthy();
+    expect(project.classList.contains('bg-sidebar-accent')).toBe(true);
+    await userEvent.setup().keyboard('{Escape}');
+    await waitFor(() => expect(project.classList.contains('bg-sidebar-accent')).toBe(false));
+
+    await userEvent.setup().click(project);
+    const chat = screen.getByRole('button', { name: /Map routes/ });
+    fireEvent.contextMenu(chat);
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeTruthy();
+    expect(chat.classList.contains('bg-sidebar-accent')).toBe(true);
+  });
+
+  describe('renaming a chat', () => {
+    async function openRename(onRenameChat: (ref: ConversationRef, title: string) => Promise<void>) {
+      const user = userEvent.setup();
+      render(
+        <SidebarProvider>
+          <NavMain groups={[atlasGroup]} onCreated={vi.fn()} onRenameChat={onRenameChat} onSelect={vi.fn()} providers={[codex]} selected={null} />
+        </SidebarProvider>
+      );
+      await user.click(screen.getByRole('button', { name: 'Atlas' }));
+      fireEvent.contextMenu(screen.getByRole('button', { name: /Map routes/ }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+      const field = await screen.findByRole('textbox', { name: 'Chat name' });
+      await waitFor(() => expect(document.activeElement).toBe(field));
+      return { user, field: field as HTMLInputElement };
+    }
+
+    test('saves the trimmed name on Enter and closes the field', async () => {
+      const onRenameChat = vi.fn(async () => undefined);
+      const { user, field } = await openRename(onRenameChat);
+      expect(field.value).toBe('Map routes');
+      await user.clear(field);
+      await user.type(field, '  Route map {Enter}');
+      expect(onRenameChat).toHaveBeenCalledWith(atlasGroup.conversations[0].ref, 'Route map');
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Chat name' })).toBeNull());
+    });
+
+    test('cancels on Escape, on a blank name, and on an unchanged name', async () => {
+      const onRenameChat = vi.fn(async () => undefined);
+      let { user, field } = await openRename(onRenameChat);
+      await user.type(field, 'x{Escape}');
+      expect(screen.queryByRole('textbox', { name: 'Chat name' })).toBeNull();
+      cleanup();
+
+      ({ user, field } = await openRename(onRenameChat));
+      await user.clear(field);
+      await user.type(field, '   {Enter}');
+      expect(screen.queryByRole('textbox', { name: 'Chat name' })).toBeNull();
+      cleanup();
+
+      ({ user, field } = await openRename(onRenameChat));
+      await user.type(field, '{Enter}');
+      expect(screen.queryByRole('textbox', { name: 'Chat name' })).toBeNull();
+      expect(onRenameChat).not.toHaveBeenCalled();
+    });
+
+    test('keeps the typed name and shows an error when the rename fails', async () => {
+      const onRenameChat = vi.fn(async () => { throw new Error('busy'); });
+      const { user, field } = await openRename(onRenameChat);
+      await user.clear(field);
+      await user.type(field, 'Route map{Enter}');
+      expect((await screen.findByRole('alert')).textContent).toContain("Couldn't rename");
+      expect((screen.getByRole('textbox', { name: 'Chat name' }) as HTMLInputElement).value).toBe('Route map');
+    });
+
+    test('disables Rename for a busy chat', async () => {
+      render(
+        <SidebarProvider>
+          <NavMain groups={[fractalGroup]} onCreated={vi.fn()} onRenameChat={vi.fn()} onSelect={vi.fn()} providers={[codex]} selected={null} />
+        </SidebarProvider>
+      );
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Fractal' }));
+      fireEvent.contextMenu(screen.getByRole('button', { name: /Review IPC/ }));
+      expect((await screen.findByRole('menuitem', { name: 'Rename' })).getAttribute('aria-disabled')).toBe('true');
+    });
   });
 
   test('keeps an explicitly collapsed project closed when its summaries refresh', async () => {

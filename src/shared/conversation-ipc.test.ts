@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseConversationStreamEvent, parseLoadId } from '@/shared/conversation-ipc';
+import { MAX_CONVERSATION_TITLE_LENGTH, parseConversationStreamEvent, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
 const loadId = 'abcdef12-3456-4abc-8def-1234567890ab';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
@@ -146,4 +146,12 @@ describe('native conversation event validation', () => {
     const svg = { ...turn, userMessage: { ...turn.userMessage, images: [{ mediaType: 'image/svg+xml', data: 'AAA' }] } };
     expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'turn.upserted', turn: svg })).toThrow('Invalid conversation stream event');
   });
+});
+
+test('accepts a trimmed single-line conversation title within the cap', () => {
+  expect(parseConversationTitle('  Parser fix  ')).toBe('Parser fix');
+  expect(parseConversationTitle('x'.repeat(MAX_CONVERSATION_TITLE_LENGTH))).toHaveLength(MAX_CONVERSATION_TITLE_LENGTH);
+  for (const invalid of ['', '   ', 'two\nlines', 'x'.repeat(MAX_CONVERSATION_TITLE_LENGTH + 1), 42, null]) {
+    expect(() => parseConversationTitle(invalid)).toThrow('Invalid conversation title');
+  }
 });

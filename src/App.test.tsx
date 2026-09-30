@@ -22,7 +22,7 @@ function installApi() {
   const open = vi.fn<ConversationApi['open']>(async () => ({ summary: { ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }));
   const api: ConversationApi = {
     list, open, close: async () => undefined, create: async () => null, continue: async () => undefined,
-    interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, onEvent: () => () => undefined,
+    interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => ({ theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: emptyOrder }) } } });
   return { list, open };

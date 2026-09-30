@@ -2,7 +2,7 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import { discoverClaudeConversations, readClaudeConversation, watchClaudeConversation } from './claude-history';
+import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, watchClaudeConversation } from './claude-history';
 import { ClaudePermissionBridge } from './claude-permission-bridge';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
@@ -147,6 +147,12 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   private async ensureStatus(): Promise<HarnessStatus> { return this.status ?? this.probe(); }
   private runtime(ref: ConversationRef): Promise<ConversationRuntime> { return this.dependencies.runtime?.(ref) ?? Promise.resolve('unknown'); }
+  async renameConversation(ref: ConversationRef, title: string): Promise<void> {
+    const found = await this.find(ref);
+    if (found.summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
+    await appendClaudeCustomTitle(found.filePath, found.ref.nativeSessionId, title);
+  }
+
   private async rereadExact(ref: ConversationRef): Promise<NativeEvent[]> {
     const found = await this.find(ref);
     if (found.ref.nativeSessionId !== ref.nativeSessionId || found.ref.projectPath !== ref.projectPath) throw new Error('Claude created conversation does not match the requested identity');

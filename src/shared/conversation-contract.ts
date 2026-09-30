@@ -188,6 +188,8 @@ export interface ConversationApi {
   resolveRequest(requestId: string, decision: UserDecision): Promise<void>;
   previewAttachment(ref: ConversationRef, path: string): Promise<AttachmentPreview>;
   openAttachment(ref: ConversationRef, path: string, action: AttachmentOpenAction): Promise<void>;
+  /** Renames the conversation in its agent's own history; resolves once the agent has it. */
+  rename(ref: ConversationRef, title: string): Promise<void>;
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 

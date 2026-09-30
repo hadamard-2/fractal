@@ -6,7 +6,7 @@ import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
 import { conversationKey, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
-import { parseConversationRef, parseLoadId } from '@/shared/conversation-ipc';
+import { parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
 type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities };
 type StreamPayload = ConversationStreamEvent extends infer Event ? Event extends ConversationStreamEvent ? Omit<Event, 'loadId' | 'seq' | 'ref'> : never : never;
@@ -33,6 +33,8 @@ type Load = {
 };
 type OwnedRun = { ref: ConversationRef; id: string; rendererId: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']>; revokedReason?: string; revokedRequests: Set<string> };
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
+
+const BUSY_RUNTIMES: ReadonlySet<ConversationSummary['runtime']> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
 
 export class ConversationService {
   private readonly loads = new Map<string, Load>();
@@ -181,6 +183,18 @@ export class ConversationService {
     const owned = this.ownedRuns.get(conversationKey(parsed));
     if (!owned || owned.ref.projectPath !== parsed.projectPath) throw new Error('No owned conversation run is available');
     await owned.run.interrupt();
+  }
+
+  async rename(input: ConversationRef, inputTitle: string): Promise<void> {
+    this.assertAvailable();
+    const ref = parseConversationRef(input), title = parseConversationTitle(inputTitle);
+    const summary = await this.registry.validate(ref);
+    if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
+    // A turn in flight may be writing the same history; wait for it to settle.
+    if (this.ownedRuns.has(conversationKey(ref)) || this.startingRuns.has(conversationKey(ref)) || BUSY_RUNTIMES.has(summary.runtime)) throw new Error('Conversation is busy');
+    const adapter = this.registry.resolve(ref);
+    if (!adapter.renameConversation) throw new Error('Renaming is not available for this conversation');
+    await adapter.renameConversation(summary.ref, title);
   }
 
   async resolveRequest(requestId: string, decision: UserDecision): Promise<void> {

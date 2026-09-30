@@ -173,6 +173,7 @@ export function AppShell({
         onNewProject={actions.addProject}
         onOpenSettings={onOpenSettings}
         onRemoveProject={removeProject}
+        onConversationRenamed={history.refresh}
         onSearchOpenChange={setSearchOpen}
         projectVisibility={projectVisibility}
         showAgentColorTags={showAgentColorTags}
@@ -238,7 +239,7 @@ export function AppShell({
                   )}
                   <BreadcrumbItem className="min-w-0">
                     <BreadcrumbPage className="min-w-0 truncate font-medium">
-                      {selectedItem.title}
+                      {currentSummary?.title ?? selectedItem.title}
                     </BreadcrumbPage>
                     {selectedRuntime && (
                       <span className="shrink-0 text-xs text-muted-foreground">

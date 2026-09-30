@@ -44,4 +44,6 @@ export interface HarnessAdapter {
   watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe>;
   createConversation(projectPath: string): Promise<ConversationRef>;
   continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;
+  /** Stores a user-chosen title in the agent's own history. Absent when the agent has no rename. */
+  renameConversation?(ref: ConversationRef, title: string): Promise<void>;
 }

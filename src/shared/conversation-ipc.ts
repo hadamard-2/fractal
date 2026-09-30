@@ -28,6 +28,7 @@ export const CONVERSATION_CHANNELS = {
   continue: 'fractal:conversations:continue', interrupt: 'fractal:conversations:interrupt',
   resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
   previewAttachment: 'fractal:conversations:preview-attachment', openAttachment: 'fractal:conversations:open-attachment',
+  rename: 'fractal:conversations:rename',
 } as const;
 
 const MAX_TEXT_LENGTH = 1_000_000;
@@ -36,6 +37,9 @@ const MAX_SESSION_ID_LENGTH = 512;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_HISTORY_TURNS = 50;
 const MAX_ATTACHMENT_NAME_LENGTH = 1_024;
+// Fractal's own cap: long enough for any title a person types, short enough
+// to keep a sidebar row and a history record reasonable.
+export const MAX_CONVERSATION_TITLE_LENGTH = 200;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const RUNTIMES: readonly ConversationRuntime[] = [
@@ -129,6 +133,13 @@ export function parseConversationRef(value: unknown): ConversationRef {
     nativeSessionId: value.nativeSessionId,
     projectPath: value.projectPath,
   };
+}
+
+/** A rename title, trimmed; rejects blank, multi-line, and over-long input. */
+export function parseConversationTitle(value: unknown): string {
+  const title = typeof value === 'string' ? value.trim() : '';
+  if (!title || title.length > MAX_CONVERSATION_TITLE_LENGTH || /[\r\n]/.test(title)) throw new Error('Invalid conversation title');
+  return title;
 }
 
 export function parseLoadId(value: unknown): string {

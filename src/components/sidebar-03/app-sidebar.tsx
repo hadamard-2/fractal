@@ -163,6 +163,7 @@ export function DashboardSidebar({
   onSearchOpenChange,
   projectVisibility,
   onRemoveProject,
+  onConversationRenamed,
   showAgentColorTags,
   width,
   onWidthChange,
@@ -195,6 +196,9 @@ export function DashboardSidebar({
   // Hides a project after the user confirms; AppShell also closes its open
   // conversation.
   onRemoveProject?: (projectPath: string) => void;
+  // Called after a chat rename lands, so AppShell can refresh its own copy of
+  // the history (the header shows the selected chat's title from it).
+  onConversationRenamed?: () => Promise<void>;
   // Whether chat rows show their agent's color dot. Defaults to shown.
   showAgentColorTags?: boolean;
   // Chosen sidebar width in px, owned by App for the same reason as the
@@ -205,7 +209,11 @@ export function DashboardSidebar({
   onCollapse?: () => void;
 }) {
   const { state } = useSidebar();
-  const { projects, providers, error } = useConversationHistory();
+  const { projects, providers, error, refresh } = useConversationHistory();
+  const renameChat = async (ref: ConversationRef, title: string) => {
+    await window.fractal.conversations.rename(ref, title);
+    await Promise.all([refresh(), onConversationRenamed?.()]);
+  };
   const { orderedProjects, ready: orderReady, error: orderError, moveProject, moveChat } = useSidebarOrder(projects);
   const isCollapsed = state === 'collapsed';
   const [pendingRemoval, setPendingRemoval] = useState<ProjectConversationGroup | null>(null);
@@ -329,6 +337,7 @@ export function DashboardSidebar({
               }}
               providers={providers}
               selected={selected ?? null}
+              onRenameChat={renameChat}
               showAgentColorTags={showAgentColorTags}
             />}
             {emptyFilterText && <p className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">{emptyFilterText}</p>}

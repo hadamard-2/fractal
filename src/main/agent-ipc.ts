@@ -7,7 +7,7 @@ import { readAttachmentPreview } from '@/main/attachments/preview';
 import type { ConversationService } from '@/main/conversation-service';
 import { canonicalizeProjectPath } from '@/main/harness/project-path';
 import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
-import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
+import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 
 type Owner = { sender: WebContents; closed: boolean; detach: () => void };
 type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
@@ -172,6 +172,11 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       const load = requests.get(id);
       if (!load || load.owner !== owner) throw new Error('Conversation is not owned by this renderer');
       return async () => { requests.delete(id); await service.resolveRequest(id, decision); };
+    });
+    // Not tied to an open load: renaming happens from the sidebar, for any chat.
+    invoke(CHANNELS.rename, 2, ([input, titleInput]) => {
+      const ref = parseConversationRef(input), title = parseConversationTitle(titleInput);
+      return () => service.rename(ref, title);
     });
     const requireAttachment = (owner: Owner, input: unknown, pathInput: unknown) => {
       const ref = parseConversationRef(input), file = parseAttachmentPath(pathInput); requireLoad(owner, ref);

@@ -263,6 +263,27 @@ function namedTitle(records: ClaudeHistoryRecord[]): string | undefined {
   return latest('custom-title', 'customTitle') ?? latest('ai-title', 'aiTitle');
 }
 
+/**
+ * Renames a session the way Claude Code's own rename does: by appending a
+ * custom-title record, which namedTitle above then prefers. Refuses when the
+ * file doesn't end on a line boundary — another writer is mid-record, and an
+ * appended line would fuse with it.
+ */
+export async function appendClaudeCustomTitle(filePath: string, sessionId: string, customTitle: string): Promise<void> {
+  const handle = await fs.open(filePath, 'a+');
+  try {
+    const { size } = await handle.stat();
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      await handle.read(last, 0, 1, size - 1);
+      if (last[0] !== 0x0a) throw new Error('Claude conversation is being written; try again');
+    }
+    await handle.appendFile(`${JSON.stringify({ type: 'custom-title', customTitle, sessionId })}\n`);
+  } finally {
+    await handle.close();
+  }
+}
+
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {
   for (const record of records) {
     const message = objectValue(record.message);

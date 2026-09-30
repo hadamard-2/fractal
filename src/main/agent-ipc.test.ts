@@ -48,7 +48,7 @@ function fixture() {
   const service = {
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
-    create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined),
+    create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
     resolveRequest: vi.fn(async () => undefined), denyRequestsForOwner: vi.fn(async () => undefined),
     attachmentAllowed: vi.fn((_ref: unknown, path: string) => path === '/repo/notes.md'),
   };
@@ -83,6 +83,8 @@ describe('conversation IPC', () => {
     ['resolve-request', ['', { kind: 'allow-once' }], 'Invalid request id'],
     ['resolve-request', ['request', { kind: 'allow-always' }], 'Invalid decision'],
     ['list', ['unexpected'], 'Invalid conversation arguments'],
+    ['rename', [ref, '  '], 'Invalid conversation title'],
+    ['rename', [{ ...ref, projectPath: 'relative' }, 'Name'], 'Invalid conversation reference'],
   ])('rejects invalid %s inputs before dispatch', async (channel, args, message) => {
     const f = fixture();
     await expect(f.invoke(channel, ...args)).rejects.toThrow(message);
@@ -94,7 +96,7 @@ describe('conversation IPC', () => {
     const unrelated = vi.fn(); electron.handlers.set('unrelated', unrelated);
     const f = fixture();
     expect(f.register()).toBe(f.registration);
-    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment'].map((name) => `fractal:conversations:${name}`)].sort());
+    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment', 'rename'].map((name) => `fractal:conversations:${name}`)].sort());
     await f.invoke('list');
     await boundary.disposeConversationIpc(); await boundary.disposeConversationIpc();
     expect([...electron.handlers.keys()]).toEqual(['unrelated']);
@@ -124,6 +126,12 @@ describe('conversation IPC', () => {
     await f.invoke('close', ref);
     f.registration.emit(complete);
     expect(f.sender.send).toHaveBeenCalledTimes(1);
+  });
+
+  test('renames without an open load, passing the trimmed title', async () => {
+    const f = fixture();
+    await f.invoke('rename', ref, ' New name ');
+    expect(f.service.rename).toHaveBeenCalledWith(ref, 'New name');
   });
 
   test('passes transport-owned renderer identity to continuation', async () => {

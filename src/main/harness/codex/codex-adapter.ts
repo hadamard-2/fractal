@@ -110,6 +110,11 @@ export class CodexAdapter implements HarnessAdapter {
     return { provider: 'codex', nativeSessionId: response.thread.id, projectPath: canonical };
   }
 
+  async renameConversation(ref: ConversationRef, title: string): Promise<void> {
+    if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    await this.server.request('thread/name/set', { threadId: ref.nativeSessionId, name: title });
+  }
+
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);

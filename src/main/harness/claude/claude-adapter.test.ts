@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, test, vi } from 'vitest';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
@@ -53,6 +53,26 @@ describe('Claude adapter', () => {
     const adapter = new ClaudeAdapter(root, { realpath, probe });
     expect(await adapter.probe()).toMatchObject({ capabilities: { approvals: true, questions: false } });
     expect(adapter.capabilities()).toMatchObject({ approvals: true, questions: false });
+  });
+
+  test('renames by appending a custom-title record, and refuses a file mid-write or a subagent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-adapter-rename-'));
+    const file = path.join(directory, 'project', 'session-1.jsonl');
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, '{"type":"user","uuid":"a","sessionId":"session-1","cwd":"/work/fractal","timestamp":"2026-09-01T10:00:00.000Z","message":{"role":"user","content":"Original"}}\n');
+    await mkdir(path.join(directory, 'project', 'session-1', 'subagents'), { recursive: true });
+    await writeFile(path.join(directory, 'project', 'session-1', 'subagents', 'agent-a1.jsonl'), '{"type":"user","uuid":"c","isSidechain":true,"sessionId":"session-1","cwd":"/work/fractal","message":{"role":"user","content":"Child"}}\n');
+    const adapter = new ClaudeAdapter(directory, { realpath });
+    const session = { ...ref, nativeSessionId: 'session-1' };
+
+    await adapter.renameConversation(session, 'Renamed chat');
+    expect((await readFile(file, 'utf8')).trimEnd().split('\n').at(-1)).toBe('{"type":"custom-title","customTitle":"Renamed chat","sessionId":"session-1"}');
+    expect((await adapter.listConversations()).find((item) => item.ref.nativeSessionId === 'session-1')?.title).toBe('Renamed chat');
+
+    await appendFile(file, '{"type":"assistant","partial":');
+    await expect(adapter.renameConversation(session, 'Again')).rejects.toThrow('being written');
+    await expect(adapter.renameConversation({ ...ref, nativeSessionId: 'session-1/agent-a1' }, 'Child')).rejects.toThrow('Subagent conversations are read-only');
+    await rm(directory, { recursive: true, force: true });
   });
 
   test('loads a subagent transcript but refuses to continue it', async () => {

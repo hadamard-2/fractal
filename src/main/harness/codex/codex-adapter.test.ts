@@ -35,6 +35,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       if (method === 'thread/resume') return { thread: threadRead.thread };
       if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
+      if (method === 'thread/name/set') return {};
       throw new Error(`unexpected ${method}`);
     }),
     onNotification: vi.fn((listener: (notification: unknown) => void) => {
@@ -100,6 +101,12 @@ describe('Codex read adapter', () => {
     for await (const event of loaded.events) events.push(event);
     expect(loaded.summary).toMatchObject({ title, captureCompleteness: 'partial' });
     expect(events.some((event) => event.payload.kind === 'unsupported')).toBe(true);
+  });
+
+  test('renames a thread through thread/name/set', async () => {
+    const server = createFakeAppServer();
+    await new CodexAdapter(server as never).renameConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, 'Renamed');
+    expect(server.requests).toEqual([{ method: 'thread/name/set', params: { threadId: 'thread-1', name: 'Renamed' } }]);
   });
 
   test('only loads a discovered Codex thread with matching provider ID and canonical project path', async () => {

@@ -44,6 +44,30 @@ function fixture(history: NativeEvent[] = [], historyChunkSize = 50, provider: '
   return { adapter, service, events, sinks, unsubscribe, registry };
 }
 
+describe('ConversationService rename', () => {
+  test('renames an idle conversation through its adapter with the trimmed title', async () => {
+    const f = fixture();
+    const renameConversation = vi.fn(async () => undefined);
+    f.adapter.renameConversation = renameConversation;
+    await f.service.rename(ref, '  New name ');
+    expect(renameConversation).toHaveBeenCalledWith(ref, 'New name');
+  });
+
+  test('refuses busy, subagent, unknown, and unsupported conversations', async () => {
+    const f = fixture();
+    const renameConversation = vi.fn(async () => undefined);
+    await expect(f.service.rename(ref, 'Name')).rejects.toThrow('not available');
+    f.adapter.renameConversation = renameConversation;
+    vi.mocked(f.adapter.listConversations).mockResolvedValueOnce([{ ...summary, runtime: 'active-externally' }]);
+    await expect(f.service.rename(ref, 'Name')).rejects.toThrow('busy');
+    vi.mocked(f.adapter.listConversations).mockResolvedValueOnce([{ ...summary, parentId: 'parent' }]);
+    await expect(f.service.rename(ref, 'Name')).rejects.toThrow('read-only');
+    await expect(f.service.rename({ ...ref, nativeSessionId: 'missing' }, 'Name')).rejects.toThrow('not currently available');
+    await expect(f.service.rename(ref, '   ')).rejects.toThrow('Invalid conversation title');
+    expect(renameConversation).not.toHaveBeenCalled();
+  });
+});
+
 describe('ConversationService', () => {
   test('streams 205 finalized turns in bounded ordered chunks after establishing the watcher', async () => {
     const f = fixture(Array.from({ length: 205 }, (_, index) => [start(String(index)), finish(String(index))]).flat());
