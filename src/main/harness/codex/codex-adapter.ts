@@ -142,9 +142,10 @@ export class CodexAdapter implements HarnessAdapter {
 
   async readLastRun(ref: ConversationRef): Promise<ModelChoice | undefined> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
-    // Codex reports a thread's model only on resume. The thread stays
-    // subscribed, as it does after continueConversation: this connection is
-    // shared, and unsubscribing would also silence a run streaming on it.
+    // The thread/resume response is the protocol surface that carries the
+    // thread's model and effort. The thread stays subscribed, as it does
+    // after continueConversation: this connection is shared, and
+    // unsubscribing would also silence a run streaming on it.
     const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: await this.canonicalPath(ref.projectPath) });
     if (!resumed.model) return undefined;
     return resumed.reasoningEffort ? { model: resumed.model, effort: resumed.reasoningEffort } : { model: resumed.model };
