@@ -40,7 +40,10 @@ export class CodexAdapter implements HarnessAdapter {
     let cursor: string | null = null;
     do {
       const response = await this.server.request('thread/list', {
-        archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100,
+        // Answer from the server's state database instead of its default
+        // scan-and-repair over the JSONL rollouts. Listing is the startup
+        // path, and the scan made it take seconds rather than milliseconds.
+        archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true,
         ...(cursor ? { cursor } : {}),
       });
       for (const thread of response.data) {

@@ -68,8 +68,8 @@ describe('Codex read adapter', () => {
     const summaries = await new CodexAdapter(server as never).listConversations();
 
     expect(server.requests.map((request) => request.method)).toEqual(['thread/list', 'thread/list']);
-    expect(server.requests[0]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100 });
-    expect(server.requests[1]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, cursor: 'next' });
+    expect(server.requests[0]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true });
+    expect(server.requests[1]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true, cursor: 'next' });
     expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
     expect(summaries.map((summary) => summary.title)).toEqual(['Newest native name', 'Older preview title']);
     expect(summaries[0]).toMatchObject({ runtime: 'idle', createdAt: 1768000000000, updatedAt: 1768000030000, captureCompleteness: 'unknown' });
