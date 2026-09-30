@@ -9,6 +9,8 @@ import type { ThreadSetNameParams } from '@/main/harness/codex/generated/v2/Thre
 import type { ThreadSetNameResponse } from '@/main/harness/codex/generated/v2/ThreadSetNameResponse';
 import type { ThreadResumeParams } from '@/main/harness/codex/generated/v2/ThreadResumeParams';
 import type { ThreadResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
+import type { ModelListParams } from '@/main/harness/codex/generated/v2/ModelListParams';
+import type { ModelListResponse } from '@/main/harness/codex/generated/v2/ModelListResponse';
 import type { ThreadStartParams } from '@/main/harness/codex/generated/v2/ThreadStartParams';
 import type { ThreadStartResponse } from '@/main/harness/codex/generated/v2/ThreadStartResponse';
 import type { TurnInterruptParams } from '@/main/harness/codex/generated/v2/TurnInterruptParams';
@@ -25,6 +27,7 @@ export interface CodexRequestMap {
   'thread/read': { params: ThreadReadParams; result: ThreadReadResponse };
   'thread/start': { params: ThreadStartParams; result: ThreadStartResponse };
   'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse };
+  'model/list': { params: ModelListParams; result: ModelListResponse };
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse };
   'turn/start': { params: TurnStartParams; result: TurnStartResponse };
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse };

@@ -4,7 +4,7 @@ import { createCodexLiveNormalizationContext, normalizeCodexNotification, normal
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import type { ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
+import type { AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
 
@@ -116,6 +116,38 @@ export class CodexAdapter implements HarnessAdapter {
   async renameConversation(ref: ConversationRef, title: string): Promise<void> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     await this.server.request('thread/name/set', { threadId: ref.nativeSessionId, name: title });
+  }
+
+  async listModels(): Promise<AgentModel[]> {
+    const models: AgentModel[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const response = await this.server.request('model/list', cursor ? { cursor } : {});
+      for (const model of response.data) {
+        if (model.hidden) continue;
+        models.push({
+          id: model.model, label: model.displayName || model.model,
+          ...(model.description ? { description: model.description } : {}),
+          efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
+          defaultEffort: model.defaultReasoningEffort,
+        });
+      }
+      cursor = response.nextCursor;
+      if (cursor && cursors.has(cursor)) break;
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  }
+
+  async readLastRun(ref: ConversationRef): Promise<ModelChoice | undefined> {
+    if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    // Codex reports a thread's model only on resume. The thread stays
+    // subscribed, as it does after continueConversation: this connection is
+    // shared, and unsubscribing would also silence a run streaming on it.
+    const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: await this.canonicalPath(ref.projectPath) });
+    if (!resumed.model) return undefined;
+    return resumed.reasoningEffort ? { model: resumed.model, effort: resumed.reasoningEffort } : { model: resumed.model };
   }
 
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
