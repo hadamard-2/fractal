@@ -246,8 +246,10 @@ test('switching to a model without effort hides the effort picker and saves the 
   const user = userEvent.setup();
   model.focus();
   await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Opus', 'Haiku']);
   await user.keyboard('{End}{Enter}');
   await waitFor(() => expect(models.choose).toHaveBeenCalledWith(ref, { model: 'haiku' }));
+  expect(model.textContent).toBe('Haiku');
   expect(screen.queryByRole('combobox', { name: 'Effort' })).toBeNull();
   // Opening the picker asks again, in case the startup fetch finished since.
   expect(models.list).toHaveBeenCalledTimes(2);
