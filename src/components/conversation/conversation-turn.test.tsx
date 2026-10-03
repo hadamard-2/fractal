@@ -48,3 +48,14 @@ describe('ConversationTurn copy button', () => {
     expect(copyButton()).toBeNull();
   });
 });
+
+describe('ConversationTurn message text', () => {
+  // jsdom has no layout, so this pins the rule; the wrapping itself was checked in the running app.
+  test('lets an unbroken run wrap in both the user and the agent message', () => {
+    const run = 'x'.repeat(400);
+    const answer: TurnBlock = { id: 'answer', kind: 'assistant-prose', text: `agent ${run}`, provider: 'claude', concludesTurn: true };
+    render(<ConversationTurn onResolve={() => undefined} turn={{ ...turn([answer]), userMessage: { id: 'u', text: `user ${run}` } }} />);
+    expect(screen.getByText(`user ${run}`).closest('.wrap-anywhere')).not.toBeNull();
+    expect(screen.getByText(`agent ${run}`).closest('.wrap-anywhere')).not.toBeNull();
+  });
+});

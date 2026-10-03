@@ -2,12 +2,13 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, watchClaudeConversation } from './claude-history';
+import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastRun, watchClaudeConversation } from './claude-history';
+import { listClaudeModels } from './claude-models';
 import { ClaudePermissionBridge } from './claude-permission-bridge';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
-import type { BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
+import type { AgentModel, BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
@@ -25,6 +26,7 @@ interface ClaudeAdapterDependencies {
   executable?: string;
   rereadNative?: (ref: ConversationRef) => Promise<NativeEvent[]>;
   ownedProcesses?: ClaudeOwnedProcessRegistry;
+  listModels?: () => Promise<AgentModel[]>;
 }
 
 export class ClaudeAdapter implements HarnessAdapter {
@@ -106,7 +108,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;
@@ -151,6 +153,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     const found = await this.find(ref);
     if (found.summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     await appendClaudeCustomTitle(found.filePath, found.ref.nativeSessionId, title);
+  }
+
+  listModels(): Promise<AgentModel[]> {
+    return this.dependencies.listModels?.() ?? listClaudeModels({ executable: this.dependencies.executable ?? 'claude' });
+  }
+
+  async readLastRun(ref: ConversationRef): Promise<ModelChoice | undefined> {
+    return readClaudeLastRun((await this.find(ref)).filePath);
   }
 
   private async rereadExact(ref: ConversationRef): Promise<NativeEvent[]> {

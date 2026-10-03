@@ -5,10 +5,12 @@ import { Shimmer } from '@/components/ai-elements/shimmer';
 import { PromptInput, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, PromptInputHeader, PromptInputSubmit, PromptInputTextarea, usePromptInputAttachments, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { AttachmentPreviewProvider } from '@/components/conversation/attachment-preview-context';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
+import { ModelPicker } from '@/components/conversation/model-picker';
 import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
 import { Button } from '@/components/ui/button';
 import { useConversation } from '@/renderer/use-conversation';
+import { useModelChoice } from '@/renderer/use-model-choice';
 import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type PromptAttachment, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
 // The transcript and composer share a reading measure at every panel width.
@@ -30,6 +32,7 @@ function ComposerSubmit({ blocked, hasText, sending }: { blocked: boolean; hasTe
 
 function NativeConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
+  const modelChoice = useModelChoice(conversationRef);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -65,12 +68,12 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   }) : turn), [state.turns, state.requests]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
-    if (!eligible || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
+    if (!eligible || !modelChoice.loaded || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
     let attachments: PromptAttachment[];
     try { attachments = promptAttachments(message.files); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
     const draft = message.text;
-    const dispatched = send(draft.trim(), attachments);
+    const dispatched = send(draft.trim(), attachments, modelChoice.choice);
     if (!dispatched) throw new Error('Message was not sent');
     const attempt = {};
     pendingSend.current = attempt;
@@ -125,12 +128,15 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
           </PromptInputHeader>
           <PromptInputBody><PromptInputTextarea aria-label="Message" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} placeholder="Ask anything" value={input} /></PromptInputBody>
           <PromptInputFooter className="justify-between">
-            <AttachButton disabled={!eligible || sending} />
+            <div className="flex min-w-0 items-center gap-1">
+              <AttachButton disabled={!eligible || sending} />
+              <ModelPicker choice={modelChoice.choice} models={modelChoice.models} onChoose={modelChoice.choose} onOpen={modelChoice.refresh} />
+            </div>
             <div className="flex items-center gap-1">
               {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
                 <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
               )}
-              <ComposerSubmit blocked={!eligible} hasText={Boolean(input.trim())} sending={sending} />
+              <ComposerSubmit blocked={!eligible || !modelChoice.loaded} hasText={Boolean(input.trim())} sending={sending} />
             </div>
           </PromptInputFooter>
         </PromptInput>

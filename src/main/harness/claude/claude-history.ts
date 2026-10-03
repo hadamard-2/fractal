@@ -3,7 +3,7 @@ import type { FSWatcher, Stats } from 'node:fs';
 import path from 'node:path';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 import type { NativeEvent } from '@/main/harness/reconciler';
-import type { CaptureCompleteness, ConversationRef, ConversationSummary } from '@/shared/conversation-contract';
+import type { CaptureCompleteness, ConversationRef, ConversationSummary, ModelChoice } from '@/shared/conversation-contract';
 import type { NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import {
   createClaudeNormalizationContext,
@@ -283,6 +283,31 @@ export async function appendClaudeCustomTitle(filePath: string, sessionId: strin
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * The model and effort of the last assistant record Claude wrote. Claude Code
+ * writes `<synthetic>` as the model on notices it generates itself, so those
+ * never count as a run.
+ */
+export async function readClaudeLastRun(filePath: string): Promise<ModelChoice | undefined> {
+  const decoder = new NdjsonDecoder<unknown>();
+  let last: ModelChoice | undefined;
+  const take = (value: unknown): void => {
+    const record = objectValue(value);
+    if (record?.type !== 'assistant') return;
+    const model = objectValue(record.message)?.model;
+    if (typeof model !== 'string' || !model || model === '<synthetic>') return;
+    last = typeof record.effort === 'string' && record.effort ? { model, effort: record.effort } : { model };
+  };
+  for await (const chunk of createReadStream(filePath)) {
+    for (const line of decoder.push(chunk as Buffer)) if (line.ok) take(line.value);
+  }
+  const tail = decoder.finish();
+  if (tail.kind === 'incomplete') {
+    try { take(JSON.parse(tail.raw)); } catch { /* A half-written final record is not a run yet. */ }
+  }
+  return last;
 }
 
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {

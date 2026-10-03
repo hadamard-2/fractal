@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { describe, expect, test } from 'vitest';
-import { discoverClaudeConversations, readClaudeConversation, watchClaudeConversation } from '@/main/harness/claude/claude-history';
+import { discoverClaudeConversations, readClaudeConversation, readClaudeLastRun, watchClaudeConversation } from '@/main/harness/claude/claude-history';
 import type { NativeEvent } from '@/main/harness/reconciler';
 
 const fixtureRoot = path.join(import.meta.dirname, '__fixtures__');
@@ -17,6 +17,25 @@ async function collect(events: AsyncIterable<NativeEvent>): Promise<NativeEvent[
 }
 
 describe('Claude native history', () => {
+  test('reads the model and effort of the last real assistant record', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-last-run-'));
+    const file = path.join(directory, 'session.jsonl');
+    const records = [
+      { type: 'user', message: { role: 'user', content: 'hi' } },
+      { type: 'assistant', effort: 'low', message: { role: 'assistant', model: 'claude-sonnet-5', content: [] as unknown[] } },
+      { type: 'assistant', effort: 'high', message: { role: 'assistant', model: 'claude-opus-5-5', content: [] as unknown[] } },
+      { type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [] as unknown[] } },
+      { type: 'user', message: { role: 'user', content: 'thanks' } },
+    ];
+    await writeFile(file, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`);
+    await expect(readClaudeLastRun(file)).resolves.toEqual({ model: 'claude-opus-5-5', effort: 'high' });
+    await writeFile(file, JSON.stringify({ type: 'assistant', message: { model: 'claude-haiku-4-5-20251001', content: [] } }));
+    await expect(readClaudeLastRun(file)).resolves.toEqual({ model: 'claude-haiku-4-5-20251001' });
+    await writeFile(file, `${JSON.stringify({ type: 'user', message: { content: 'only' } })}\n`);
+    await expect(readClaudeLastRun(file)).resolves.toBeUndefined();
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('discovers bounded summaries without loading full transcripts', async () => {
     const result = await discoverClaudeConversations(fixtureRoot);
 

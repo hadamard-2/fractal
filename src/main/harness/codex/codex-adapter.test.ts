@@ -14,6 +14,13 @@ function thread(id: string, cwd = '/work/fractal') {
   return value;
 }
 
+function codexModel(model: string, efforts: string[]) {
+  return {
+    id: model, model, displayName: model.toUpperCase(), description: `${model} description`, hidden: false, isDefault: false,
+    supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })), defaultReasoningEffort: 'medium',
+  };
+}
+
 function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false) {
   const listeners = new Set<(notification: unknown) => void>();
   const requestListeners = new Set<(request: unknown) => void>();
@@ -32,7 +39,10 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
       if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
-      if (method === 'thread/resume') return { thread: threadRead.thread };
+      if (method === 'thread/resume') return { thread: threadRead.thread, model: 'gpt-5.6-terra', reasoningEffort: 'high' };
+      if (method === 'model/list') return params.cursor === 'models-2'
+        ? { data: [codexModel('gpt-5.5', ['low', 'medium', 'high', 'xhigh'])], nextCursor: null }
+        : { data: [codexModel('gpt-5.6-terra', ['low', 'medium', 'ultra']), { ...codexModel('codex-auto-review', ['low']), hidden: true }], nextCursor: 'models-2' };
       if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
       if (method === 'thread/name/set') return {};
@@ -107,6 +117,22 @@ describe('Codex read adapter', () => {
     const server = createFakeAppServer();
     await new CodexAdapter(server as never).renameConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' }, 'Renamed');
     expect(server.requests).toEqual([{ method: 'thread/name/set', params: { threadId: 'thread-1', name: 'Renamed' } }]);
+  });
+
+  test('lists visible models across pages with their efforts', async () => {
+    const server = createFakeAppServer();
+    await expect(new CodexAdapter(server as never).listModels()).resolves.toEqual([
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6-TERRA', description: 'gpt-5.6-terra description', efforts: ['low', 'medium', 'ultra'], defaultEffort: 'medium' },
+      { id: 'gpt-5.5', label: 'GPT-5.5', description: 'gpt-5.5 description', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    ]);
+    expect(server.requests.filter((request) => request.method === 'model/list').map((request) => request.params)).toEqual([{}, { cursor: 'models-2' }]);
+  });
+
+  test('reads the last run from thread/resume without unsubscribing', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    await expect(adapter.readLastRun({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' })).resolves.toEqual({ model: 'gpt-5.6-terra', effort: 'high' });
+    expect(server.requests).toEqual([{ method: 'thread/resume', params: { threadId: 'thread-1', cwd: '/work/fractal' } }]);
   });
 
   test('only loads a discovered Codex thread with matching provider ID and canonical project path', async () => {
@@ -241,6 +267,14 @@ describe('Codex native continuation', () => {
     const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
     const run = await adapter.continueConversation(ref, { text: '', attachments: [{ path: '/tmp/shot.png', image: 'image/png' }] });
     expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'localImage', path: '/tmp/shot.png' }] } });
+    await run.dispose();
+  });
+
+  test('sends the chosen model and effort on turn/start', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Go', model: 'gpt-5.5', effort: 'high' });
+    expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'text', text: 'Go', text_elements: [] }], model: 'gpt-5.5', effort: 'high' } });
     await run.dispose();
   });
 

@@ -34,6 +34,10 @@ export interface RunClaudeTurnOptions {
   spawnProcess?: SpawnClaudeProcess;
   permissionBridge?: { configPath: string; toolName: string };
   newSession?: boolean;
+  /** Passed as --model; absent leaves Claude on its configured default. */
+  model?: string;
+  /** Passed as --effort; only meaningful with a model that takes effort. */
+  effort?: string;
   rereadNative(): Promise<NativeEvent[] | AsyncIterable<NativeEvent>>;
 }
 
@@ -44,9 +48,13 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const bridgeArguments = options.permissionBridge
     ? ['--mcp-config', options.permissionBridge.configPath, '--permission-prompt-tool', options.permissionBridge.toolName]
     : [];
+  const choiceArguments = [
+    ...(options.model ? ['--model', options.model] : []),
+    ...(options.effort ? ['--effort', options.effort] : []),
+  ];
   const args = [
     ...sessionArguments, '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-    '--include-partial-messages', ...bridgeArguments,
+    '--include-partial-messages', ...bridgeArguments, ...choiceArguments,
   ];
   const child = (options.spawnProcess ?? spawnClaude)(options.executable, args, {
     cwd: options.ref.projectPath, shell: false, stdio: ['pipe', 'pipe', 'pipe'],

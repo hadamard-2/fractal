@@ -15,12 +15,13 @@ const SNIFF_BYTES = 16;
 const MAX_ATTACHMENT_IMAGE_MIB = MAX_ATTACHMENT_IMAGE_BYTES / (1024 * 1024);
 
 export async function resolveAttachments(prompt: PromptInput, options: { root: string; ref: ConversationRef }): Promise<AgentPrompt> {
-  if (!prompt.attachments?.length) return { text: prompt.text };
+  const choice = { ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}) };
+  if (!prompt.attachments?.length) return { text: prompt.text, ...choice };
   const attachments: ResolvedAttachment[] = [];
   for (const attachment of prompt.attachments) {
     attachments.push(attachment.kind === 'bytes' ? await writePasted(attachment, options) : await inspectPath(attachment.path));
   }
-  return { text: prompt.text, attachments };
+  return { text: prompt.text, attachments, ...choice };
 }
 
 async function writePasted(attachment: Extract<PromptAttachment, { kind: 'bytes' }>, { root, ref }: { root: string; ref: ConversationRef }): Promise<ResolvedAttachment> {

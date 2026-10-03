@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
-import type { ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent } from '@/shared/conversation-contract';
+import type { AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'panel-test', projectPath: '/work/fractal' };
 let emit: (event: ConversationStreamEvent) => void;
@@ -28,6 +28,15 @@ async function ready() {
   await waitFor(() => expect(loadId).not.toBe(''));
   act(() => emit({ ref, loadId, seq: seq++, type: 'history.complete' }));
 }
+function installModels(result: { models: AgentModel[]; choice: ModelChoice | null }) {
+  const models: ModelsApi = { list: vi.fn(async () => result), choose: vi.fn(async () => undefined) };
+  Object.assign(window.fractal, { models });
+  return models;
+}
+// jsdom has no layout; Radix scrolls the selected option into view.
+beforeAll(() => { Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: (): void => undefined }); });
+const opus: AgentModel = { id: 'opus', label: 'Opus', description: 'Everyday work', efforts: ['low', 'high'] };
+const haiku: AgentModel = { id: 'haiku', label: 'Haiku', efforts: [] };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 test('uses native loading state, then enables the empty conversation composer', async () => {
@@ -209,4 +218,106 @@ test('resolves an imported historical request into audit history without a separ
   expect(await screen.findByRole('region', { name: 'Resolved approval request' })).toBeTruthy();
   expect(screen.getByText('allow-once')).toBeTruthy();
   expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
+});
+
+test('shows the conversation model and effort and sends them with the prompt', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  const models = installModels({ models: [opus, haiku], choice: { model: 'opus', effort: 'high' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const model = await screen.findByRole('button', { name: 'Model' });
+  await waitFor(() => expect(model.textContent).toContain('Opus'));
+  const effort = screen.getByRole('button', { name: 'Effort' });
+  expect(effort.textContent).toContain('high');
+  const user = userEvent.setup();
+  // Efforts read from the most to the least.
+  effort.focus();
+  await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['high', 'low']);
+  await user.keyboard('{Escape}');
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', model: 'opus', effort: 'high' }));
+  expect(models.list).toHaveBeenCalledWith(ref);
+});
+
+test('switching to a model without effort hides the effort picker and saves the choice', async () => {
+  install();
+  const models = installModels({ models: [opus, haiku], choice: { model: 'opus', effort: 'high' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const model = await screen.findByRole('button', { name: 'Model' });
+  await waitFor(() => expect(model.textContent).toContain('Opus'));
+  const user = userEvent.setup();
+  model.focus();
+  await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Opus', 'Haiku']);
+  await user.keyboard('{End}{Enter}');
+  await waitFor(() => expect(models.choose).toHaveBeenCalledWith(ref, { model: 'haiku' }));
+  expect(model.textContent).toBe('Haiku');
+  expect(screen.queryByRole('button', { name: 'Effort' })).toBeNull();
+  // Opening the picker asks again, in case the startup fetch finished since.
+  expect(models.list).toHaveBeenCalledTimes(2);
+});
+
+test('older versions of a family sit under More models', async () => {
+  install();
+  const latest: AgentModel = { id: 'opus', label: 'Opus 5.5', efforts: ['high'] };
+  const older: AgentModel = { id: 'claude-opus-5', label: 'Opus 5', efforts: ['high'] };
+  const models = installModels({ models: [latest, older], choice: { model: 'opus', effort: 'high' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const model = await screen.findByRole('button', { name: 'Model' });
+  await waitFor(() => expect(model.textContent).toContain('Opus 5.5'));
+  const user = userEvent.setup();
+  model.focus();
+  await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Opus 5.5', 'More models']);
+  screen.getByRole('menuitem', { name: 'More models' }).focus();
+  await user.keyboard('{ArrowRight}');
+  await user.click(await screen.findByRole('menuitem', { name: 'Opus 5' }));
+  await waitFor(() => expect(models.choose).toHaveBeenCalledWith(ref, { model: 'claude-opus-5', effort: 'high' }));
+  expect(model.textContent).toBe('Opus 5');
+});
+
+test('lists an off-catalog model the conversation last ran on', async () => {
+  install();
+  installModels({ models: [opus], choice: { model: 'claude-opus-5-5' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const model = await screen.findByRole('button', { name: 'Model' });
+  await waitFor(() => expect(model.textContent).toContain('claude-opus-5-5'));
+  expect(screen.queryByRole('button', { name: 'Effort' })).toBeNull();
+});
+
+test('blocks submit until the model choice has loaded, then sends it', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  let settle: (result: { models: AgentModel[]; choice: ModelChoice | null }) => void = () => undefined;
+  const models: ModelsApi = { list: vi.fn(() => new Promise<{ models: AgentModel[]; choice: ModelChoice | null }>((resolve) => { settle = resolve; })), choose: vi.fn(async () => undefined) };
+  Object.assign(window.fractal, { models });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const user = userEvent.setup();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(send).not.toHaveBeenCalled();
+  act(() => settle({ models: [], choice: { model: 'opus' } }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(false));
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', model: 'opus' }));
+});
+
+test('falls back to the agent default when the model list is unavailable', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  expect((await screen.findByRole('button', { name: 'Model' })).textContent).toContain('Default');
+  const user = userEvent.setup();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go' }));
 });

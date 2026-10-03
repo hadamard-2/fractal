@@ -1,9 +1,11 @@
 import type {
+  AgentModel,
   ConversationImageType,
   ConversationRef,
   ConversationSummary,
   HarnessCapabilities,
   HarnessStatus,
+  ModelChoice,
   ProviderId,
   UserDecision,
 } from '@/shared/conversation-contract';
@@ -26,6 +28,9 @@ export interface ResolvedAttachment {
 export interface AgentPrompt {
   text: string;
   attachments?: ResolvedAttachment[];
+  /** Absent means the agent's own default model. */
+  model?: string;
+  effort?: string;
 }
 
 export interface ConversationRun {
@@ -46,4 +51,8 @@ export interface HarnessAdapter {
   continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;
   /** Stores a user-chosen title in the agent's own history. Absent when the agent has no rename. */
   renameConversation?(ref: ConversationRef, title: string): Promise<void>;
+  /** The models this agent offers. Absent when it has no way to list them. */
+  listModels?(): Promise<AgentModel[]>;
+  /** The model and effort this conversation's own history says it last ran with. */
+  readLastRun?(ref: ConversationRef): Promise<ModelChoice | undefined>;
 }

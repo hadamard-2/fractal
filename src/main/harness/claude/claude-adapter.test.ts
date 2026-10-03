@@ -25,6 +25,26 @@ describe('Claude adapter', () => {
     expect(JSON.stringify(summaries)).not.toContain('.jsonl');
     expect(adapter.capabilities()).toMatchObject({ create: false, approvals: false, questions: false, interrupt: false });
   });
+  test('hands the prompt model choice to the runner', async () => {
+    const runTurn = vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn });
+    const run = await adapter.continueConversation(ref, { text: 'Go', model: 'opus', effort: 'high' });
+    expect(runTurn.mock.calls[0][0]).toMatchObject({ model: 'opus', effort: 'high' });
+    await run.dispose();
+  });
+
+  test('lists models through its catalog dependency and reads the last run from the transcript', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-models-'));
+    const source = await readFile(path.join(root, 'claude-session-1.jsonl'), 'utf8');
+    const last = { type: 'assistant', sessionId: 'claude-session-1', cwd: '/work/fractal', uuid: 'assistant-last', parentUuid: null as string | null, timestamp: '2026-09-30T00:00:00.000Z', effort: 'high', message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'Done' }] } };
+    await writeFile(path.join(directory, 'claude-session-1.jsonl'), `${source.trimEnd()}\n${JSON.stringify(last)}\n`);
+    const models = [{ id: 'opus', label: 'Opus', efforts: ['high'] }];
+    const adapter = new ClaudeAdapter(directory, { realpath, listModels: async () => models });
+    await expect(adapter.listModels()).resolves.toEqual(models);
+    await expect(adapter.readLastRun(ref)).resolves.toEqual({ model: 'claude-opus-5', effort: 'high' });
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('loads normalized history using a discovered locator and rejects forged refs', async () => {
     const adapter = new ClaudeAdapter(root, { realpath });
     const loaded = await adapter.loadConversation(ref); const events: NativeEvent[] = [];

@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
   resolveShell: vi.fn(), settings: { agentExecutables: { claude: '', codex: '' } },
   agentEnvironment: undefined as undefined | (() => Promise<unknown>),
   claudeDependencies: undefined as undefined | { executable?: string; probe?: () => Promise<{ message?: string }> },
+  fetchCatalogs: vi.fn(async () => undefined),
+  registerModel: vi.fn(() => ({ dispose: () => { state.events.push('model-ipc-dispose'); } })),
 }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
@@ -23,7 +25,7 @@ vi.mock('electron', async () => {
     isDestroyed() { return false; }
     constructor(public options: { webPreferences: Record<string, unknown> }) { super(); state.windows.push(this); state.events.push('window'); }
   }
-  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() } };
+  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() }, ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } };
 });
 vi.mock('electron-squirrel-startup', () => ({ default: false }));
 vi.mock('@/main/settings-ipc', () => ({
@@ -42,6 +44,9 @@ vi.mock('@/main/terminal-service', () => ({ TerminalService: class { dispose = s
 vi.mock('@/main/terminal-pty', () => ({ createNativePty: vi.fn() }));
 vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { start: state.start }, codexSpawner: (executable: string) => `spawn ${executable}` }));
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
+vi.mock('@/main/model-choices', () => ({ ModelChoices: class { fetchCatalogs = state.fetchCatalogs; } }));
+vi.mock('@/main/model-choice-store', () => ({ ModelChoiceStore: class {} }));
+vi.mock('@/main/model-ipc', () => ({ registerModelIpc: state.registerModel }));
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); state.events = []; state.windows = [];
   // The electron mock outlives resetModules, so each import would otherwise add another 'ready' handler.
@@ -63,12 +68,15 @@ describe('main conversation lifecycle', () => {
     await vi.waitFor(() => expect(state.windows[0].loadFile).toHaveBeenCalledTimes(1));
     expect(state.register).toHaveBeenCalledTimes(1);
     expect(state.registerTerminal).toHaveBeenCalledTimes(1);
+    expect(state.registerModel).toHaveBeenCalledTimes(1);
+    expect(state.fetchCatalogs).toHaveBeenCalledTimes(1);
     expect(state.windows[0].options.webPreferences).toMatchObject({ contextIsolation: true, nodeIntegration: false });
     const event = { preventDefault: vi.fn() }; state.app.emit('before-quit', event);
     await vi.waitFor(() => expect(state.app.quit).toHaveBeenCalledTimes(1));
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(state.disposeIpc).toHaveBeenCalledTimes(1); expect(state.disposeService).toHaveBeenCalledTimes(1); expect(state.disposeServer).toHaveBeenCalledTimes(1);
     expect(state.events).toContain('terminal-ipc-dispose');
+    expect(state.events).toContain('model-ipc-dispose');
     expect(state.disposeTerminalService).toHaveBeenCalledTimes(1);
     state.app.emit('before-quit', { preventDefault: vi.fn(() => { throw new Error('Final quit must proceed'); }) });
   });
