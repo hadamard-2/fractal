@@ -42,17 +42,26 @@ export function parseClaudeModels(value: unknown): AgentModel[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry): AgentModel[] => {
     const model = objectValue(entry);
-    if (!model || typeof model.value !== 'string' || !model.value) return [];
+    // `default` defers to Claude's configured model, which is what Fractal's own "no choice" already sends.
+    if (!model || typeof model.value !== 'string' || !model.value || model.value === 'default') return [];
     const efforts = model.supportsEffort === true && Array.isArray(model.supportedEffortLevels)
       ? model.supportedEffortLevels.filter((level): level is string => typeof level === 'string' && level.length > 0)
       : [];
-    return [{
-      id: model.value,
-      label: typeof model.displayName === 'string' && model.displayName ? model.displayName : model.value,
-      ...(typeof model.description === 'string' && model.description ? { description: model.description } : {}),
-      efforts,
-    }];
+    const name = typeof model.displayName === 'string' && model.displayName ? model.displayName : model.value;
+    const description = typeof model.description === 'string' && model.description ? model.description : undefined;
+    return [{ id: model.value, label: versionedLabel(name, description), ...(description ? { description } : {}), efforts }];
   });
+}
+
+/**
+ * Claude's display name is the bare family ("Opus"); the version lives at the
+ * head of the description ("Opus 5.5 · Best for…"). That head is used only
+ * when it starts with the name, so any other description shape keeps the
+ * plain name rather than putting a blurb in the picker.
+ */
+function versionedLabel(name: string, description: string | undefined): string {
+  const head = description?.split(' · ')[0].trim();
+  return head && head !== name && head.startsWith(`${name} `) ? head : name;
 }
 
 async function readModels(stdout: AsyncIterable<Uint8Array | string>): Promise<AgentModel[]> {
