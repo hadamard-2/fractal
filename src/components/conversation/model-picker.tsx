@@ -1,8 +1,10 @@
+import { CheckIcon, ChevronDownIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { PromptInputSelect, PromptInputSelectContent, PromptInputSelectItem, PromptInputSelectTrigger, PromptInputSelectValue } from '@/components/ai-elements/prompt-input';
+import { PromptInputButton } from '@/components/ai-elements/prompt-input';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { AgentModel, ModelChoice } from '@/shared/conversation-contract';
-import { pickerModels, switchModel } from './model-choice';
+import { currentModel, menuModels, pickerModels, switchModel } from './model-choice';
 
 interface Props {
   models: AgentModel[];
@@ -12,40 +14,71 @@ interface Props {
   onOpen(): void;
 }
 
-// Both pickers read as the same quiet control while closed. The select trigger's own dark-mode fill is overridden so it stays transparent.
-const TRIGGER = 'h-8 min-w-0 gap-1 px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground dark:bg-transparent dark:hover:bg-accent/50 dark:aria-expanded:bg-accent/50';
+// Both pickers read as the same quiet control while closed.
+const TRIGGER = 'h-8 min-w-0 gap-1 px-2 has-[>svg]:px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground dark:hover:bg-accent/50 dark:aria-expanded:bg-accent/50';
 
-// The current option, text and checkmark, in the primary colour. Important so it holds while the item is also focused.
-const ITEM = 'data-[state=checked]:text-primary! data-[state=checked]:[&_svg]:text-primary!';
+function Trigger({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <DropdownMenuTrigger asChild>
+      <PromptInputButton aria-label={label} className={cn(TRIGGER, className)} size="sm">
+        <span className="truncate">{children}</span>
+        <ChevronDownIcon className="size-4 shrink-0 opacity-50" />
+      </PromptInputButton>
+    </DropdownMenuTrigger>
+  );
+}
 
-/** Both menus open above the composer with every option in view, rather than centred on the current one. */
-function Menu({ children }: { children: ReactNode }) {
-  return <PromptInputSelectContent align="start" position="popper" side="top">{children}</PromptInputSelectContent>;
+// The submenu is placed against its trigger, which sits inside the first level's padding and border; these offsets clear them to leave a small gap and match the outer bottom edges.
+const SUB_SIDE_OFFSET = 9;
+const SUB_ALIGN_OFFSET = -5;
+
+/** An option; the current one is in the primary colour with a checkmark. */
+function Option({ current, onSelect, className, children }: { current: boolean; onSelect(): void; className?: string; children: ReactNode }) {
+  return (
+    <DropdownMenuItem className={cn(current && 'text-primary! [&_svg]:text-primary!', className)} onSelect={onSelect}>
+      {children}
+      {current && <CheckIcon className="ml-auto" />}
+    </DropdownMenuItem>
+  );
 }
 
 export function ModelPicker({ models, choice, onChoose, onOpen }: Props) {
   const listed = pickerModels(models, choice);
-  const selected = choice ? listed.find((model) => model.id === choice.model) : undefined;
+  const selected = currentModel(listed, choice);
+  const { primary, more } = menuModels(listed);
+  const effort = choice?.effort ?? selected?.defaultEffort;
+  const modelOption = (model: AgentModel) => (
+    <Option current={model === selected} key={model.id} onSelect={() => onChoose(switchModel(models, choice, model.id))}>{model.label}</Option>
+  );
   return (
     <div className="flex min-w-0 items-center">
-      {/* Radix's hidden native <select> can fire a spurious change to '' while its options are still catching up to a controlled value; a real pick never has an empty id. */}
-      <PromptInputSelect onOpenChange={(open) => { if (open) onOpen(); }} onValueChange={(id) => { if (id) onChoose(switchModel(models, choice, id)); }} value={choice?.model ?? ''}>
-        <PromptInputSelectTrigger aria-label="Model" className={cn(TRIGGER, 'max-w-48')} size="sm">
-          <PromptInputSelectValue placeholder="Default" />
-        </PromptInputSelectTrigger>
-        <Menu>
-          {listed.map((model) => <PromptInputSelectItem className={ITEM} key={model.id} value={model.id}>{model.label}</PromptInputSelectItem>)}
-        </Menu>
-      </PromptInputSelect>
+      <DropdownMenu onOpenChange={(open) => { if (open) onOpen(); }}>
+        <Trigger className="max-w-48" label="Model">{selected?.label ?? 'Default'}</Trigger>
+        {/* Both menus open above the composer with every option in view. */}
+        <DropdownMenuContent align="start" side="top">
+          {primary.map(modelOption)}
+          {more.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>More models</DropdownMenuSubTrigger>
+                {/* Beside the first level with a small gap, bottom edges lined up. */}
+                <DropdownMenuSubContent align="end" alignOffset={SUB_ALIGN_OFFSET} sideOffset={SUB_SIDE_OFFSET}>{more.map(modelOption)}</DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
       {selected && selected.efforts.length > 0 && (
-        <PromptInputSelect onValueChange={(effort) => onChoose({ model: selected.id, effort })} value={choice?.effort ?? selected.defaultEffort ?? ''}>
-          <PromptInputSelectTrigger aria-label="Effort" className={cn(TRIGGER, 'capitalize')} size="sm">
-            <PromptInputSelectValue placeholder="Default" />
-          </PromptInputSelectTrigger>
-          <Menu>
-            {selected.efforts.map((effort) => <PromptInputSelectItem className={cn(ITEM, 'capitalize')} key={effort} value={effort}>{effort}</PromptInputSelectItem>)}
-          </Menu>
-        </PromptInputSelect>
+        <DropdownMenu>
+          <Trigger className="capitalize" label="Effort">{effort ?? 'Default'}</Trigger>
+          <DropdownMenuContent align="start" side="top">
+            {/* Most effort first. */}
+            {[...selected.efforts].reverse().map((level) => (
+              <Option className="capitalize" current={level === effort} key={level} onSelect={() => onChoose({ model: selected.id, effort: level })}>{level}</Option>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   );

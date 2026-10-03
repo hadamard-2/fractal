@@ -29,14 +29,14 @@ describe('listClaudeModels', () => {
     child.stdout.write(initialized([{ value: 'ignored' }], 'someone-else'));
     child.stdout.write(initialized([
       { value: 'default', displayName: 'Default (recommended)', description: 'Sonnet 5', supportsEffort: true, supportedEffortLevels: ['low'] },
-      { value: 'opus', displayName: 'Opus', description: 'Opus 5.5 · Best for everyday, complex tasks', supportsEffort: true, supportedEffortLevels: ['low', 'high', 7] },
-      { value: 'haiku', displayName: 'Haiku', description: 'Haiku 4.5' },
+      { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Opus 5.5 · Best for everyday, complex tasks', supportsEffort: true, supportedEffortLevels: ['low', 'high', 7] },
+      { value: 'haiku', resolvedModel: 'haiku', displayName: 'Haiku', description: 'Haiku 4.5' },
       { value: 'fable', displayName: 'Fable', description: 'Most capable · Fable 5.1' },
       { value: 'sonnet', supportsEffort: false, supportedEffortLevels: ['low'] },
       { displayName: 'No value' },
     ]));
     await expect(listing).resolves.toEqual([
-      { id: 'opus', label: 'Opus 5.5', description: 'Opus 5.5 · Best for everyday, complex tasks', efforts: ['low', 'high'] },
+      { id: 'opus', label: 'Opus 5.5', resolvesTo: 'claude-opus-5-5', description: 'Opus 5.5 · Best for everyday, complex tasks', efforts: ['low', 'high'] },
       { id: 'haiku', label: 'Haiku 4.5', description: 'Haiku 4.5', efforts: [] },
       { id: 'fable', label: 'Fable', description: 'Most capable · Fable 5.1', efforts: [] },
       { id: 'sonnet', label: 'sonnet', efforts: [] },

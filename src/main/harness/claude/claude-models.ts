@@ -49,7 +49,8 @@ export function parseClaudeModels(value: unknown): AgentModel[] {
       : [];
     const name = typeof model.displayName === 'string' && model.displayName ? model.displayName : model.value;
     const description = typeof model.description === 'string' && model.description ? model.description : undefined;
-    return [{ id: model.value, label: versionedLabel(name, description), ...(description ? { description } : {}), efforts }];
+    const resolvesTo = typeof model.resolvedModel === 'string' && model.resolvedModel && model.resolvedModel !== model.value ? model.resolvedModel : undefined;
+    return [{ id: model.value, label: versionedLabel(name, description), ...(resolvesTo ? { resolvesTo } : {}), ...(description ? { description } : {}), efforts }];
   });
 }
 

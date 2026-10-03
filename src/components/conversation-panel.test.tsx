@@ -226,10 +226,16 @@ test('shows the conversation model and effort and sends them with the prompt', a
   const models = installModels({ models: [opus, haiku], choice: { model: 'opus', effort: 'high' } });
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
-  const model = await screen.findByRole('combobox', { name: 'Model' });
+  const model = await screen.findByRole('button', { name: 'Model' });
   await waitFor(() => expect(model.textContent).toContain('Opus'));
-  expect(screen.getByRole('combobox', { name: 'Effort' }).textContent).toContain('high');
+  const effort = screen.getByRole('button', { name: 'Effort' });
+  expect(effort.textContent).toContain('high');
   const user = userEvent.setup();
+  // Efforts read from the most to the least.
+  effort.focus();
+  await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['high', 'low']);
+  await user.keyboard('{Escape}');
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
   await user.click(screen.getByRole('button', { name: 'Submit' }));
   await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', model: 'opus', effort: 'high' }));
@@ -241,18 +247,38 @@ test('switching to a model without effort hides the effort picker and saves the 
   const models = installModels({ models: [opus, haiku], choice: { model: 'opus', effort: 'high' } });
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
-  const model = await screen.findByRole('combobox', { name: 'Model' });
+  const model = await screen.findByRole('button', { name: 'Model' });
   await waitFor(() => expect(model.textContent).toContain('Opus'));
   const user = userEvent.setup();
   model.focus();
   await user.keyboard('{Enter}');
-  expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Opus', 'Haiku']);
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Opus', 'Haiku']);
   await user.keyboard('{End}{Enter}');
   await waitFor(() => expect(models.choose).toHaveBeenCalledWith(ref, { model: 'haiku' }));
   expect(model.textContent).toBe('Haiku');
-  expect(screen.queryByRole('combobox', { name: 'Effort' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Effort' })).toBeNull();
   // Opening the picker asks again, in case the startup fetch finished since.
   expect(models.list).toHaveBeenCalledTimes(2);
+});
+
+test('older versions of a family sit under More models', async () => {
+  install();
+  const latest: AgentModel = { id: 'opus', label: 'Opus 5.5', efforts: ['high'] };
+  const older: AgentModel = { id: 'claude-opus-5', label: 'Opus 5', efforts: ['high'] };
+  const models = installModels({ models: [latest, older], choice: { model: 'opus', effort: 'high' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const model = await screen.findByRole('button', { name: 'Model' });
+  await waitFor(() => expect(model.textContent).toContain('Opus 5.5'));
+  const user = userEvent.setup();
+  model.focus();
+  await user.keyboard('{Enter}');
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Opus 5.5', 'More models']);
+  screen.getByRole('menuitem', { name: 'More models' }).focus();
+  await user.keyboard('{ArrowRight}');
+  await user.click(await screen.findByRole('menuitem', { name: 'Opus 5' }));
+  await waitFor(() => expect(models.choose).toHaveBeenCalledWith(ref, { model: 'claude-opus-5', effort: 'high' }));
+  expect(model.textContent).toBe('Opus 5');
 });
 
 test('lists an off-catalog model the conversation last ran on', async () => {
@@ -260,9 +286,9 @@ test('lists an off-catalog model the conversation last ran on', async () => {
   installModels({ models: [opus], choice: { model: 'claude-opus-5-5' } });
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
-  const model = await screen.findByRole('combobox', { name: 'Model' });
+  const model = await screen.findByRole('button', { name: 'Model' });
   await waitFor(() => expect(model.textContent).toContain('claude-opus-5-5'));
-  expect(screen.queryByRole('combobox', { name: 'Effort' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Effort' })).toBeNull();
 });
 
 test('blocks submit until the model choice has loaded, then sends it', async () => {
@@ -289,7 +315,7 @@ test('falls back to the agent default when the model list is unavailable', async
   install('idle', send);
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
-  expect((await screen.findByRole('combobox', { name: 'Model' })).textContent).toContain('Default');
+  expect((await screen.findByRole('button', { name: 'Model' })).textContent).toContain('Default');
   const user = userEvent.setup();
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
   await user.click(screen.getByRole('button', { name: 'Submit' }));

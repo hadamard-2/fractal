@@ -98,6 +98,8 @@ export interface PromptInput {
 export interface AgentModel {
   id: string;
   label: string;
+  /** The full model id `id` currently stands for, when `id` is an alias (`opus` → `claude-opus-5-5`). */
+  resolvesTo?: string;
   description?: string;
   /** Effort levels this model accepts; empty when it takes none. */
   efforts: string[];
