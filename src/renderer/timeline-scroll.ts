@@ -1,13 +1,16 @@
 export interface ReadingAnchor { id: string; offset: number }
 interface MeasuredRow { key: string | number | bigint; start: number; end: number }
 
+/** A reader this close to the bottom is carried along to new output rather than held at their reading point. */
+export const FOLLOW_BOTTOM_DISTANCE = 96;
+
 export function nextScrollAction({ distanceFromBottom, appended, resizedAboveAnchor }: {
   distanceFromBottom: number;
   appended: boolean;
   resizedAboveAnchor: boolean;
 }): 'follow-bottom' | 'preserve-anchor' | 'none' {
   if (!appended && !resizedAboveAnchor) return 'none';
-  return distanceFromBottom <= 96 ? 'follow-bottom' : 'preserve-anchor';
+  return distanceFromBottom <= FOLLOW_BOTTOM_DISTANCE ? 'follow-bottom' : 'preserve-anchor';
 }
 
 export function readingAnchor(rows: readonly MeasuredRow[], scrollTop: number): ReadingAnchor | null {

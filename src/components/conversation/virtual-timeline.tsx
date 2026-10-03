@@ -3,7 +3,7 @@ import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { nextScrollAction, readingAnchor, restoreAnchor, type ReadingAnchor } from '@/renderer/timeline-scroll';
+import { FOLLOW_BOTTOM_DISTANCE, nextScrollAction, readingAnchor, restoreAnchor, type ReadingAnchor } from '@/renderer/timeline-scroll';
 import type { ConversationTurn as Turn, UserDecision } from '@/shared/conversation-contract';
 import { ConversationTurn } from './conversation-turn';
 
@@ -37,6 +37,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
   const position = useRef<Position>(saved ?? { anchor: null, distanceFromBottom: 0, measurements: [] });
   const previous = useRef<{ turns: Turn[]; size: number; height: number } | null>(null);
   const [newActivity, setNewActivity] = useState(false);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: turns.length,
     getScrollElement: () => viewport.current,
@@ -50,7 +51,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
     // Keyed anchors are captured before setOptions changes the turn order and
     // restored after layout. CSS anchoring is disabled to avoid doubling corrections.
     anchorTo: 'end',
-    scrollEndThreshold: 96,
+    scrollEndThreshold: FOLLOW_BOTTOM_DISTANCE,
     followOnAppend: false,
   });
   // Rows wholly above the reader move the anchor's start. A row spanning the
@@ -69,11 +70,20 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
     if (position.current.anchor) positions.set(conversationId, position.current);
   }, [conversationId, virtualizer]);
 
+  // Within the follow-bottom zone the reader is carried to new output anyway, so the button stays hidden there.
+  const syncAwayFromBottom = useCallback(() => {
+    const element = viewport.current;
+    const distance = element ? virtualizer.getTotalSize() - element.clientHeight - element.scrollTop : 0;
+    setAwayFromBottom(distance > FOLLOW_BOTTOM_DISTANCE);
+    if (distance <= FOLLOW_BOTTOM_DISTANCE) setNewActivity(false);
+  }, [virtualizer]);
+
   const followBottom = useCallback(() => {
     const element = viewport.current;
     if (element && turns.length) element.scrollTo({ top: Math.max(0, virtualizer.getTotalSize() - element.clientHeight), behavior: 'auto' });
     position.current.distanceFromBottom = 0;
     setNewActivity(false);
+    setAwayFromBottom(false);
   }, [turns.length, virtualizer]);
 
   const size = virtualizer.getTotalSize();
@@ -111,7 +121,8 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
       if (contentChanged && old.turns.at(-1) !== turns.at(-1)) setNewActivity(true);
     }
     remember();
-  }, [turns, size, height, saved, initialMeasurements, followBottom, remember, virtualizer, historyComplete]);
+    syncAwayFromBottom();
+  }, [turns, size, height, saved, initialMeasurements, followBottom, remember, syncAwayFromBottom, virtualizer, historyComplete]);
 
   useLayoutEffect(() => () => remember(), [remember]);
 
@@ -124,14 +135,17 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
   // default `outline: auto` ring around the whole transcript. The ring is suppressed on purpose.
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none" onScroll={() => { remember(); if (position.current.distanceFromBottom <= 96) setNewActivity(false); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
+      <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none" onScroll={() => { remember(); syncAwayFromBottom(); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
         <div className="relative w-full" style={{ height: size }}>
           {virtualizer.getVirtualItems().map((item) => <div className={`absolute left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ top: item.start }}>
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />
           </div>)}
         </div>
       </div>
-      {newActivity && <TooltipProvider><Tooltip><TooltipTrigger asChild><Button aria-label="New activity" className="absolute bottom-4 left-1/2 size-8 -translate-x-1/2 rounded-full border bg-background text-foreground shadow-md hover:bg-muted dark:bg-background dark:hover:bg-muted" onClick={followBottom} size="icon" type="button" variant="outline"><ChevronDown aria-hidden className="size-4" /></Button></TooltipTrigger><TooltipContent>Jump to new activity</TooltipContent></Tooltip></TooltipProvider>}
+      {awayFromBottom && <TooltipProvider><Tooltip><TooltipTrigger asChild><Button aria-label={newActivity ? 'New activity' : 'Scroll to bottom'} className="absolute bottom-4 left-1/2 size-8 -translate-x-1/2 rounded-full border bg-background text-foreground shadow-md hover:bg-muted dark:bg-background dark:hover:bg-muted" onClick={followBottom} size="icon" type="button" variant="outline">
+        <ChevronDown aria-hidden className="size-4" />
+        {newActivity && <span aria-hidden className="absolute top-0 right-0 size-2 rounded-full bg-primary ring-2 ring-background" />}
+      </Button></TooltipTrigger><TooltipContent>{newActivity ? 'Jump to new activity' : 'Scroll to bottom'}</TooltipContent></Tooltip></TooltipProvider>}
     </div>
   );
 }

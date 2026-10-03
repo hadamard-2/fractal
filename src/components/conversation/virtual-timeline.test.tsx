@@ -122,3 +122,26 @@ test('follows content from an empty history and growing final turn only while ne
   expect(viewport.scrollTop).toBe(560);
   expect(screen.getByRole('button', { name: 'New activity' })).toBeTruthy();
 });
+
+test('offers a scroll-to-bottom button whenever the reader is away from the bottom', async () => {
+  render(<VirtualTimeline conversationId="away-from-bottom" turns={turns(100)} onResolve={() => undefined} />);
+  const viewport = screen.getByRole('log');
+  await screen.findByText('User anchor 99');
+  expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  act(() => { viewport.scrollTop = 560; fireEvent.scroll(viewport); });
+  expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();
+  // 100 rows of 280 plus 96 of end padding in a 560 viewport bottom out at 27536.
+  act(() => { viewport.scrollTop = 27536 - 96; fireEvent.scroll(viewport); });
+  expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  act(() => { viewport.scrollTop = 560; fireEvent.scroll(viewport); });
+  fireEvent.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
+  await waitFor(() => expect(viewport.scrollTop).toBe(27536));
+  expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+});
+
+test('hides the scroll-to-bottom button when the transcript cannot scroll', async () => {
+  render(<VirtualTimeline conversationId="short-history" turns={turns(1)} onResolve={() => undefined} />);
+  await screen.findByText('User anchor 0');
+  expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'New activity' })).toBeNull();
+});
