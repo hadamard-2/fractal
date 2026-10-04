@@ -2,6 +2,8 @@
 // no Electron imports, no React. It is imported by
 // both the main and renderer processes; the single source of truth.
 
+import type { FileOpenerId } from '@/shared/files-contract';
+
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type DefaultCodingAgent = 'codex' | 'claude' | 'ask';
 export const DEFAULT_CODING_AGENT: DefaultCodingAgent = 'claude';
@@ -55,6 +57,8 @@ export interface FractalSettings {
   /** Colored per-agent dot on each sidebar chat row. */
   showAgentColorTags: boolean;
   agentExecutables: AgentExecutables;
+  /** What the Files viewer's Open button runs; null until the user has opened a file with something. */
+  fileOpener: FileOpenerId | null;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';

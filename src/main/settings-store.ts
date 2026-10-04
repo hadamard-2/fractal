@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { EDITOR_IDS, type FileOpenerId } from '@/shared/files-contract';
 import { DEFAULT_CODING_AGENT, type AgentExecutables, type DefaultCodingAgent, type FractalSettings, type ProjectFilter, type ProjectVisibility, type SidebarOrder, type ThemePreference } from '@/shared/settings-contract';
 
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
 const emptyAgentExecutables = (): AgentExecutables => ({ claude: '', codex: '' });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', showAgentColorTags: true, agentExecutables: emptyAgentExecutables() });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', showAgentColorTags: true, agentExecutables: emptyAgentExecutables(), fileOpener: null });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
@@ -68,6 +69,12 @@ function coerceAgentExecutables(value: unknown): AgentExecutables {
   return { claude: coerce(executables.claude), codex: coerce(executables.codex) };
 }
 
+const FILE_OPENER_VALUES: readonly string[] = [...EDITOR_IDS, 'system'];
+
+function coerceFileOpener(value: unknown): FileOpenerId | null {
+  return typeof value === 'string' && FILE_OPENER_VALUES.includes(value) ? (value as FileOpenerId) : null;
+}
+
 function coerceSettings(record: Record<string, unknown>): FractalSettings {
   return {
     theme: coerceTheme(record.theme),
@@ -77,6 +84,7 @@ function coerceSettings(record: Record<string, unknown>): FractalSettings {
     projectFilter: coerceProjectFilter(record.projectFilter),
     showAgentColorTags: coerceBoolean(record.showAgentColorTags, true),
     agentExecutables: coerceAgentExecutables(record.agentExecutables),
+    fileOpener: coerceFileOpener(record.fileOpener),
   };
 }
 

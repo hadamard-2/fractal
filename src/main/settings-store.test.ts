@@ -13,8 +13,8 @@ test('persists the coding agent alongside theme and sidebar order', () => {
   const store = new SettingsStore(dir);
   const sidebarOrder = { projects: ['/work/atlas', '/work/fractal'], chatsByProject: { '/work/fractal': ['codex:a', 'claude:b'] } };
   const agentExecutables = { claude: '', codex: '' };
-  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables });
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables });
+  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables, fileOpener: null });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables, fileOpener: null });
 });
 
 test('keeps older settings files valid and filters malformed saved order', () => {
@@ -22,7 +22,7 @@ test('keeps older settings files valid and filters malformed saved order', () =>
   dirs.push(dir);
   const file = path.join(dir, 'settings.json');
   writeFileSync(file, JSON.stringify({ theme: 'light' }));
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' } });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null });
 
   writeFileSync(file, JSON.stringify({ theme: 'light', sidebarOrder: { projects: ['/a', 4, '/a'], chatsByProject: { '/a': ['codex:x', null, 'codex:x'] } } }));
   expect(new SettingsStore(dir).load().sidebarOrder).toEqual({ projects: ['/a'], chatsByProject: { '/a': ['codex:x'] } });
@@ -74,4 +74,15 @@ test('persists agent executable overrides, trimmed, and treats anything else as 
 
   writeFileSync(file, JSON.stringify({ agentExecutables: ['nope'] }));
   expect(new SettingsStore(dir).load().agentExecutables).toEqual({ claude: '', codex: '' });
+});
+
+test('persists the file opener and drops unknown ones', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fractal-settings-'));
+  dirs.push(dir);
+  const store = new SettingsStore(dir);
+  expect(store.load().fileOpener).toBeNull();
+  store.save({ ...store.load(), fileOpener: 'zed' });
+  expect(new SettingsStore(dir).load().fileOpener).toBe('zed');
+  writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ fileOpener: 'emacs' }));
+  expect(new SettingsStore(dir).load().fileOpener).toBeNull();
 });

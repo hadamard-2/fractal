@@ -21,7 +21,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function install(create: ConversationApi['create'], defaultCodingAgent: DefaultCodingAgent = 'ask') {
-  const settings: FractalSettings = { theme: 'system', defaultCodingAgent, sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' } };
+  const settings: FractalSettings = { theme: 'system', defaultCodingAgent, sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null };
   Object.defineProperty(window, 'fractal', { configurable: true, value: {
     conversations: { create },
     settings: { get: async () => settings },
@@ -73,7 +73,7 @@ describe('NewConversationMenu', () => {
     const create = vi.fn<ConversationApi['create']>(async ({ provider }) => ({ ...ref, provider }));
     Object.defineProperty(window, 'fractal', { configurable: true, value: {
       conversations: { create },
-      settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent, sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' } }) },
+      settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent, sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null }) },
     } });
     renderMenu([codex, availableClaude], vi.fn());
     const user = userEvent.setup();

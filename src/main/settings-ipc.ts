@@ -13,6 +13,7 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
     ...(patch.projectFilter !== undefined ? { projectFilter: patch.projectFilter } : {}),
     ...(patch.showAgentColorTags !== undefined ? { showAgentColorTags: patch.showAgentColorTags } : {}),
     ...(patch.agentExecutables !== undefined ? { agentExecutables: patch.agentExecutables } : {}),
+    ...(patch.fileOpener !== undefined ? { fileOpener: patch.fileOpener } : {}),
   };
 }
 
