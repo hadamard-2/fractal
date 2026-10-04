@@ -34,10 +34,10 @@ describe('file tabs', () => {
     expect(selected(state)).toEqual({ kind: 'file', id: 'f1', projectPath: '/repo', path: null, preview: true });
     state = openFile(state, '/repo', 'a.ts', true, 'f2');
     state = openFile(state, '/repo', 'b.ts', true, 'f3');
-    state = selectTab(state, 'f2');
+    state = selectTab(state, 'f1');
     state = addTerminalTab(state, 't1', '/repo');
     state = openFilesTool(state, '/repo', 'unused');
-    expect(state.selectedId).toBe('f2');
+    expect(state.selectedId).toBe('f1');
     expect(fileTabs(state)).toHaveLength(2);
     state = openFilesTool(state, '/other', 'f4');
     expect(selected(state)).toMatchObject({ projectPath: '/other', path: null });
