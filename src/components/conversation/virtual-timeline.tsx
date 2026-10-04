@@ -64,7 +64,11 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
     if (!element || restoring.current) return;
     position.current = {
       anchor: readingAnchor(virtualizer.measurementsCache, element.scrollTop),
-      distanceFromBottom: Math.max(0, virtualizer.getTotalSize() - element.clientHeight - element.scrollTop),
+      // Measured against the rendered height, not getTotalSize(): rows measured
+      // during this commit grow the virtualizer's total before the spacer
+      // re-renders, so a follow-bottom scroll is clamped short of that total
+      // and would otherwise read as the reader having scrolled away.
+      distanceFromBottom: Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop),
       measurements: [...virtualizer.measurementsCache],
     };
     if (position.current.anchor) positions.set(conversationId, position.current);
@@ -73,10 +77,10 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
   // Within the follow-bottom zone the reader is carried to new output anyway, so the button stays hidden there.
   const syncAwayFromBottom = useCallback(() => {
     const element = viewport.current;
-    const distance = element ? virtualizer.getTotalSize() - element.clientHeight - element.scrollTop : 0;
+    const distance = element ? element.scrollHeight - element.clientHeight - element.scrollTop : 0;
     setAwayFromBottom(distance > FOLLOW_BOTTOM_DISTANCE);
     if (distance <= FOLLOW_BOTTOM_DISTANCE) setNewActivity(false);
-  }, [virtualizer]);
+  }, []);
 
   const followBottom = useCallback(() => {
     const element = viewport.current;
