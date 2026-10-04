@@ -3,6 +3,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
+import { FILES_CHANNELS, parseFilesEvent, type FilesApi } from '@/shared/files-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
 import { CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
@@ -65,4 +66,23 @@ const attachments: AttachmentsApi = {
   pathFor: (file) => webUtils.getPathForFile(file),
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, models, settings, terminals, attachments });
+const invokeFiles = (request: Record<string, unknown>) => ipcRenderer.invoke(FILES_CHANNELS.invoke, request);
+
+const files: FilesApi = {
+  listDirectory: (root, path) => invokeFiles({ method: 'listDirectory', root, path }),
+  readFile: (root, path) => invokeFiles({ method: 'readFile', root, path }),
+  listFiles: (root) => invokeFiles({ method: 'listFiles', root }),
+  watch: (watchId, root, path) => invokeFiles({ method: 'watch', watchId, root, path }),
+  unwatch: (watchId) => invokeFiles({ method: 'unwatch', watchId }),
+  editors: () => invokeFiles({ method: 'editors' }),
+  open: (action, root, path, line) => invokeFiles({ method: 'open', action, root, path, ...(line === undefined ? {} : { line }) }),
+  onEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      try { listener(parseFilesEvent(payload)); } catch { /* Drop invalid native events. */ }
+    };
+    ipcRenderer.on(FILES_CHANNELS.event, handler);
+    return () => { ipcRenderer.removeListener(FILES_CHANNELS.event, handler); };
+  },
+};
+
+contextBridge.exposeInMainWorld('fractal', { conversations, models, settings, terminals, attachments, files });

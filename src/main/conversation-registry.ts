@@ -27,6 +27,14 @@ export class ConversationRegistry {
     return structuredClone({ projects, providers });
   }
 
+  /** Whether discovery has found a conversation in this canonical project path, as of its last run. */
+  hasProject(projectPath: string): boolean {
+    for (const summaries of this.summaries.values()) {
+      if (summaries.some((summary) => summary.ref.projectPath === projectPath)) return true;
+    }
+    return false;
+  }
+
   resolve(ref: ConversationRef): HarnessAdapter {
     const parsed = parseConversationRef(ref);
     const adapter = this.adapters.get(parsed.provider);

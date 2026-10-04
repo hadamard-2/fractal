@@ -66,4 +66,12 @@ describe('ConversationRegistry', () => {
     await expect(registry.validate(ref)).rejects.toThrow();
     expect(() => registry.resolve({ ...ref, provider: 'claude' })).toThrow();
   });
+
+  test('knows a project only once discovery has found a conversation in it', async () => {
+    const registry = new ConversationRegistry([adapter('codex')], realpath);
+    expect(registry.hasProject('/repo')).toBe(false);
+    await registry.list();
+    expect(registry.hasProject('/repo')).toBe(true);
+    expect(registry.hasProject('/elsewhere')).toBe(false);
+  });
 });

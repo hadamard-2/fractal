@@ -612,3 +612,22 @@ describe('ConversationService', () => {
     await f.service.dispose();
   });
 });
+
+describe('ConversationService.knowsProject', () => {
+  test('discovers again before saying a project is unknown', async () => {
+    const f = fixture();
+    expect(await f.service.knowsProject('/repo')).toBe(true);
+    expect(await f.service.knowsProject('/elsewhere')).toBe(false);
+    await f.service.dispose();
+  });
+
+  test('knows the project of an unsent Claude draft', async () => {
+    const f = fixture([], 50, 'claude');
+    const draft = { provider: 'claude' as const, nativeSessionId: '00000000-0000-4000-8000-000000000097', projectPath: '/new' };
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([]);
+    vi.mocked(f.adapter.createConversation).mockResolvedValue(draft);
+    await f.service.create('claude', '/new');
+    expect(await f.service.knowsProject('/new')).toBe(true);
+    await f.service.dispose();
+  });
+});

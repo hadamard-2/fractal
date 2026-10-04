@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import path from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -12,6 +12,9 @@ import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
 import { configuredExecutable } from '@/main/harness/executable';
+import { detectEditors, openWith, type DetectedEditor } from '@/main/files/editors';
+import { FileWatchService } from '@/main/files/file-watch-service';
+import { registerFilesIpc } from '@/main/files/files-ipc';
 import { ModelChoiceStore } from '@/main/model-choice-store';
 import { ModelChoices } from '@/main/model-choices';
 import { registerModelIpc } from '@/main/model-ipc';
@@ -157,6 +160,8 @@ let shutdown: Promise<void> | undefined;
 let terminalService: TerminalService | undefined;
 let terminalRegistration: { dispose(): void } | undefined;
 let modelRegistration: { dispose(): void } | undefined;
+let fileWatches: FileWatchService | undefined;
+let filesRegistration: { dispose(): void } | undefined;
 
 const createWindow = () => {
   /*
@@ -258,6 +263,16 @@ app.on('ready', () => {
     modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
     const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices });
+    // Editors are found on first use, by which point the login shell's PATH has been merged above.
+    let editors: Promise<DetectedEditor[]> | undefined;
+    const detectedEditors = () => (editors ??= detectEditors(process.platform, process.env.PATH ?? ''));
+    fileWatches = new FileWatchService();
+    filesRegistration = registerFilesIpc({
+      knowsProject: (projectPath) => conversationService?.knowsProject(projectPath) ?? Promise.resolve(false),
+      watches: fileWatches,
+      editors: detectedEditors,
+      open: (action, target) => openWith(action, target, { editors: detectedEditors, shell }),
+    }, () => mainWindowRef);
     loadWindow(window);
   })();
   // Startup failures never forward native exception details into the renderer.
@@ -272,6 +287,8 @@ app.on('before-quit', (event) => {
     conversationStartupController.abort();
     terminalRegistration?.dispose();
     terminalService?.dispose();
+    filesRegistration?.dispose();
+    fileWatches?.dispose();
     modelRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();

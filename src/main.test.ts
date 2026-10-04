@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   agentEnvironment: undefined as undefined | (() => Promise<unknown>),
   claudeDependencies: undefined as undefined | { executable?: string; probe?: () => Promise<{ message?: string }> },
   fetchCatalogs: vi.fn(async () => undefined),
+  registerFiles: vi.fn(() => ({ dispose: () => { state.events.push('files-ipc-dispose'); } })),
+  disposeFileWatches: vi.fn(() => { state.events.push('file-watches-dispose'); }),
   registerModel: vi.fn(() => ({ dispose: () => { state.events.push('model-ipc-dispose'); } })),
 }));
 vi.mock('electron', async () => {
@@ -25,7 +27,7 @@ vi.mock('electron', async () => {
     isDestroyed() { return false; }
     constructor(public options: { webPreferences: Record<string, unknown> }) { super(); state.windows.push(this); state.events.push('window'); }
   }
-  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() }, ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } };
+  return { app: state.app, BrowserWindow: Window, Menu: { setApplicationMenu: vi.fn() }, shell: {}, ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } };
 });
 vi.mock('electron-squirrel-startup', () => ({ default: false }));
 vi.mock('@/main/settings-ipc', () => ({
@@ -46,6 +48,8 @@ vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { star
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
 vi.mock('@/main/model-choices', () => ({ ModelChoices: class { fetchCatalogs = state.fetchCatalogs; } }));
 vi.mock('@/main/model-choice-store', () => ({ ModelChoiceStore: class {} }));
+vi.mock('@/main/files/files-ipc', () => ({ registerFilesIpc: state.registerFiles }));
+vi.mock('@/main/files/file-watch-service', () => ({ FileWatchService: class { dispose = state.disposeFileWatches; } }));
 vi.mock('@/main/model-ipc', () => ({ registerModelIpc: state.registerModel }));
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); state.events = []; state.windows = [];
@@ -69,6 +73,7 @@ describe('main conversation lifecycle', () => {
     expect(state.register).toHaveBeenCalledTimes(1);
     expect(state.registerTerminal).toHaveBeenCalledTimes(1);
     expect(state.registerModel).toHaveBeenCalledTimes(1);
+    expect(state.registerFiles).toHaveBeenCalledTimes(1);
     expect(state.fetchCatalogs).toHaveBeenCalledTimes(1);
     expect(state.windows[0].options.webPreferences).toMatchObject({ contextIsolation: true, nodeIntegration: false });
     const event = { preventDefault: vi.fn() }; state.app.emit('before-quit', event);
@@ -77,6 +82,7 @@ describe('main conversation lifecycle', () => {
     expect(state.disposeIpc).toHaveBeenCalledTimes(1); expect(state.disposeService).toHaveBeenCalledTimes(1); expect(state.disposeServer).toHaveBeenCalledTimes(1);
     expect(state.events).toContain('terminal-ipc-dispose');
     expect(state.events).toContain('model-ipc-dispose');
+    expect(state.events).toContain('files-ipc-dispose'); expect(state.disposeFileWatches).toHaveBeenCalledTimes(1);
     expect(state.disposeTerminalService).toHaveBeenCalledTimes(1);
     state.app.emit('before-quit', { preventDefault: vi.fn(() => { throw new Error('Final quit must proceed'); }) });
   });
@@ -88,6 +94,7 @@ describe('main conversation lifecycle', () => {
     state.app.emit('before-quit', { preventDefault: vi.fn() });
     started({ dispose: state.disposeServer });
     await vi.waitFor(() => expect(state.app.quit).toHaveBeenCalledTimes(1));
+    expect(state.registerFiles).not.toHaveBeenCalled();
     expect(state.register).not.toHaveBeenCalled(); expect(state.disposeService).not.toHaveBeenCalled();
     expect(state.disposeServer).toHaveBeenCalledTimes(1); expect(state.windows[0].loadFile).not.toHaveBeenCalled();
   });

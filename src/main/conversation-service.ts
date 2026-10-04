@@ -54,6 +54,17 @@ export class ConversationService {
 
   async list() { this.assertAvailable(); return this.registry.list(); }
 
+  /** Whether a conversation main knows of is in this project: a discovered one, or a Claude draft not yet sent. */
+  async knowsProject(projectPath: string): Promise<boolean> {
+    this.assertAvailable();
+    const known = () => this.registry.hasProject(projectPath) ||
+      [...this.drafts.values()].some((draft) => draft.ref.projectPath === projectPath);
+    if (known()) return true;
+    // A conversation may have started since the last discovery; look once more.
+    await this.registry.list();
+    return known();
+  }
+
   async open(input: ConversationRef, inputLoadId: string): Promise<OpenResult> {
     this.assertAvailable();
     const ref = parseConversationRef(input);
