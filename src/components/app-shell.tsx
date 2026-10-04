@@ -205,7 +205,9 @@ export function AppShell({
           toggles' curve so the two never meet mid-slide.
         */}
         <header
-          className="flex shrink-0 items-center gap-2 pl-4"
+          // The `after:` strip hangs below the bar and fades whatever scrolls
+          // up beneath it into the bar's background instead of cutting it off.
+          className="relative z-10 flex shrink-0 items-center gap-2 pl-4 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-linear-to-b after:from-background after:to-transparent"
           data-slot="app-bar-reserve"
           style={{
             height: 'var(--app-bar-height)',
