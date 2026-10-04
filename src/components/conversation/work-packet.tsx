@@ -53,7 +53,7 @@ export function WorkPacket({ packet }: { packet: WorkPacketData }) {
 
   const summary = workPacketSummary(packet.actions);
   return (
-    <Collapsible className="rounded-md border bg-muted/20" onOpenChange={(nextOpen) => { hasUserChoice.current = true; setOpen(nextOpen); }} open={open}>
+    <Collapsible className="mt-3 rounded-md border bg-muted/20" onOpenChange={(nextOpen) => { hasUserChoice.current = true; setOpen(nextOpen); }} open={open}>
       <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground">
         <ChevronRight aria-hidden className={cn('size-4 shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="min-w-0 flex-1 truncate">{summary}</span>
