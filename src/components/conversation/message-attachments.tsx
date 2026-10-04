@@ -1,29 +1,16 @@
-import { code } from '@streamdown/code';
 import { FileIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { basename, formatSize, languageFor } from '@/renderer/file-display';
 import type { AttachmentPreview, UserMessageAttachment } from '@/shared/conversation-contract';
 import { useAttachmentPreviews } from './attachment-preview-context';
 import { ConversationImages } from './conversation-images';
 import { HighlightedCommand } from './highlighted-command';
 
 type Loaded = { status: 'loading' } | { status: 'ready'; preview: AttachmentPreview } | { status: 'failed' };
-
-const basename = (path: string): string => path.split(/[\\/]/).pop() || path;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function languageFor(path: string) {
-  const extension = basename(path).split('.').pop()?.toLowerCase() ?? '';
-  return extension && code.supportsLanguage(extension as never) ? extension as Parameters<typeof code.supportsLanguage>[0] : undefined;
-}
 
 function usePreview(path: string, fresh = false): Loaded {
   const previews = useAttachmentPreviews();

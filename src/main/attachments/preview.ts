@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { sniffImageType, readHead } from '@/main/attachments/sniff';
+import { decodeText } from '@/main/text-file';
 import { ATTACHMENT_PREVIEW_TEXT_BYTES, MAX_ATTACHMENT_IMAGE_BYTES, type AttachmentPreview } from '@/shared/conversation-contract';
 
 /** The file as it is now: an image, the leading text, or only its size when it is neither. */
@@ -20,8 +21,3 @@ export async function readAttachmentPreview(file: string): Promise<AttachmentPre
   return text === undefined ? { kind: 'binary', ...meta } : { kind: 'text', text, truncated, ...meta };
 }
 
-function decodeText(bytes: Uint8Array, truncated: boolean): string | undefined {
-  if (bytes.includes(0)) return undefined;
-  // stream: a character cut by truncation is held back instead of failing the whole decode.
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: truncated }); } catch { return undefined; }
-}
