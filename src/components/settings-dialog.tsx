@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Monitor, Moon, Settings2, Sun, X } from 'lucide-react';
+import { Info, Monitor, Moon, Settings2, Sun, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -18,6 +19,7 @@ import {
   DEFAULT_CODING_AGENT,
   type AgentEnvironment,
   type AgentExecutables,
+  type AgentInUse,
   type DefaultCodingAgent,
   type FractalSettings,
   type ShellPathResolution,
@@ -58,18 +60,73 @@ function shellPathText(resolution: ShellPathResolution): string {
   }
 }
 
+/** Where agents left blank are looked up; shown only when one wasn't found. Tinted when the login shell PATH couldn't be read, the one case it explains a missing agent. */
+function SearchPathInfo({ environment }: { environment: AgentEnvironment }) {
+  const failed = environment.shellPath.status === 'failed';
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          aria-label="Where Fractal looks for agents"
+          className={failed ? 'size-6 text-destructive' : 'size-6 text-muted-foreground'}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <Info className="size-4" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-96 flex-col gap-2 text-sm">
+        <p>For an agent left blank, Fractal searches these folders in order.</p>
+        <p className="text-muted-foreground">{shellPathText(environment.shellPath)}</p>
+        {/* The open dialog blocks wheel scrolling outside its own content, and
+            this popover renders outside it, so the wheel is applied by hand. */}
+        <ol
+          aria-label="Folders searched for agents"
+          className="flex max-h-60 flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-md bg-muted px-3 py-2 font-mono text-xs break-all text-foreground"
+          onWheel={(event) => { event.currentTarget.scrollTop += event.deltaY; }}
+        >
+          {environment.searchPath.map((folder, index) => (
+            <li key={`${index}:${folder}`}>{folder}</li>
+          ))}
+        </ol>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** What this launch is running, and whether the saved location differs from it. */
+function AgentStatus({ inUse, saved, bareName }: { inUse: AgentInUse; saved: string; bareName: string }) {
+  const pendingRestart = saved !== inUse.configured;
+  const { lookup } = inUse;
+  if (lookup.status === 'unchecked' && !pendingRestart) return null;
+  return (
+    <p className="text-xs text-muted-foreground sm:text-right">
+      {lookup.status === 'found' && <span className="font-mono break-all">{`Using ${lookup.path}`}</span>}
+      {lookup.status === 'not-found' && (
+        <span className="text-destructive">
+          {inUse.configured ? `Couldn't find ${inUse.configured}.` : `"${bareName}" isn't on the PATH Fractal searches. Set a location to use it.`}
+        </span>
+      )}
+      {pendingRestart && <span className="block">Restart Fractal to use the new location.</span>}
+    </p>
+  );
+}
+
 /** Edits locally and saves on blur or Enter, so a half-typed path is never persisted. */
 function AgentLocationField({
   label,
   bareName,
   saved,
   disabled,
+  inUse,
   onSave,
 }: {
   label: string;
   bareName: string;
   saved: string;
   disabled: boolean;
+  inUse?: AgentInUse;
   onSave: (location: string) => void;
 }) {
   const [draft, setDraft] = useState(saved);
@@ -79,19 +136,22 @@ function AgentLocationField({
     if (next !== saved) onSave(next);
   };
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <span className="text-sm">{label}</span>
-      <Input
-        aria-label={`${label} location`}
-        className="font-mono sm:max-w-96"
-        disabled={disabled}
-        onBlur={commit}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter') commit(); }}
-        placeholder={bareName}
-        spellCheck={false}
-        value={draft}
-      />
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <span className="text-sm sm:pt-2">{label}</span>
+      <div className="flex w-full flex-col gap-1.5 sm:max-w-96">
+        <Input
+          aria-label={`${label} location`}
+          className="font-mono"
+          disabled={disabled}
+          onBlur={commit}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') commit(); }}
+          placeholder={bareName}
+          spellCheck={false}
+          value={draft}
+        />
+        {inUse && <AgentStatus bareName={bareName} inUse={inUse} saved={saved} />}
+      </div>
     </div>
   );
 }
@@ -255,7 +315,12 @@ export function SettingsDialog({
               </div>
 
               <div className="mt-6 flex flex-col gap-1">
-                <h3 id="agent-locations-heading" className="text-sm font-medium">Locations</h3>
+                <div className="flex items-center gap-1">
+                  <h3 id="agent-locations-heading" className="text-sm font-medium">Locations</h3>
+                  {environment && Object.values(environment.agents).some(({ lookup }) => lookup.status === 'not-found') && (
+                    <SearchPathInfo environment={environment} />
+                  )}
+                </div>
                 <p className="text-sm text-muted-foreground">
                   Fractal looks for each agent on your PATH. Set a location to use a specific executable instead. Changes apply the next time Fractal starts.
                 </p>
@@ -265,6 +330,7 @@ export function SettingsDialog({
                   <AgentLocationField
                     bareName={bareName}
                     disabled={!settings}
+                    inUse={environment?.agents[agent]}
                     key={agent}
                     label={label}
                     onSave={(location) => setAgentExecutable(agent, location)}
@@ -272,19 +338,6 @@ export function SettingsDialog({
                   />
                 ))}
               </div>
-              {environment && (
-                <div className="mt-4 flex flex-col gap-2 text-sm text-muted-foreground">
-                  <p>{shellPathText(environment.shellPath)}</p>
-                  <details>
-                    <summary className="cursor-pointer select-none">{`Folders searched (${environment.searchPath.length})`}</summary>
-                    <ol aria-label="Folders searched for agents" className="mt-2 flex flex-col gap-0.5 font-mono text-xs break-all">
-                      {environment.searchPath.map((folder, index) => (
-                        <li key={`${index}:${folder}`}>{folder}</li>
-                      ))}
-                    </ol>
-                  </details>
-                </div>
-              )}
             </section>
 
             <section aria-labelledby="appearance-heading">

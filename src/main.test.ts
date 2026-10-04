@@ -51,6 +51,9 @@ vi.mock('@/main/model-choice-store', () => ({ ModelChoiceStore: class {} }));
 vi.mock('@/main/files/files-ipc', () => ({ registerFilesIpc: state.registerFiles }));
 vi.mock('@/main/files/file-watch-service', () => ({ FileWatchService: class { dispose = state.disposeFileWatches; } }));
 vi.mock('@/main/model-ipc', () => ({ registerModelIpc: state.registerModel }));
+vi.mock('@/main/harness/agent-lookup', () => ({
+  lookUpAgent: async (executable: string, _platform: string, searchPath: string) => ({ status: 'found', path: `${executable} via ${searchPath}` }),
+}));
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); state.events = []; state.windows = [];
   // The electron mock outlives resetModules, so each import would otherwise add another 'ready' handler.
@@ -129,7 +132,14 @@ describe('main agent environment', () => {
 
     resolveShell({ resolution: { status: 'resolved', shell: '/bin/zsh' }, path: '/home/me/.local/bin:/usr/bin' });
     await vi.waitFor(() => expect(state.events).toContain('server with /usr/bin:/bin:/home/me/.local/bin'));
-    await expect(state.agentEnvironment?.()).resolves.toEqual({ shellPath: { status: 'resolved', shell: '/bin/zsh' }, searchPath: ['/usr/bin', '/bin', '/home/me/.local/bin'] });
+    await expect(state.agentEnvironment?.()).resolves.toEqual({
+      shellPath: { status: 'resolved', shell: '/bin/zsh' },
+      searchPath: ['/usr/bin', '/bin', '/home/me/.local/bin'],
+      agents: {
+        claude: { configured: '', lookup: { status: 'found', path: 'claude via /usr/bin:/bin:/home/me/.local/bin' } },
+        codex: { configured: '', lookup: { status: 'found', path: 'codex via /usr/bin:/bin:/home/me/.local/bin' } },
+      },
+    });
   });
 
   test('keeps the inherited PATH and still starts agents when the shell lookup fails', async () => {

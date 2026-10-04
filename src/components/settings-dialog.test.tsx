@@ -80,7 +80,12 @@ function mountWithSettings(agentExecutables: FractalSettings['agentExecutables']
   return set;
 }
 
-const resolvedEnvironment = async (): Promise<AgentEnvironment> => ({ shellPath: { status: 'resolved', shell: '/usr/bin/zsh' }, searchPath: ['/usr/bin', '/home/me/.local/bin'] });
+const foundAgents: AgentEnvironment['agents'] = {
+  claude: { configured: '', lookup: { status: 'found', path: '/home/me/.local/bin/claude' } },
+  codex: { configured: '', lookup: { status: 'found', path: '/usr/bin/codex' } },
+};
+const missingClaude: AgentEnvironment['agents'] = { ...foundAgents, claude: { configured: '', lookup: { status: 'not-found' } } };
+const resolvedEnvironment = async (): Promise<AgentEnvironment> => ({ shellPath: { status: 'resolved', shell: '/usr/bin/zsh' }, searchPath: ['/usr/bin', '/home/me/.local/bin'], agents: foundAgents });
 
 test('shows each agent location and saves an edit when the field loses focus', async () => {
   const set = mountWithSettings({ claude: '/opt/claude', codex: '' }, resolvedEnvironment);
@@ -118,14 +123,29 @@ test('does not save a location that did not change', async () => {
   expect(set).not.toHaveBeenCalled();
 });
 
-test('lists the folders Fractal searches and says the login shell PATH is included', async () => {
+test('shows where each agent in use was found, and no folder list', async () => {
   mountWithSettings({ claude: '', codex: '' }, resolvedEnvironment);
+  expect(await screen.findByText('Using /home/me/.local/bin/claude')).toBeTruthy();
+  expect(screen.getByText('Using /usr/bin/codex')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Where Fractal looks for agents' })).toBeNull();
+});
+
+test('says when the saved location needs a restart to take effect', async () => {
+  mountWithSettings({ claude: '/opt/claude', codex: '' }, resolvedEnvironment);
+  expect(await screen.findByText('Restart Fractal to use the new location.')).toBeTruthy();
+});
+
+test('lists the folders Fractal searches and says the login shell PATH is included', async () => {
+  mountWithSettings({ claude: '', codex: '' }, async () => ({ ...(await resolvedEnvironment()), agents: missingClaude }));
+  expect(await screen.findByText(`"claude" isn't on the PATH Fractal searches. Set a location to use it.`)).toBeTruthy();
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Where Fractal looks for agents' }));
   expect(await screen.findByText("Includes your login shell's PATH (/usr/bin/zsh).")).toBeTruthy();
   const folders = screen.getByRole('list', { name: 'Folders searched for agents' });
   expect(Array.from(folders.querySelectorAll('li'), (item) => item.textContent)).toEqual(['/usr/bin', '/home/me/.local/bin']);
 });
 
 test('says when the login shell PATH could not be read', async () => {
-  mountWithSettings({ claude: '', codex: '' }, async () => ({ shellPath: { status: 'failed', shell: '/usr/bin/zsh', reason: 'timed out after 5000 ms' }, searchPath: ['/usr/bin'] }));
+  mountWithSettings({ claude: '', codex: '' }, async () => ({ shellPath: { status: 'failed', shell: '/usr/bin/zsh', reason: 'timed out after 5000 ms' }, searchPath: ['/usr/bin'], agents: missingClaude }));
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Where Fractal looks for agents' }));
   expect(await screen.findByText("Couldn't read your login shell's PATH (/usr/bin/zsh timed out after 5000 ms), so only the PATH Fractal was launched with is searched.")).toBeTruthy();
 });

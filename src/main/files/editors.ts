@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { constants } from 'node:fs';
-import { access, stat } from 'node:fs/promises';
-import path from 'node:path';
+import { findOnPath, isExecutableFile } from '@/main/find-on-path';
 import { EDITOR_IDS, type EditorId, type EditorInfo, type OpenAction, type OpenResult } from '@/shared/files-contract';
 
 interface EditorSpec { label: string; command: string; args(root: string, file: string, line?: number): string[] }
@@ -20,28 +18,18 @@ export const EDITORS: Record<EditorId, EditorSpec> = {
 
 export interface DetectedEditor extends EditorInfo { executable: string }
 
-const isExecutableFile = async (file: string): Promise<boolean> => {
-  try {
-    await access(file, constants.X_OK);
-    return (await stat(file)).isFile();
-  } catch { return false; }
-};
-
 /**
- * The editors whose command is on `searchPath`, in menu order. Relative entries are skipped, so a launcher inside the folder Fractal happens to run from is never chosen. None on
+ * The editors whose command is on `searchPath`, in menu order. None on
  * Windows: editor launchers there are .cmd batch files, which Node will not
  * start without a shell, and a shell would interpret characters in file names.
  */
 export async function detectEditors(platform: NodeJS.Platform, searchPath: string, isExecutable = isExecutableFile): Promise<DetectedEditor[]> {
   if (platform === 'win32') return [];
-  const directories = searchPath.split(path.delimiter).filter((directory) => path.isAbsolute(directory));
   const found: DetectedEditor[] = [];
   for (const id of EDITOR_IDS) {
     const { label, command } = EDITORS[id];
-    for (const directory of directories) {
-      const executable = path.join(directory, command);
-      if (await isExecutable(executable)) { found.push({ id, label, executable }); break; }
-    }
+    const executable = await findOnPath(command, searchPath, isExecutable);
+    if (executable) found.push({ id, label, executable });
   }
   return found;
 }

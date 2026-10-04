@@ -11,6 +11,7 @@ import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
+import { lookUpAgent } from '@/main/harness/agent-lookup';
 import { configuredExecutable } from '@/main/harness/executable';
 import { detectEditors, openWith, type DetectedEditor } from '@/main/files/editors';
 import { FileWatchService } from '@/main/files/file-watch-service';
@@ -23,7 +24,7 @@ import { mergeSearchPath, resolveLoginShellPath } from '@/main/shell-environment
 import { registerTerminalIpc } from '@/main/terminal-ipc';
 import { TerminalService } from '@/main/terminal-service';
 import { createNativePty } from '@/main/terminal-pty';
-import type { AgentEnvironment } from '@/shared/settings-contract';
+import type { AgentEnvironment, AgentExecutables } from '@/shared/settings-contract';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -38,10 +39,20 @@ const loginShellPath = resolveLoginShellPath({ platform: process.platform, env: 
   if (result.path) process.env.PATH = mergeSearchPath(process.env.PATH, result.path);
   return result.resolution;
 });
-const agentEnvironment = async (): Promise<AgentEnvironment> => ({
-  shellPath: await loginShellPath,
-  searchPath: (process.env.PATH ?? '').split(path.delimiter).filter(Boolean),
-});
+// The location settings this launch read, settled when agents start below.
+let settleLaunchExecutables!: (executables: AgentExecutables) => void;
+const launchExecutables = new Promise<AgentExecutables>((resolve) => { settleLaunchExecutables = resolve; });
+const agentEnvironment = async (): Promise<AgentEnvironment> => {
+  const shellPath = await loginShellPath;
+  const configured = await launchExecutables;
+  const searchPath = process.env.PATH ?? '';
+  const inUse = async (agent: keyof AgentExecutables) => ({
+    configured: configured[agent],
+    lookup: await lookUpAgent(configuredExecutable(configured[agent], agent, homedir()), process.platform, searchPath),
+  });
+  const [claude, codex] = await Promise.all([inUse('claude'), inUse('codex')]);
+  return { shellPath, searchPath: searchPath.split(path.delimiter).filter(Boolean), agents: { claude, codex } };
+};
 
 // The app draws its own title bar, so the native File/Edit/View menu is removed.
 // That also drops the accelerators the menu provided (Ctrl+R reload, Ctrl+Shift+I
@@ -241,6 +252,7 @@ app.on('ready', () => {
     if (shutdown) return;
     // Read once: a changed location takes effect on the next launch.
     const { agentExecutables } = settingsStore.load();
+    settleLaunchExecutables(agentExecutables);
     const claudeExecutable = configuredExecutable(agentExecutables.claude, 'claude', homedir());
     const codexExecutable = configuredExecutable(agentExecutables.codex, 'codex', homedir());
     codexServer = await CodexAppServer.start(codexSpawner(codexExecutable), conversationStartupController.signal);

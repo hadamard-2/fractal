@@ -41,11 +41,24 @@ export type ShellPathResolution =
   | { status: 'failed'; shell: string; reason: string }
   | { status: 'skipped'; reason: string };
 
+/** Where an agent's executable resolved to. `unchecked` where Fractal can't look it up (Windows). */
+export type AgentLookup =
+  | { status: 'found'; path: string }
+  | { status: 'not-found' }
+  | { status: 'unchecked' };
+
+/** The agent this launch uses: the location setting it read at startup, and where that resolved. */
+export interface AgentInUse {
+  configured: string;
+  lookup: AgentLookup;
+}
+
 /** Where Fractal looks for agents given by bare name. */
 export interface AgentEnvironment {
   shellPath: ShellPathResolution;
   /** The PATH entries in search order. */
   searchPath: string[];
+  agents: Record<keyof AgentExecutables, AgentInUse>;
 }
 
 export interface FractalSettings {

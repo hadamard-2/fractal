@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
   shell: { openPath: electron.openPath },
 }));
 
-const unusedEnvironment = async (): Promise<AgentEnvironment> => ({ shellPath: { status: 'skipped', reason: 'test' }, searchPath: [] });
+const unusedEnvironment = async (): Promise<AgentEnvironment> => ({ shellPath: { status: 'skipped', reason: 'test' }, searchPath: [], agents: { claude: { configured: '', lookup: { status: 'unchecked' } }, codex: { configured: '', lookup: { status: 'unchecked' } } } });
 
 afterEach(() => {
   electron.handle.mockClear();
@@ -42,7 +42,7 @@ test('settings IPC saves agent executable overrides', async () => {
 
 test('settings IPC reports the environment Fractal searches for agents', async () => {
   electron.dir = mkdtempSync(path.join(tmpdir(), 'fractal-settings-ipc-'));
-  const environment: AgentEnvironment = { shellPath: { status: 'failed', shell: '/bin/zsh', reason: 'timed out after 5000 ms' }, searchPath: ['/usr/bin', '/bin'] };
+  const environment: AgentEnvironment = { shellPath: { status: 'failed', shell: '/bin/zsh', reason: 'timed out after 5000 ms' }, searchPath: ['/usr/bin', '/bin'], agents: { claude: { configured: '', lookup: { status: 'not-found' } }, codex: { configured: '', lookup: { status: 'found', path: '/usr/bin/codex' } } } };
   registerSettingsIpc(async () => environment);
   const handler = electron.handle.mock.calls[0][1] as (_event: unknown, request: SettingsInvokeRequest) => Promise<unknown>;
 
