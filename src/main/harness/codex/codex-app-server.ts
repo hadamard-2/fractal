@@ -12,6 +12,7 @@ import type { ThreadResumeParams } from '@/main/harness/codex/generated/v2/Threa
 import type { ThreadResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
 import type { ModelListParams } from '@/main/harness/codex/generated/v2/ModelListParams';
 import type { ModelListResponse } from '@/main/harness/codex/generated/v2/ModelListResponse';
+import type { ExternalAgentConfigImportHistoriesReadResponse } from '@/main/harness/codex/generated/v2/ExternalAgentConfigImportHistoriesReadResponse';
 import type { ThreadStartParams } from '@/main/harness/codex/generated/v2/ThreadStartParams';
 import type { ThreadStartResponse } from '@/main/harness/codex/generated/v2/ThreadStartResponse';
 import type { TurnInterruptParams } from '@/main/harness/codex/generated/v2/TurnInterruptParams';
@@ -32,6 +33,7 @@ export interface CodexRequestMap {
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse };
   'turn/start': { params: TurnStartParams; result: TurnStartResponse };
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse };
+  'externalAgentConfig/import/readHistories': { params: undefined; result: ExternalAgentConfigImportHistoriesReadResponse };
 }
 
 export interface CodexAppServerStatus {

@@ -35,6 +35,7 @@ export class CodexAdapter implements HarnessAdapter {
   capabilities(): HarnessCapabilities { return CAPABILITIES; }
 
   async listConversations(): Promise<ConversationSummary[]> {
+    const imported = await this.importedSessionThreads();
     const summaries = new Map<string, ConversationSummary>();
     const cursors = new Set<string>();
     let cursor: string | null = null;
@@ -47,6 +48,7 @@ export class CodexAdapter implements HarnessAdapter {
         ...(cursor ? { cursor } : {}),
       });
       for (const thread of response.data) {
+        if (imported.has(thread.id)) continue;
         if (!summaries.has(thread.id)) summaries.set(thread.id, await this.summaryFromThread(thread, 'unknown'));
       }
       cursor = response.nextCursor;
@@ -54,6 +56,21 @@ export class CodexAdapter implements HarnessAdapter {
       if (cursor) cursors.add(cursor);
     } while (cursor);
     return Array.from(summaries.values());
+  }
+
+  /**
+   * Threads Codex created by importing another agent's sessions. Fractal reads those sessions
+   * from their own agent, so the imported copies are left out of the list. If Codex can't say,
+   * nothing is left out.
+   */
+  private async importedSessionThreads(): Promise<Set<string>> {
+    try {
+      const response = await this.server.request('externalAgentConfig/import/readHistories', undefined);
+      return new Set(response.data.flatMap((history) => history.successes)
+        .flatMap((success) => success.itemType === 'SESSIONS' && success.target ? [success.target] : []));
+    } catch {
+      return new Set();
+    }
   }
 
   async loadConversation(ref: ConversationRef): Promise<LoadedConversation> {

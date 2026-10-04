@@ -21,7 +21,7 @@ function codexModel(model: string, efforts: string[]) {
   };
 }
 
-function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false) {
+function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false, importedThreads: string[] | Error = []) {
   const listeners = new Set<(notification: unknown) => void>();
   const requestListeners = new Set<(request: unknown) => void>();
   const statusListeners = new Set<(status: { availability: 'available' | 'unavailable'; message?: string }) => void>();
@@ -34,8 +34,15 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       requests.push({ method, params });
       if (method === 'thread/list') {
         const index = params.cursor === 'next' ? 1 : 0;
-        if (repeatCursor && requests.length > 3) throw new Error('pagination did not terminate');
+        if (repeatCursor && requests.length > 4) throw new Error('pagination did not terminate');
         return { data: pages[index] ?? [], nextCursor: index === 0 || repeatCursor ? 'next' : null };
+      }
+      if (method === 'externalAgentConfig/import/readHistories') {
+        if (importedThreads instanceof Error) throw importedThreads;
+        return { data: [{ importId: 'import-1', providerId: 'claude-code', completedAtMs: 1, failures: [], successes: [
+          { itemType: 'AGENTS_MD', cwd: null, source: 'CLAUDE.md', target: 'newer', title: null },
+          ...importedThreads.map((target) => ({ itemType: 'SESSIONS', cwd: '/work/fractal', source: `/claude/${target}.jsonl`, target, title: target })),
+        ] }], connectors: [] };
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
       if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
@@ -77,9 +84,9 @@ describe('Codex read adapter', () => {
     const server = createFakeAppServer();
     const summaries = await new CodexAdapter(server as never).listConversations();
 
-    expect(server.requests.map((request) => request.method)).toEqual(['thread/list', 'thread/list']);
-    expect(server.requests[0]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true });
-    expect(server.requests[1]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true, cursor: 'next' });
+    expect(server.requests.map((request) => request.method)).toEqual(['externalAgentConfig/import/readHistories', 'thread/list', 'thread/list']);
+    expect(server.requests[1]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true });
+    expect(server.requests[2]?.params).toEqual({ archived: false, sortKey: 'updated_at', sortDirection: 'desc', limit: 100, useStateDbOnly: true, cursor: 'next' });
     expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
     expect(summaries.map((summary) => summary.title)).toEqual(['Newest native name', 'Older preview title']);
     expect(summaries[0]).toMatchObject({ runtime: 'idle', createdAt: 1768000000000, updatedAt: 1768000030000, captureCompleteness: 'unknown' });
@@ -90,8 +97,22 @@ describe('Codex read adapter', () => {
     const summaries = await new CodexAdapter(server as never, { realpath: async (value) => value }).listConversations();
 
     expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
-    expect(server.requests).toHaveLength(2);
-    expect(server.requests[1]?.params).toMatchObject({ cursor: 'next' });
+    expect(server.requests).toHaveLength(3);
+    expect(server.requests[2]?.params).toMatchObject({ cursor: 'next' });
+  });
+
+  test('leaves out threads Codex imported from another agent\'s sessions', async () => {
+    const server = createFakeAppServer([[thread('newer'), thread('copy')], [thread('older')]], false, ['copy']);
+    const summaries = await new CodexAdapter(server as never).listConversations();
+
+    expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'older']);
+  });
+
+  test('lists every thread when Codex cannot report its imports', async () => {
+    const server = createFakeAppServer([[thread('newer'), thread('copy')], []], false, new Error('unknown method'));
+    const summaries = await new CodexAdapter(server as never).listConversations();
+
+    expect(summaries.map((summary) => summary.ref.nativeSessionId)).toEqual(['newer', 'copy']);
   });
 
   test.each([
