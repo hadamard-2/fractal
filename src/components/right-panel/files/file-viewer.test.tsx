@@ -64,3 +64,14 @@ test('copies the file\'s absolute path', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Copy path' }));
   expect(writeText).toHaveBeenCalledWith('/repo/src/a.unknownext');
 });
+
+test('forgets the current line when another file is shown', async () => {
+  const { rerender } = render(<FileViewer path="a.unknownext" root="/repo" />);
+  await screen.findByText('two');
+  fireEvent.click(row(2));
+  expect(screen.getByTestId('open-menu').getAttribute('data-open-line')).toBe('2');
+  rerender(<FileViewer path="b.unknownext" root="/repo" />);
+  await screen.findByText('two');
+  expect(screen.getByTestId('open-menu').getAttribute('data-open-line')).toBe('');
+  expect(row(2).getAttribute('aria-current')).toBeNull();
+});

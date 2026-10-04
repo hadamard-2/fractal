@@ -14,7 +14,12 @@ const readFile = (root: string, path: string) => window.fractal.files.readFile(r
 const LINE_HEIGHT = 20;
 const TAB_WIDTH = 8;
 
+/** The current line belongs to one file, so a different file starts a fresh viewer. */
 export function FileViewer({ root, path }: { root: string; path: string }) {
+  return <FileView key={`${root}:${path}`} path={path} root={root} />;
+}
+
+function FileView({ root, path }: { root: string; path: string }) {
   const loaded = useWatchedLoad(root, path, readFile);
   const [line, setLine] = useState<number | undefined>();
   return (

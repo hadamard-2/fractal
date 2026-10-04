@@ -31,6 +31,9 @@ export function OpenMenu({ root, path, line }: { root: string; path: string; lin
     return () => { current = false; };
   }, []);
 
+  // A failure belongs to the file it happened on.
+  useEffect(() => { setMessage(null); }, [root, path]);
+
   const opener = defaultOpener(remembered, editors);
   const labelFor = (id: FileOpenerId) => (id === 'system' ? SYSTEM_LABEL : editors.find((editor) => editor.id === id)?.label ?? id);
   const run = async (action: OpenAction) => {
