@@ -315,6 +315,8 @@ export const MessageResponse = memo(
         className
       )}
       plugins={{ code }}
+      // Tables and code blocks keep only Copy.
+      controls={{ table: { copy: true, download: false, fullscreen: false }, code: { copy: true, download: false } }}
       {...props}
     />
   ),
