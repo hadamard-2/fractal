@@ -8,6 +8,7 @@ import { AgentAction, UnsupportedActivity } from './agent-action';
 import { BlockingRequest } from './blocking-request';
 import { ConversationImages } from './conversation-images';
 import { MessageAttachments } from './message-attachments';
+import { CodeBlockTerminalActions } from './code-block-terminal-actions';
 import { WorkPacket, workPacketSummary } from './work-packet';
 
 type ResolveRequest = (requestId: string, decision: UserDecision) => void | Promise<void>;
@@ -39,7 +40,7 @@ const MESSAGE_TEXT = 'max-w-none text-sm leading-6 wrap-anywhere';
 function TurnBlockView({ block, onResolve }: { block: TurnBlock; onResolve: ResolveRequest }) {
   switch (block.kind) {
     case 'assistant-prose':
-      return <MessageResponse className={MESSAGE_TEXT}>{block.text}</MessageResponse>;
+      return <CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{block.text}</MessageResponse></CodeBlockTerminalActions>;
     case 'work-packet':
       return <WorkPacket packet={block} />;
     case 'approval':
@@ -96,7 +97,7 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
       <Message from="user">
         {turn.userMessage.images && <ConversationImages className="justify-end" images={turn.userMessage.images} />}
         {turn.userMessage.attachments && <MessageAttachments attachments={turn.userMessage.attachments} sentAt={turn.userMessage.createdAt} />}
-        {turn.userMessage.text && <MessageContent><MessageResponse className={MESSAGE_TEXT}>{turn.userMessage.text}</MessageResponse></MessageContent>}
+        {turn.userMessage.text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{turn.userMessage.text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
       </Message>
       <div className="space-y-4" aria-label="Agent response">
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}

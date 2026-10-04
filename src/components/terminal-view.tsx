@@ -4,7 +4,11 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Button } from '@/components/ui/button';
 
-export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, onExitedChange }: {
+// How long a new shell gets to switch on bracketed paste before the text goes
+// to the clipboard instead. Shells do it as their line editor first starts.
+const PASTE_WAIT_MS = 3000;
+
+export function TerminalView({ id, cwd, visible, focusToken = 0, paste, onPasted, onShellReady, onExitedChange }: {
   id: string;
   cwd: string | null;
   visible: boolean;
@@ -12,6 +16,9 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, o
   focusToken?: number;
   onShellReady: (started: { shell: string; cwd: string }) => void;
   onExitedChange?: (exited: boolean) => void;
+  // Placed at the prompt without running it, then reported through onPasted.
+  paste?: string;
+  onPasted?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const visibleRef = useRef(visible);
@@ -26,6 +33,10 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, o
   const [exitCode, setExitCode] = useState<number | null>(null);
   visibleRef.current = visible;
   onShellReadyRef.current = onShellReady;
+  const pasteRef = useRef(paste);
+  pasteRef.current = paste;
+  const onPastedRef = useRef(onPasted);
+  onPastedRef.current = onPasted;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -67,9 +78,28 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, o
     fitRef.current = fitNow;
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fitNow);
     observer?.observe(host);
+    // Typed text runs at every newline. Bracketed paste makes the shell insert
+    // the whole text as one edit, so it is only used once the shell has
+    // switched that mode on; until then the text waits.
+    let pasteTimer: ReturnType<typeof setTimeout> | undefined;
+    const tryPaste = (giveUp = false) => {
+      const text = pasteRef.current;
+      if (!text || disposed || exited) return;
+      if (terminal.modes.bracketedPasteMode) terminal.paste(text);
+      else if (giveUp) {
+        void navigator.clipboard.writeText(text).catch((): void => undefined);
+        terminal.write('\r\n\x1b[2mThis shell does not accept a safe paste, so the code was copied to the clipboard instead.\x1b[0m\r\n');
+      } else return;
+      clearTimeout(pasteTimer);
+      pasteRef.current = undefined;
+      onPastedRef.current?.();
+    };
     const off = window.fractal.terminals.onEvent((event) => {
       if (event.id !== id || disposed) return;
-      if (event.type === 'data') terminal.write(event.data);
+      if (event.type === 'data') {
+        if (pasteRef.current) terminal.write(event.data, () => tryPaste());
+        else terminal.write(event.data);
+      }
       else {
         exited = true;
         setExitCode(event.exitCode);
@@ -89,11 +119,13 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, onShellReady, o
       onShellReadyRef.current({ shell, cwd: startedIn });
       if (!exited) setState('running');
       fitNow();
+      if (pasteRef.current) pasteTimer = setTimeout(() => tryPaste(true), PASTE_WAIT_MS);
     }).catch(() => { if (!disposed) setState('error'); });
     fitNow();
 
     return () => {
       disposed = true;
+      clearTimeout(pasteTimer);
       fitRef.current = null;
       terminalRef.current = null;
       observer?.disconnect();

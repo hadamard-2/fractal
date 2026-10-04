@@ -3,6 +3,7 @@ import { ListTree, Plus } from 'lucide-react';
 import { FilesPane } from '@/components/right-panel/files/files-pane';
 import { PanelTabs } from '@/components/right-panel/panel-tabs';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
+import { TerminalLauncherContext, type OpenTerminalWith } from '@/components/right-panel/terminal-launcher';
 import { TerminalView } from '@/components/terminal-view';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -92,11 +93,18 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   }, [selectedProject]);
 
   const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
-  const addTerminal = () => {
+  const addTerminal = (paste?: string) => {
     const id = crypto.randomUUID();
-    setPanelTabs((previous) => addTerminalTab(previous, id, projectPath));
+    setPanelTabs((previous) => addTerminalTab(previous, id, projectPath, paste));
     focusTerminal(id);
   };
+  // Read through a ref so the context value stays stable across renders.
+  const openTerminalWith = useRef<OpenTerminalWith>(() => undefined);
+  openTerminalWith.current = (text) => {
+    if (!open) onOpenChange(true);
+    addTerminal(text);
+  };
+  const [launcher] = useState<OpenTerminalWith>(() => (text: string) => openTerminalWith.current(text));
   const openFiles = () => {
     if (projectPath === null) return;
     const id = crypto.randomUUID();
@@ -164,7 +172,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         the mode and panel toggles, which float over the header row.
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': `${layout.headerReserve}px` } as CSSProperties}>
-        {children}
+        <TerminalLauncherContext.Provider value={launcher}>{children}</TerminalLauncherContext.Provider>
       </div>
       {/*
         The panel keeps its full width and slides; this in-flow gap is what
@@ -211,13 +219,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                   <DropdownMenuTrigger asChild>
                     <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={addTerminal} /></DropdownMenuContent>
+                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={() => addTerminal()} /></DropdownMenuContent>
                 </DropdownMenu>
               )}
             </div>
             {tabs.length === 0 ? (
               <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={addTerminal} />
+                <ToolList filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={() => addTerminal()} />
               </div>
             ) : (
               <div className="mx-2 mt-1 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
@@ -227,6 +235,8 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                       cwd={tab.cwd}
                       focusToken={focusRequest?.id === tab.id ? focusRequest.token : 0}
                       id={tab.id}
+                      onPasted={() => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { paste: undefined }))}
+                      paste={tab.paste}
                       onExitedChange={(exited) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { exited }))}
                       onShellReady={({ shell, cwd }) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd }))}
                       visible={open && selectedId === tab.id}

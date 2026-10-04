@@ -34,9 +34,9 @@ export function selectTab(state: PanelTabsState, id: string): PanelTabsState {
   return state.tabs.some((tab) => tab.id === id) ? { ...state, selectedId: id, recent: touch(state.recent, id) } : state;
 }
 
-export function addTerminalTab(state: PanelTabsState, id: string, cwd: string | null): PanelTabsState {
+export function addTerminalTab(state: PanelTabsState, id: string, cwd: string | null, paste?: string): PanelTabsState {
   const terminals = state.tabs.filter((tab): tab is TerminalPanelTab => tab.kind === 'terminal');
-  return append(state, { kind: 'terminal', id, cwd, number: nextTerminalNumber(terminals) });
+  return append(state, { kind: 'terminal', id, cwd, number: nextTerminalNumber(terminals), ...(paste ? { paste } : {}) });
 }
 
 export function updateTerminalTab(state: PanelTabsState, id: string, patch: Partial<Omit<TerminalTab, 'id'>>): PanelTabsState {

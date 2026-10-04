@@ -5,6 +5,8 @@ export type TerminalTab = {
   // The lowest number free among open tabs when this one was created; it
   // never changes while the tab is open, so labels don't shift as others close.
   number: number;
+  // Text to paste at the shell's first prompt, cleared once it has been placed.
+  paste?: string;
   // The shell's name, once it has started.
   shell?: string;
   // The directory the shell actually started in, once known.
