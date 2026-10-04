@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { Plus } from 'lucide-react';
+import { ListTree, Plus } from 'lucide-react';
+import { FilesPane } from '@/components/right-panel/files/files-pane';
+import { PanelTabs } from '@/components/right-panel/panel-tabs';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
-import { nextTerminalNumber, TerminalTabs, type TerminalTab } from '@/components/right-panel/terminal-tabs';
 import { TerminalView } from '@/components/terminal-view';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { PANEL_MIN_WIDTH, clampPanelWidth, defaultPanelWidth, panelLayout } from '@/renderer/right-panel-layout';
+import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type FilePanelTab, type PanelTabsState, type TerminalPanelTab } from '@/renderer/panel-tabs';
+import { PANEL_MIN_WIDTH, clampPanelWidth, defaultPanelWidth, filesTreeDocked, panelLayout } from '@/renderer/right-panel-layout';
 
 // An element's width and left edge, kept current. Falls back to window
 // resizes where ResizeObserver is missing.
@@ -59,8 +61,9 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const width = chosenWidth ?? defaultPanelWidth(root.width, leftInset);
   const layout = panelLayout({ open, width, containerWidth: root.width, leftInset });
 
-  const [tabs, setTabs] = useState<TerminalTab[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [panelTabs, setPanelTabs] = useState<PanelTabsState>(emptyPanelTabs);
+  const [dockedTreeOpen, setDockedTreeOpen] = useState(true);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const nextFocus = useRef(1);
@@ -73,24 +76,30 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     if (open && chosenWidth === null) onWidthChange(width);
   }, [open, chosenWidth, width, onWidthChange]);
 
+  const { tabs, selectedId } = panelTabs;
+  const selectedTab = tabs.find((tab) => tab.id === selectedId);
+  const terminalTabs = tabs.filter((tab): tab is TerminalPanelTab => tab.kind === 'terminal');
+  const fileTabs = tabs.filter((tab): tab is FilePanelTab => tab.kind === 'file');
+  const selectedFileTab = selectedTab?.kind === 'file' ? selectedTab : undefined;
+  const docked = filesTreeDocked(width);
+  const treeShown = selectedFileTab !== undefined && (docked ? dockedTreeOpen : overlayOpen || selectedFileTab.path === null);
+
   const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
   const addTerminal = () => {
     const id = crypto.randomUUID();
-    setTabs((previous) => [...previous, { id, cwd: projectPath, number: nextTerminalNumber(previous) }]);
-    setSelectedId(id);
+    setPanelTabs((previous) => addTerminalTab(previous, id, projectPath));
     focusTerminal(id);
   };
-  const updateTab = (id: string, patch: Partial<TerminalTab>) => {
-    setTabs((previous) => previous.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)));
+  const openFiles = () => {
+    if (projectPath === null) return;
+    const id = crypto.randomUUID();
+    setPanelTabs((previous) => openFilesTool(previous, projectPath, id));
   };
-  const closeTab = (id: string) => {
-    setTabs((previous) => {
-      const index = previous.findIndex((tab) => tab.id === id);
-      const next = previous.filter((tab) => tab.id !== id);
-      if (selectedId === id) setSelectedId(next[Math.min(index, next.length - 1)]?.id ?? null);
-      return next;
-    });
+  const openProjectFile = (project: string, path: string, pinned: boolean) => {
+    const id = crypto.randomUUID();
+    setPanelTabs((previous) => openFile(previous, project, path, pinned, id));
   };
+  const toggleTree = () => (docked ? setDockedTreeOpen((value) => !value) : setOverlayOpen((value) => !value));
   const resize = (next: number) => onWidthChange(Math.min(layout.maxWidth, clampPanelWidth(next)));
   const endDrag = () => {
     if (!drag.current) return;
@@ -109,9 +118,11 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
       && panelRef.current?.contains(focused) === true;
     if (open && focusInTerminal) { onOpenChange(false); return; }
     if (!open) onOpenChange(true);
-    const selected = tabs.find((tab) => tab.id === selectedId);
-    if (selected) focusTerminal(selected.id);
-    else addTerminal();
+    const terminalId = activeTerminalId(panelTabs);
+    if (terminalId) {
+      setPanelTabs((previous) => selectTab(previous, terminalId));
+      focusTerminal(terminalId);
+    } else addTerminal();
   };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -162,34 +173,58 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
               toggle, which App floats over this corner.
             */}
             <div className="flex shrink-0 items-end gap-1 pr-10 pl-2" style={{ height: 'calc(var(--app-bar-offset) + var(--app-bar-height) / 2 + 8px)' }}>
-              <TerminalTabs onClose={closeTab} onSelect={setSelectedId} selectedId={selectedId} tabs={tabs} />
+              {selectedFileTab && (
+                <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
+                  <ListTree aria-hidden className="size-4" />
+                </Button>
+              )}
+              <PanelTabs
+                onClose={(id) => setPanelTabs((previous) => closeTab(previous, id))}
+                onPin={(id) => setPanelTabs((previous) => pinTab(previous, id))}
+                onSelect={(id) => setPanelTabs((previous) => selectTab(previous, id))}
+                selectedId={selectedId}
+                tabs={tabs}
+              />
               {tabs.length > 0 && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onTerminal={addTerminal} /></DropdownMenuContent>
+                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={addTerminal} /></DropdownMenuContent>
                 </DropdownMenu>
               )}
             </div>
             {tabs.length === 0 ? (
               <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList onTerminal={addTerminal} />
+                <ToolList filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={addTerminal} />
               </div>
             ) : (
               <div className="mx-2 mt-1 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
-                {tabs.map((tab) => (
+                {terminalTabs.map((tab) => (
                   <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel">
                     <TerminalView
                       cwd={tab.cwd}
                       focusToken={focusRequest?.id === tab.id ? focusRequest.token : 0}
                       id={tab.id}
-                      onExitedChange={(exited) => updateTab(tab.id, { exited })}
-                      onShellReady={({ shell, cwd }) => updateTab(tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd })}
+                      onExitedChange={(exited) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { exited }))}
+                      onShellReady={({ shell, cwd }) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd }))}
                       visible={open && selectedId === tab.id}
                     />
                   </div>
                 ))}
+                {fileTabs.length > 0 && (
+                  <div className="h-full" hidden={!selectedFileTab}>
+                    <FilesPane
+                      docked={docked}
+                      dockedTreeOpen={dockedTreeOpen}
+                      onCloseOverlay={() => setOverlayOpen(false)}
+                      onOpenFile={openProjectFile}
+                      overlayOpen={overlayOpen}
+                      selected={selectedFileTab}
+                      tabs={fileTabs}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

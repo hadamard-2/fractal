@@ -52,3 +52,9 @@ export function panelLayout({ open, width, containerWidth, leftInset }: {
 // How far left of its closed position the mode toggle moves.
 export const modeToggleShift = (open: boolean, width: number): number =>
   open ? width - CLOSED_MODE_TOGGLE_RIGHT : 0;
+
+/** From this panel width a Files tab's tree sits beside the viewer; narrower, it opens over it. A starting value, tuned by feel. */
+export const FILES_TREE_DOCK_MIN_WIDTH = 560;
+export const FILES_TREE_WIDTH = 240;
+
+export const filesTreeDocked = (panelWidth: number): boolean => panelWidth >= FILES_TREE_DOCK_MIN_WIDTH;

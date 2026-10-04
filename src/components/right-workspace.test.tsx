@@ -11,18 +11,34 @@ vi.mock('./terminal-view', () => ({
   ),
 }));
 
+vi.mock('./right-panel/files/files-pane', () => ({
+  FilesPane: ({ selected, docked, dockedTreeOpen, onOpenFile }: {
+    selected?: { projectPath: string; path: string | null }; docked: boolean; dockedTreeOpen: boolean;
+    onOpenFile: (projectPath: string, path: string, pinned: boolean) => void;
+  }) => (
+    <div data-docked={docked} data-testid="files-pane" data-tree-open={dockedTreeOpen}>
+      {selected && (
+        <>
+          <button onClick={() => onOpenFile(selected.projectPath, 'src/a.ts', false)} type="button">Click a.ts</button>
+          <button onClick={() => onOpenFile(selected.projectPath, 'src/b.ts', false)} type="button">Click b.ts</button>
+        </>
+      )}
+    </div>
+  ),
+}));
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const box = (left: number, width: number) => ({ left, width, x: left, y: 0, top: 0, right: left + width, bottom: 800, height: 800, toJSON: (): void => undefined });
 
-function Harness({ withInset = false, onResizingChange = () => undefined }: { withInset?: boolean; onResizingChange?: (resizing: boolean) => void }) {
+function Harness({ withInset = false, onResizingChange = () => undefined, projectPath = '/repo' as string | null }: { withInset?: boolean; onResizingChange?: (resizing: boolean) => void; projectPath?: string | null }) {
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState<number | null>(null);
   const insetRef = useRef<HTMLDivElement>(null);
   return (
     <>
       <button onClick={() => setOpen(!open)} type="button">{open ? 'Close panel' : 'Open panel'}</button>
-      <RightWorkspace leftInsetRef={withInset ? insetRef : undefined} onOpenChange={setOpen} onResizingChange={onResizingChange} onWidthChange={setWidth} open={open} projectPath="/repo" width={width}>
+      <RightWorkspace leftInsetRef={withInset ? insetRef : undefined} onOpenChange={setOpen} onResizingChange={onResizingChange} onWidthChange={setWidth} open={open} projectPath={projectPath} width={width}>
         <div data-inset={withInset || undefined} ref={insetRef}>Content</div>
       </RightWorkspace>
     </>
@@ -118,4 +134,52 @@ test('ignores other modifier combinations', () => {
   fireEvent.keyDown(document.body, { key: '`', code: 'Backquote', ctrlKey: true, shiftKey: true });
   fireEvent.keyDown(document.body, { key: '`', code: 'Backquote' });
   expect(panel().getAttribute('aria-hidden')).toBe('true');
+});
+
+test('Files is unavailable without a project', async () => {
+  const user = userEvent.setup();
+  render(<Harness projectPath={null} />);
+  await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  expect(screen.getByRole('menuitem', { name: 'Files' }).hasAttribute('disabled')).toBe(true);
+});
+
+test('opens Files, fills and replaces the preview tab, pins it, and reuses the most recent file tab', async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Files' }));
+  expect(screen.getByRole('tab', { name: 'Files (preview)' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
+  expect(screen.getByRole('tab', { name: 'a.ts (preview)' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Click b.ts' }));
+  expect(screen.getAllByRole('tab')).toHaveLength(1);
+  await user.dblClick(screen.getByRole('tab', { name: 'b.ts (preview)' }));
+  expect(screen.getByRole('tab', { name: 'b.ts' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['b.ts', 'a.ts (preview)']);
+  await user.click(screen.getByRole('button', { name: 'Add tool' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+  await user.click(screen.getByRole('button', { name: 'Add tool' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Files' }));
+  expect(screen.getAllByRole('tab')).toHaveLength(3);
+  expect(screen.getByRole('tab', { name: 'a.ts (preview)' }).getAttribute('aria-selected')).toBe('true');
+});
+
+test('shows the tree toggle only on file tabs, and Ctrl+` returns to the last terminal', async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+  expect(screen.queryByRole('button', { name: /file tree/ })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Add tool' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Files' }));
+  // Narrow, a tab with no file yet always shows the tree.
+  expect(screen.getByRole('button', { name: 'Hide file tree' }).getAttribute('aria-pressed')).toBe('true');
+  await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
+  const toggle = screen.getByRole('button', { name: 'Show file tree' });
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  await user.click(toggle);
+  expect(screen.getByRole('button', { name: 'Hide file tree' }).getAttribute('aria-pressed')).toBe('true');
+  pressToggle(document.body);
+  expect(screen.getByRole('tab', { name: 'Terminal' }).getAttribute('aria-selected')).toBe('true');
 });

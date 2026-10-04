@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { MODE_TOGGLE_WIDTH } from '@/components/mode-toggle';
-import { CLOSED_MODE_TOGGLE_RIGHT, defaultPanelWidth, modeToggleShift, panelLayout } from './right-panel-layout';
+import { CLOSED_MODE_TOGGLE_RIGHT, FILES_TREE_DOCK_MIN_WIDTH, defaultPanelWidth, filesTreeDocked, modeToggleShift, panelLayout } from './right-panel-layout';
 
 test('the mode toggle is as wide as its items, their gaps, and its padding', () => {
   expect(MODE_TOGGLE_WIDTH).toBe(128);
@@ -32,4 +32,9 @@ test('reserves header space for whichever toggles sit in the header row', () => 
 test('moves the mode toggle to the panel edge only while open', () => {
   expect(modeToggleShift(false, 400)).toBe(0);
   expect(modeToggleShift(true, 400)).toBe(352);
+});
+
+test('docks the file tree beside the viewer only in a wide enough panel', () => {
+  expect(filesTreeDocked(FILES_TREE_DOCK_MIN_WIDTH)).toBe(true);
+  expect(filesTreeDocked(FILES_TREE_DOCK_MIN_WIDTH - 1)).toBe(false);
 });
