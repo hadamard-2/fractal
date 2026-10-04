@@ -208,9 +208,10 @@ export function SettingsDialog({
           </aside>
 
           <div className="flex min-w-0 flex-1 flex-col gap-8 px-6 pt-3 pb-7 sm:px-8 sm:pb-8">
-            <section aria-labelledby="coding-agent-heading">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <h2 id="coding-agent-heading" className="text-base font-medium">Coding agent</h2>
+            <section aria-labelledby="agents-heading">
+              <h2 id="agents-heading" className="text-base font-medium">Agents</h2>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 id="coding-agent-heading" className="text-sm font-medium">Coding agent</h3>
                 <Select
                   disabled={!settings}
                   onValueChange={(next) => setDefaultCodingAgent(next as DefaultCodingAgent)}
@@ -225,17 +226,36 @@ export function SettingsDialog({
                   <SelectContent align="end" position="popper">
                     <SelectGroup>
                       {CODING_AGENT_OPTIONS.map(({ value, label }) => (
-                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                        <SelectItem
+                          className="data-[state=checked]:text-primary-text [&_svg]:text-primary-text!"
+                          key={value}
+                          value={value}
+                        >
+                          {label}
+                        </SelectItem>
                       ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
-            </section>
+              <div className="mt-6 flex items-center justify-between gap-6">
+                <div className="flex flex-col gap-1">
+                  <h3 id="agent-color-tags-heading" className="text-sm font-medium">Agent color tags</h3>
+                  <p id="agent-color-tags-description" className="text-sm text-muted-foreground">
+                    Tag sidebar chats with Claude Code orange or Codex blue.
+                  </p>
+                </div>
+                <Switch
+                  aria-describedby="agent-color-tags-description"
+                  aria-labelledby="agent-color-tags-heading"
+                  checked={settings?.showAgentColorTags ?? true}
+                  disabled={!settings}
+                  onCheckedChange={setShowAgentColorTags}
+                />
+              </div>
 
-            <section aria-labelledby="agent-locations-heading">
-              <div className="flex flex-col gap-1">
-                <h2 id="agent-locations-heading" className="text-base font-medium">Agent locations</h2>
+              <div className="mt-6 flex flex-col gap-1">
+                <h3 id="agent-locations-heading" className="text-sm font-medium">Locations</h3>
                 <p className="text-sm text-muted-foreground">
                   Fractal looks for each agent on your PATH. Set a location to use a specific executable instead. Changes apply the next time Fractal starts.
                 </p>
@@ -289,28 +309,13 @@ export function SettingsDialog({
                     key={value}
                     value={value}
                     aria-label={label}
-                    className="flex h-28 w-full flex-col gap-3 rounded-xl px-2 text-sm font-medium data-[state=on]:border-ring data-[state=on]:bg-accent data-[state=on]:ring-1 data-[state=on]:ring-ring/50"
+                    className="flex h-28 w-full flex-col gap-3 rounded-xl px-2 text-sm font-medium data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary-text data-[state=on]:ring-1 data-[state=on]:ring-primary/50"
                   >
                     <Icon className="size-5" aria-hidden="true" />
                     <span>{label}</span>
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-              <div className="mt-6 flex items-center justify-between gap-6">
-                <div className="flex flex-col gap-1">
-                  <h3 id="agent-color-tags-heading" className="text-sm font-medium">Agent color tags</h3>
-                  <p id="agent-color-tags-description" className="text-sm text-muted-foreground">
-                    Tag sidebar chats with Claude Code orange or Codex blue.
-                  </p>
-                </div>
-                <Switch
-                  aria-describedby="agent-color-tags-description"
-                  aria-labelledby="agent-color-tags-heading"
-                  checked={settings?.showAgentColorTags ?? true}
-                  disabled={!settings}
-                  onCheckedChange={setShowAgentColorTags}
-                />
-              </div>
             </section>
           </div>
         </div>
