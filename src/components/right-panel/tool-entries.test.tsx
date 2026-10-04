@@ -11,13 +11,14 @@ test('lists every tool in order, with Terminal and Files available', async () =>
   const onFiles = vi.fn();
   render(<ToolList filesAvailable onFiles={onFiles} onTerminal={onTerminal} />);
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-    'ReviewSoon', 'TerminalCtrl+`', 'BrowserSoon', 'Files', 'Side chatSoon',
+    'ReviewSoon', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
   ]);
   for (const name of ['Review', 'Browser', 'Side chat']) {
     expect(screen.getByRole('menuitem', { name }).hasAttribute('disabled')).toBe(true);
   }
   const terminal = screen.getByRole('menuitem', { name: 'Terminal' });
   expect(terminal.getAttribute('aria-keyshortcuts')).toBe('Control+`');
+  expect(screen.getByRole('menuitem', { name: 'Files' }).getAttribute('aria-keyshortcuts')).toBe('Control+Shift+F');
   const user = userEvent.setup();
   await user.click(terminal);
   await user.click(screen.getByRole('menuitem', { name: 'Files' }));

@@ -136,6 +136,23 @@ test('ignores other modifier combinations', () => {
   expect(panel().getAttribute('aria-hidden')).toBe('true');
 });
 
+const pressFiles = (target: Element) => fireEvent.keyDown(target, { key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true });
+
+test('Ctrl+Shift+F opens the panel on Files and reuses the Files tab', () => {
+  render(<Harness />);
+  pressFiles(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('false');
+  expect(screen.getByRole('tab', { name: 'Files (preview)' })).toBeTruthy();
+  expect(pressFiles(document.body)).toBe(false);
+  expect(screen.getAllByRole('tab')).toHaveLength(1);
+});
+
+test('Ctrl+Shift+F does nothing without a project', () => {
+  render(<Harness projectPath={null} />);
+  pressFiles(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('true');
+});
+
 test('Files is unavailable without a project', async () => {
   const user = userEvent.setup();
   render(<Harness projectPath={null} />);

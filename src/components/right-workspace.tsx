@@ -131,12 +131,26 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
       focusTerminal(terminalId);
     } else addTerminal();
   };
+  // Ctrl+Shift+F — opens the panel on the project's Files tool. Not a toggle:
+  // it always lands on Files, so pressing it again is harmless.
+  const showFiles = useRef<() => void>(() => undefined);
+  showFiles.current = () => {
+    if (projectPath === null) return;
+    if (!open) onOpenChange(true);
+    openFiles();
+  };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'Backquote' || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      toggleTerminal.current();
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      if (event.code === 'Backquote' && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTerminal.current();
+      } else if (event.code === 'KeyF' && event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        showFiles.current();
+      }
     };
     // Capture phase, so a focused terminal never receives the keystroke.
     window.addEventListener('keydown', onKeyDown, true);

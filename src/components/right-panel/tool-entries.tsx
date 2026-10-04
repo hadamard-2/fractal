@@ -19,7 +19,7 @@ type State = { onSelect?: () => void; hint?: string; shortcut?: string };
 
 function stateOf(id: ToolId, { onTerminal, onFiles, filesAvailable }: Handlers): State {
   if (id === 'terminal') return { onSelect: onTerminal, hint: 'Ctrl+`', shortcut: 'Control+`' };
-  if (id === 'files') return filesAvailable ? { onSelect: onFiles } : { hint: 'Open a project first' };
+  if (id === 'files') return filesAvailable ? { onSelect: onFiles, hint: 'Ctrl+Shift+F', shortcut: 'Control+Shift+F' } : { hint: 'Open a project first' };
   return { hint: 'Soon' };
 }
 
