@@ -24,12 +24,13 @@ export function useWatchedLoad<T>(root: string, path: string, load: (root: strin
     };
     setState({ status: 'loading' });
     const off = files.onEvent((event) => { if (event.watchId === watchId) refresh(); });
-    files.watch(watchId, root, path).catch((): void => undefined);
+    const watching = files.watch(watchId, root, path).catch((): void => undefined);
     refresh();
     return () => {
       current = false;
       off();
-      files.unwatch(watchId).catch((): void => undefined);
+      // Main registers a watch only after it has checked the root, so an unwatch sent before that finishes would find nothing and the watch would outlive this component.
+      void watching.then(() => files.unwatch(watchId)).catch((): void => undefined);
     };
   }, [root, path, load]);
   return state;

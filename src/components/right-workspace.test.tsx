@@ -183,3 +183,18 @@ test('shows the tree toggle only on file tabs, and Ctrl+` returns to the last te
   pressToggle(document.body);
   expect(screen.getByRole('tab', { name: 'Terminal' }).getAttribute('aria-selected')).toBe('true');
 });
+
+test('another project starts with its own tree state', async () => {
+  const user = userEvent.setup();
+  const view = render(<Harness />);
+  await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Files' }));
+  await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
+  await user.click(screen.getByRole('button', { name: 'Show file tree' }));
+  expect(screen.getByRole('button', { name: 'Hide file tree' })).toBeTruthy();
+  view.rerender(<Harness projectPath="/other" />);
+  await user.click(screen.getByRole('button', { name: 'Add tool' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Files' }));
+  await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
+  expect(screen.getByRole('button', { name: 'Show file tree' })).toBeTruthy();
+});

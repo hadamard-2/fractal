@@ -28,13 +28,13 @@ const isExecutableFile = async (file: string): Promise<boolean> => {
 };
 
 /**
- * The editors whose command is on `searchPath`, in menu order. None on
+ * The editors whose command is on `searchPath`, in menu order. Relative entries are skipped, so a launcher inside the folder Fractal happens to run from is never chosen. None on
  * Windows: editor launchers there are .cmd batch files, which Node will not
  * start without a shell, and a shell would interpret characters in file names.
  */
 export async function detectEditors(platform: NodeJS.Platform, searchPath: string, isExecutable = isExecutableFile): Promise<DetectedEditor[]> {
   if (platform === 'win32') return [];
-  const directories = searchPath.split(path.delimiter).filter(Boolean);
+  const directories = searchPath.split(path.delimiter).filter((directory) => path.isAbsolute(directory));
   const found: DetectedEditor[] = [];
   for (const id of EDITOR_IDS) {
     const { label, command } = EDITORS[id];

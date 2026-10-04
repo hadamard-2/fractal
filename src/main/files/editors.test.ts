@@ -51,3 +51,10 @@ test('opens with the default app or shows the file in its folder', async () => {
   expect(await openWith('reveal', { root: '/repo', file: '/repo/a.ts' }, { editors: async () => [], shell: s })).toEqual({ ok: true });
   expect(s.showItemInFolder).toHaveBeenCalledWith('/repo/a.ts');
 });
+
+test('ignores relative search path entries', async () => {
+  const isExecutable = vi.fn(async (file: string) => file === 'code' || file === '.' + '/code' || file === '/usr/bin/code');
+  expect(await detectEditors('linux', './:bin:/usr/bin', isExecutable)).toEqual([{ id: 'vscode', label: 'VS Code', executable: '/usr/bin/code' }]);
+  expect(isExecutable).not.toHaveBeenCalledWith('code');
+  expect(isExecutable).not.toHaveBeenCalledWith('bin/code');
+});

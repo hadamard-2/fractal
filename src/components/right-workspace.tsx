@@ -84,6 +84,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const docked = filesTreeDocked(width);
   const treeShown = selectedFileTab !== undefined && (docked ? dockedTreeOpen : overlayOpen || selectedFileTab.path === null);
 
+  // Tree state belongs to the project being browsed, so another project starts with its defaults.
+  const selectedProject = selectedFileTab?.projectPath;
+  useEffect(() => {
+    setOverlayOpen(false);
+    setDockedTreeOpen(true);
+  }, [selectedProject]);
+
   const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
   const addTerminal = () => {
     const id = crypto.randomUUID();

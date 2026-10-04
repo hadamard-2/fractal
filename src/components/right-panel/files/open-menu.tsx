@@ -7,9 +7,16 @@ import type { EditorInfo, FileOpenerId, OpenAction, OpenResult } from '@/shared/
 
 const SYSTEM_LABEL = 'System default';
 
-// Main detects editors once per launch; the first menu to ask keeps the answer.
+// Main detects editors once per launch; the first menu to ask keeps the answer. A failed call is not kept, so the next menu asks again.
 let editorsOnce: Promise<EditorInfo[]> | undefined;
-const loadEditors = () => (editorsOnce ??= window.fractal.files.editors().catch((): EditorInfo[] => []));
+const loadEditors = (): Promise<EditorInfo[]> => {
+  if (!editorsOnce) {
+    const request = window.fractal.files.editors();
+    editorsOnce = request;
+    request.catch(() => { if (editorsOnce === request) editorsOnce = undefined; });
+  }
+  return editorsOnce.catch((): EditorInfo[] => []);
+};
 
 /** What the Open button runs: the remembered choice while it is still available, else the first editor, else the default app. */
 export function defaultOpener(remembered: FileOpenerId | null, editors: EditorInfo[]): FileOpenerId {

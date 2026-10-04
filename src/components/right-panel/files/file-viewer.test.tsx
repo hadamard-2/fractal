@@ -75,3 +75,15 @@ test('forgets the current line when another file is shown', async () => {
   expect(screen.getByTestId('open-menu').getAttribute('data-open-line')).toBe('');
   expect(row(2).getAttribute('aria-current')).toBeNull();
 });
+
+test('unwatches only after a slow watch has registered, even when unmounted first', async () => {
+  let registered!: () => void;
+  const order: string[] = [];
+  (window.fractal.files.watch as Mock).mockImplementation(() => new Promise<void>((resolve) => { registered = () => { order.push('watched'); resolve(); }; }));
+  (window.fractal.files.unwatch as Mock).mockImplementation(async () => { order.push('unwatched'); });
+  const view = render(<FileViewer path="notes.unknownext" root="/repo" />);
+  view.unmount();
+  expect(window.fractal.files.unwatch).not.toHaveBeenCalled();
+  await act(async () => { registered(); });
+  await vi.waitFor(() => expect(order).toEqual(['watched', 'unwatched']));
+});

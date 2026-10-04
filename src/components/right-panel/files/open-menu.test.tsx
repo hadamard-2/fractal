@@ -56,3 +56,17 @@ test('shows why a file could not be opened', async () => {
   expect((await screen.findByRole('status')).textContent).toBe('Couldn\'t start Zed');
   expect(set).not.toHaveBeenCalled();
 });
+
+test('retries the editor list after a failed call instead of keeping the failure', async () => {
+  vi.resetModules();
+  const { OpenMenu: Fresh } = await import('./open-menu');
+  const list = window.fractal.files.editors as Mock;
+  list.mockRejectedValueOnce(new Error('ipc down'));
+  const first = render(<Fresh path="a.ts" root="/repo" />);
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+  await screen.findByRole('button', { name: 'Open in System default' });
+  first.unmount();
+  render(<Fresh path="a.ts" root="/repo" />);
+  await screen.findByRole('button', { name: 'Open in Zed' });
+  expect(list).toHaveBeenCalledTimes(2);
+});
