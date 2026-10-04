@@ -27,6 +27,15 @@ describe('splitTurnWork', () => {
     expect(ids(answer)).toEqual(['second']);
   });
 
+  test('keeps notices that open the turn out of the work', () => {
+    const notice: TurnBlock = { id: 'n1', kind: 'system-notice', message: 'Background command finished', tone: 'info' };
+    const { lead, work, answer } = splitTurnWork(turn([notice, packet('p1'), prose('a1', true)]));
+    expect(ids(lead)).toEqual(['n1']);
+    expect(ids(work)).toEqual(['p1']);
+    expect(ids(answer)).toEqual(['a1']);
+    expect(splitTurnWork(turn([notice, prose('a1', true)]))).toMatchObject({ lead: [], work: [], answer: [{ id: 'n1' }, { id: 'a1' }] });
+  });
+
   test('leaves running, unmarked, and answer-only turns whole', () => {
     const blocks = [packet('p1'), prose('a1', true)];
     expect(splitTurnWork(turn(blocks, 'active')).work).toEqual([]);

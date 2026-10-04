@@ -42,7 +42,7 @@ class NormalizationContext implements ClaudeNormalizationContext {
     const content = message?.content;
     const isToolResultCarrier = role === 'user' && hasToolResult(content);
     // An isMeta record is text the harness injected for the model, not a prompt, so it stays in its parent's turn.
-    const ownTurn = type === 'user' && role === 'user' && !isToolResultCarrier && record.isMeta !== true ? uuid : undefined;
+    const ownTurn = type === 'user' && role === 'user' && !isToolResultCarrier && record.isMeta !== true && !continuesParentTurn(content) ? uuid : undefined;
     const turnId = ownTurn ?? (parentUuid ? this.turnByNativeId.get(parentUuid) : undefined);
 
     if (uuid && turnId) this.turnByNativeId.set(uuid, turnId);
@@ -350,6 +350,64 @@ function hasToolResult(content: unknown): boolean {
   return arrayValue(content)?.some((block) => stringValue(objectValue(block)?.type) === 'tool_result') ?? false;
 }
 
+/**
+ * Claude Code and Claude Desktop record some activity as a user message wrapped in tags: a command
+ * run from the app, a slash command and its output, a background task finishing, app context put
+ * ahead of a prompt. None of it is a prompt as typed, so it is rewritten here. `text` undefined
+ * means the record does not start a turn of its own (see `continuesParentTurn`).
+ * The tags were observed in real transcripts, not documented; untagged text passes through.
+ */
+function taggedUserText(raw: string): { text?: string; notice?: { message: string; tone: 'info' | 'error' } } {
+  if (raw.startsWith('<bash-input>')) {
+    const command = tagValue(raw, 'bash-input') ?? '';
+    const output = [tagValue(raw, 'bash-stdout'), tagValue(raw, 'bash-stderr')]
+      .map((part) => unescapeTagText(part ?? '').replace(/\n+$/, ''))
+      .filter((part) => part !== '');
+    return { text: [fenced(command, 'bash'), ...output.map((part) => fenced(part, 'text'))].join('\n\n') };
+  }
+  if (raw.startsWith('<command-name>')) {
+    const command = [tagValue(raw, 'command-name'), tagValue(raw, 'command-args')].filter(Boolean).join(' ');
+    return { text: `\`${command}\`` };
+  }
+  if (continuesParentTurn(raw)) {
+    const output = unescapeTagText(tagValue(raw, 'local-command-stdout') ?? '').trim();
+    return output ? { notice: { message: output, tone: 'info' } } : {};
+  }
+  if (raw.startsWith('<task-notification>')) {
+    const summary = unescapeTagText(tagValue(raw, 'summary') ?? 'Background task finished');
+    return { text: '', notice: { message: summary, tone: tagValue(raw, 'status') === 'failed' ? 'error' : 'info' } };
+  }
+  if (raw.startsWith('<create-pr-command>')) {
+    const branch = /^Branch: (.+)$/m.exec(raw)?.[1];
+    const base = /^Base branch: (.+)$/m.exec(raw)?.[1];
+    return { text: branch && base ? `Create PR: \`${branch}\` into \`${base}\`` : 'Create PR' };
+  }
+  if (raw.startsWith('<system-reminder>')) {
+    return { text: raw.replace(/^(?:\s*<system-reminder>[\s\S]*?<\/system-reminder>)+\s*/, '') };
+  }
+  return { text: raw };
+}
+
+/** A slash command's output is recorded as its own user message, after the command it answers. */
+function continuesParentTurn(raw: unknown): boolean {
+  return typeof raw === 'string' && raw.startsWith('<local-command-stdout>');
+}
+
+function tagValue(raw: string, tag: string): string | undefined {
+  return new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(raw)?.[1];
+}
+
+// Output inside these tags has &, <, and > escaped; quotes and the command itself are left raw.
+function unescapeTagText(text: string): string {
+  return text.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+}
+
+function fenced(code: string, language: string): string {
+  const longestRun = Math.max(0, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return `${fence}${language}\n${code}\n${fence}`;
+}
+
 function normalizeUserContent(
   message: Record<string, unknown> & { content: unknown },
   uuid: string,
@@ -359,10 +417,15 @@ function normalizeUserContent(
 ): NativeEvent[] {
   const content = message.content;
   if (!Array.isArray(content)) {
+    const tagged = taggedUserText(typeof content === 'string' ? content : '');
+    const notice = tagged.notice
+      ? [event(`${uuid}:notice`, nativeType, observedAt, { kind: 'system-notice', turnId, message: tagged.notice.message, tone: tagged.notice.tone })]
+      : [];
+    if (tagged.text === undefined) return notice;
     return [event(uuid, nativeType, observedAt, {
-      kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: typeof content === 'string' ? content : '',
+      kind: 'turn-started', turnId, userMessageId: stringValue(message.id) ?? uuid, text: tagged.text,
       ...(Number.isFinite(observedAt) ? { createdAt: observedAt } : {}),
-    })];
+    }), ...notice];
   }
 
   const text: string[] = [];

@@ -27,11 +27,15 @@ function answerStart(blocks: TurnBlock[]): number {
  * Without that mark (a running or interrupted turn, or a provider that doesn't report it)
  * nothing is split, since there's no recorded answer to separate the work from.
  */
-export function splitTurnWork(turn: ConversationTurnData): { work: TurnBlock[]; answer: TurnBlock[] } {
+export function splitTurnWork(turn: ConversationTurnData): { lead: TurnBlock[]; work: TurnBlock[]; answer: TurnBlock[] } {
+  // Notices that open a turn say what started it (a background task finishing, a slash command's
+  // output), so they stay visible rather than folding into the work.
+  let leadEnd = 0;
+  while (turn.blocks[leadEnd]?.kind === 'system-notice') leadEnd += 1;
   const start = turn.status === 'active' ? -1 : answerStart(turn.blocks);
-  return start > 0
-    ? { work: turn.blocks.slice(0, start), answer: turn.blocks.slice(start) }
-    : { work: [], answer: turn.blocks };
+  return start > leadEnd
+    ? { lead: turn.blocks.slice(0, leadEnd), work: turn.blocks.slice(leadEnd, start), answer: turn.blocks.slice(start) }
+    : { lead: [], work: [], answer: turn.blocks };
 }
 
 // A URL, path, or hash with no spaces would otherwise keep its full width and push the transcript sideways.
@@ -86,7 +90,8 @@ function CopyResponse({ text }: { text: string }) {
 }
 
 export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
-  const { work, answer } = splitTurnWork(turn);
+  const { lead, work, answer } = splitTurnWork(turn);
+  const { images, attachments, text } = turn.userMessage;
   // The recorded answer's markdown source, even while the turn still reads as active (a transcript
   // never records a turn ending); without an answer, a finished turn copies all of its prose.
   const start = answerStart(turn.blocks);
@@ -94,12 +99,15 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
   const responseText = copied.flatMap((block) => block.kind === 'assistant-prose' ? [block.text] : []).join('\n\n');
   return (
     <article aria-label="Conversation turn" className="space-y-4">
-      <Message from="user">
-        {turn.userMessage.images && <ConversationImages className="justify-end" images={turn.userMessage.images} />}
-        {turn.userMessage.attachments && <MessageAttachments attachments={turn.userMessage.attachments} sentAt={turn.userMessage.createdAt} />}
-        {turn.userMessage.text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{turn.userMessage.text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
-      </Message>
+      {(images || attachments || text) && (
+        <Message from="user">
+          {images && <ConversationImages className="justify-end" images={images} />}
+          {attachments && <MessageAttachments attachments={attachments} sentAt={turn.userMessage.createdAt} />}
+          {text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
+        </Message>
+      )}
       <div className="space-y-4" aria-label="Agent response">
+        {lead.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
         {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {responseText && <CopyResponse text={responseText} />}

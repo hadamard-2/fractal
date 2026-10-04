@@ -295,6 +295,39 @@ describe('normalizeClaudeRecord', () => {
     expect(reply).toMatchObject([{ payload: { kind: 'assistant-text', turnId: 'u1' } }]);
   });
 
+  test('shows a command run from the app as fenced code with its unescaped output', () => {
+    const content = '<bash-input>git push && echo "done"</bash-input><bash-stdout>main -&gt; main\nuses ``` fences\n</bash-stdout><bash-stderr></bash-stderr>';
+    const events = normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content } }, 0, createClaudeNormalizationContext());
+    expect(events).toMatchObject([{ payload: { kind: 'turn-started', turnId: 'u1', text: '```bash\ngit push && echo "done"\n```\n\n````text\nmain -> main\nuses ``` fences\n````' } }]);
+  });
+
+  test('shows a slash command as its own turn and its output as a notice in that turn', () => {
+    const context = createClaudeNormalizationContext();
+    const command = normalizeClaudeRecord({ type: 'user', uuid: 'c1', message: { role: 'user', content: '<command-name>/model</command-name>\n  <command-message>model</command-message>\n  <command-args>claude-sonnet-5</command-args>' } }, 0, context);
+    const output = normalizeClaudeRecord({ type: 'user', uuid: 'o1', parentUuid: 'c1', message: { role: 'user', content: '<local-command-stdout>Set model to claude-sonnet-5</local-command-stdout>' } }, 1, context);
+    const empty = normalizeClaudeRecord({ type: 'user', uuid: 'o2', parentUuid: 'o1', message: { role: 'user', content: '<local-command-stdout></local-command-stdout>' } }, 2, context);
+    expect(command).toMatchObject([{ payload: { kind: 'turn-started', turnId: 'c1', text: '`/model claude-sonnet-5`' } }]);
+    expect(output).toMatchObject([{ nativeId: 'o1:notice', payload: { kind: 'system-notice', turnId: 'c1', message: 'Set model to claude-sonnet-5', tone: 'info' } }]);
+    expect(empty).toEqual([]);
+  });
+
+  test('opens a turn with no user message for a background task notification', () => {
+    const content = '<task-notification>\n<task-id>b1</task-id>\n<status>failed</status>\n<summary>Background command "Clone &amp; build" failed with exit code 2</summary>\n</task-notification>';
+    const events = normalizeClaudeRecord({ type: 'user', uuid: 'n1', parentUuid: 'r0', message: { role: 'user', content } }, 0, createClaudeNormalizationContext());
+    expect(events).toMatchObject([
+      { payload: { kind: 'turn-started', turnId: 'n1', text: '' } },
+      { nativeId: 'n1:notice', payload: { kind: 'system-notice', turnId: 'n1', message: 'Background command "Clone & build" failed with exit code 2', tone: 'error' } },
+    ]);
+  });
+
+  test('drops app context put ahead of a prompt and shortens the Create PR instructions', () => {
+    const context = createClaudeNormalizationContext();
+    const reminded = normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: '<system-reminder>\nScratch workspace.\n</system-reminder>\n\ncommit the plan' } }, 0, context);
+    const pr = normalizeClaudeRecord({ type: 'user', uuid: 'u2', message: { role: 'user', content: '<create-pr-command>\n## Steps\n\nRepository: o/r\nBranch: feat/x\nBase branch: main\n</create-pr-command>' } }, 1, context);
+    expect(reminded).toMatchObject([{ payload: { kind: 'turn-started', text: 'commit the plan' } }]);
+    expect(pr).toMatchObject([{ payload: { kind: 'turn-started', text: 'Create PR: `feat/x` into `main`' } }]);
+  });
+
   test('carries inline images on the user message and on the tool result', () => {
     const context = createClaudeNormalizationContext();
     const image = (data: string, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
