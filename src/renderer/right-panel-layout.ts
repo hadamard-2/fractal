@@ -1,22 +1,20 @@
-import { MODE_TOGGLE_WIDTH } from '@/components/mode-toggle';
-
 export const PANEL_MIN_WIDTH = 320;
 export const PANEL_MAX_WIDTH = 720;
 export const CONTENT_MIN_WIDTH = 420;
 
 /*
-  Where the mode toggle's right edge sits while the panel is closed, measured
-  from the window controls' left edge (the window's right edge when there are
-  none). App's corner strip lays out [mode toggle][4px gap][28px panel toggle]
-  with a 16px inset from the controls. Change those and this together.
+  The mode toggle floats just below the app bar, in the content area's
+  top-right corner, this far in from the content's right edge — clear of the
+  transcript's 10px scrollbar. Closed, that edge is the window's; open, it is
+  the panel's outer edge, so the toggle moves left by the panel's width.
 */
-export const CLOSED_MODE_TOGGLE_RIGHT = 16 + 28 + 4;
+export const MODE_TOGGLE_INSET = 12;
 
-// The OS window controls' reach in from the window's right edge. Only CSS can
-// read the overlay's geometry, so whatever depends on it is a CSS length.
-const WINDOW_CONTROLS = 'var(--window-controls-inset)';
+// The panel toggle's reach in from the window controls: App's 16px gap
+// before them, plus its own 28px.
+const PANEL_TOGGLE_RIGHT = 16 + 28;
 
-// Space kept between the mode toggle and a title that ellipsizes before it.
+// Space kept between the panel toggle and a title that ellipsizes before it.
 const TITLE_CLEARANCE = 8;
 
 export const clampPanelWidth = (value: number): number =>
@@ -30,8 +28,8 @@ export type PanelLayout = {
   split: boolean;
   // The widest a resize may go without breaking the split.
   maxWidth: number;
-  // How much of the content's header, from its right edge, the toggles cover,
-  // as a CSS length.
+  // How much of the app bar's header, from its right edge, the panel toggle
+  // and the window controls cover, as a CSS length.
   headerReserve: string;
 };
 
@@ -44,23 +42,16 @@ export function panelLayout({ open, width, containerWidth, leftInset }: {
   const available = containerWidth - leftInset;
   const split = open && available >= width + CONTENT_MIN_WIDTH;
   const maxWidth = split ? clampPanelWidth(available - CONTENT_MIN_WIDTH) : PANEL_MAX_WIDTH;
-  // Open, the toggle's right edge meets the panel's outer edge; closed, it
-  // sits beside the panel toggle, left of the window controls. The content's
-  // own right edge is the panel's edge only when split — in overlay the
-  // content runs under the panel.
-  const contentRight = split ? width : 0;
-  const reserve = MODE_TOGGLE_WIDTH + TITLE_CLEARANCE - contentRight;
-  return {
-    split,
-    maxWidth,
-    headerReserve: open ? `${width + reserve}px` : `calc(${WINDOW_CONTROLS} + ${CLOSED_MODE_TOGGLE_RIGHT + reserve}px)`,
-  };
+  // Split, the header ends at the panel's edge, short of the panel toggle and
+  // the window controls above the panel. Otherwise it runs under both.
+  const headerReserve = split ? '1rem' : `calc(var(--window-controls-inset) + ${PANEL_TOGGLE_RIGHT + TITLE_CLEARANCE}px)`;
+  return { split, maxWidth, headerReserve };
 }
 
-// The mode toggle's translation from its closed position, as a CSS length:
-// leftward to the panel's edge while open, so negative.
-export const modeToggleShift = (open: boolean, width: number): string =>
-  open ? `calc(${WINDOW_CONTROLS} - ${width - CLOSED_MODE_TOGGLE_RIGHT}px)` : '0px';
+// How far left of its closed position the mode toggle moves: to the panel's
+// edge while open.
+export const modeToggleShift = (open: boolean, width: number): number =>
+  open ? width : 0;
 
 /** From this panel width a Files tab's tree sits beside the viewer; narrower, it opens over it. A starting value, tuned by feel. */
 export const FILES_TREE_DOCK_MIN_WIDTH = 560;

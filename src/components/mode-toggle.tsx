@@ -21,11 +21,9 @@ const MODES = [
 /** The modes in the toggle's left-to-right order, which Mod+1–3 follow. */
 export const MODE_ORDER: readonly Mode[] = MODES.map((mode) => mode.value);
 
-const ITEM_WIDTH = 28;
-const GAP_WITHIN_GROUP = 2;
-const GAP_BETWEEN_GROUPS = 10;
-// The group's `p-0.5` around the items.
-const GROUP_PADDING = 2;
+const ITEM_WIDTH = 34;
+const GAP_WITHIN_GROUP = 4;
+const GAP_BETWEEN_GROUPS = 14;
 
 // The gap after each item -- tight within a group, wider between groups --
 // determines both the margin on that item and how far the pill has to slide
@@ -42,11 +40,6 @@ const itemOffsets = MODES.reduce<number[]>((offsets, _, i) => {
   offsets.push(previous + step);
   return offsets;
 }, []);
-
-// The toggle's rendered width: the last item's offset plus its own width,
-// plus the group's padding on both sides. The right panel reads it to keep
-// header titles clear of the toggle.
-export const MODE_TOGGLE_WIDTH = itemOffsets[itemOffsets.length - 1] + ITEM_WIDTH + 2 * GROUP_PADDING;
 
 // A divider renders in the middle of any gap that separates two different
 // groups (not the tight gap within one), so it only ever marks a real
@@ -74,7 +67,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       onValueChange={(next) => next && onValueChange(next as Mode)}
       aria-label="Mode"
       size="sm"
-      className="relative w-fit gap-0 rounded-md bg-secondary p-0.5"
+      className="relative w-fit gap-0 rounded-lg bg-secondary p-1"
     >
       {/*
         The white pill is one element that slides, rather than a background on
@@ -84,7 +77,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       */}
       <span
         aria-hidden
-        className="absolute inset-y-0.5 left-0.5 h-6 w-7 rounded-sm bg-white shadow-sm transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
+        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
         style={{ transform: `translateX(${itemOffsets[activeIndex]}px)` }}
       />
 
@@ -92,8 +85,8 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
         <span
           key={center}
           aria-hidden
-          className="absolute inset-y-1.5 w-px bg-border"
-          style={{ left: `${GROUP_PADDING + center}px` }}
+          className="absolute inset-y-2 w-px bg-border"
+          style={{ left: `calc(0.25rem + ${center}px)` }}
         />
       ))}
 
@@ -105,9 +98,9 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
           value={mode}
           aria-label={label}
           style={{ marginRight: trailingGaps[i] }}
-          className="relative z-10 h-6 w-7 min-w-0 shrink-0 rounded-sm! bg-transparent! px-0! text-muted-foreground transition-colors hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900"
+          className="relative z-10 h-8 w-[34px] shrink-0 rounded-md! bg-transparent! px-0! text-muted-foreground transition-colors hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900"
         >
-          <Icon className="size-3.5" />
+          <Icon />
         </ToggleGroupItem>
       ))}
     </ToggleGroup>

@@ -1,10 +1,5 @@
 import { expect, test } from 'vitest';
-import { MODE_TOGGLE_WIDTH } from '@/components/mode-toggle';
-import { CLOSED_MODE_TOGGLE_RIGHT, FILES_TREE_DOCK_MIN_WIDTH, defaultPanelWidth, filesTreeDocked, modeToggleShift, panelLayout } from './right-panel-layout';
-
-test('the mode toggle is as wide as its items, their gaps, and its padding', () => {
-  expect(MODE_TOGGLE_WIDTH).toBe(100);
-});
+import { FILES_TREE_DOCK_MIN_WIDTH, defaultPanelWidth, filesTreeDocked, modeToggleShift, panelLayout } from './right-panel-layout';
 
 test('defaults to 40% of the space right of the left sidebar, clamped', () => {
   expect(defaultPanelWidth(1400, 300)).toBe(440);
@@ -23,16 +18,19 @@ test('caps resizing at what leaves the content its minimum while split', () => {
   expect(panelLayout({ open: true, width: 400, containerWidth: 1000, leftInset: 300 }).maxWidth).toBe(720);
 });
 
-test('reserves header space for whichever toggles sit in the header row', () => {
-  // Closed, the toggles sit left of the window controls, whose width only CSS knows.
-  expect(panelLayout({ open: false, width: 400, containerWidth: 1600, leftInset: 0 }).headerReserve).toBe(`calc(var(--window-controls-inset) + ${CLOSED_MODE_TOGGLE_RIGHT + 100 + 8}px)`);
-  expect(panelLayout({ open: true, width: 400, containerWidth: 1600, leftInset: 0 }).headerReserve).toBe('108px');
-  expect(panelLayout({ open: true, width: 400, containerWidth: 700, leftInset: 0 }).headerReserve).toBe('508px');
+test('reserves header space for the panel toggle and window controls the header runs under', () => {
+  // Those controls' width only CSS knows.
+  const underControls = 'calc(var(--window-controls-inset) + 52px)';
+  expect(panelLayout({ open: false, width: 400, containerWidth: 1600, leftInset: 0 }).headerReserve).toBe(underControls);
+  // Split, the header ends at the panel's edge, short of both.
+  expect(panelLayout({ open: true, width: 400, containerWidth: 1600, leftInset: 0 }).headerReserve).toBe('1rem');
+  // Overlaid, the panel covers the content and the header runs on under the controls.
+  expect(panelLayout({ open: true, width: 400, containerWidth: 700, leftInset: 0 }).headerReserve).toBe(underControls);
 });
 
 test('moves the mode toggle to the panel edge only while open', () => {
-  expect(modeToggleShift(false, 400)).toBe('0px');
-  expect(modeToggleShift(true, 400)).toBe('calc(var(--window-controls-inset) - 352px)');
+  expect(modeToggleShift(false, 400)).toBe(0);
+  expect(modeToggleShift(true, 400)).toBe(400);
 });
 
 test('docks the file tree beside the viewer only in a wide enough panel', () => {

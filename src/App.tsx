@@ -10,7 +10,7 @@ import { RightWorkspace } from '@/components/right-workspace';
 import { SettingsDialog } from '@/components/settings-dialog';
 import { TitleBar } from '@/components/title-bar';
 import { Button } from '@/components/ui/button';
-import { modeToggleShift } from '@/renderer/right-panel-layout';
+import { MODE_TOGGLE_INSET, modeToggleShift } from '@/renderer/right-panel-layout';
 import { isAppShortcut } from '@/renderer/shortcuts';
 
 export default function App() {
@@ -79,42 +79,20 @@ export default function App() {
       <TitleBar />
 
       {/*
-        The corner strip: the mode toggle, then the right-panel toggle at the
-        band's right end, just left of the OS window controls. Rendered once,
-        outside the mode branch, and never moved in the tree — the toggle's
-        sliding pill animates a transform and needs to survive a mode change
-        to have something to animate from.
-
-        The strip spans the app bar, the band across the top of the window,
-        so both toggles sit on the breadcrumb's line. It ignores pointer
-        events so it doesn't swallow clicks across the full width; only the
-        controls take them back, and opt out of the window's drag region.
-
-        The 16px inset from the window controls (room enough that reaching for
-        the panel toggle doesn't land on them), the 4px `gap-1`, and the 28px
-        panel toggle are what CLOSED_MODE_TOGGLE_RIGHT in right-panel-layout.ts
-        adds up; change them together.
-
-        While the panel is open, the mode toggle is translated left to sit just
-        outside the panel's edge. A transform rather than a layout move, so it
-        never remounts; index.css animates it on the panel's curve.
+        The right-panel toggle, at the app bar's right end. The 16px gap before
+        the OS window controls leaves room enough that reaching for the toggle
+        doesn't land on them; PANEL_TOGGLE_RIGHT in right-panel-layout.ts adds
+        it up with the toggle's width, so change them together. The strip
+        ignores pointer events so it doesn't swallow clicks across the bar;
+        the toggle takes them back and opts out of the window's drag region.
       */}
       <div
-        className="pointer-events-none fixed inset-x-0 top-0 z-50 flex items-center justify-end gap-1"
+        className="pointer-events-none fixed inset-x-0 top-0 z-40 flex items-center justify-end"
         style={{
           height: 'var(--app-bar-height)',
           paddingRight: 'calc(var(--window-controls-inset) + 16px)',
         }}
       >
-        {/* Hidden rather than unmounted, so the pill keeps its position to animate from. */}
-        <div
-          aria-hidden={onHomeScreen || undefined}
-          className={onHomeScreen ? 'invisible' : 'pointer-events-auto app-region-no-drag'}
-          data-slot="mode-toggle-shift"
-          style={{ transform: `translateX(${modeToggleShift(rightOpen, rightWidth ?? 0)})` }}
-        >
-          <ModeToggle value={mode} onValueChange={setMode} />
-        </div>
         <Button
           aria-expanded={rightOpen}
           aria-label={rightOpen ? 'Close right panel' : 'Open right panel'}
@@ -125,6 +103,35 @@ export default function App() {
         >
           <PanelRight aria-hidden className="size-4" />
         </Button>
+      </div>
+
+      {/*
+        The mode toggle floats below the app bar, in the content area's
+        top-right corner. Rendered once, outside the mode branch, and never
+        moved in the tree — its sliding pill animates a transform and needs to
+        survive a mode change to have something to animate from.
+
+        It sits MODE_TOGGLE_INSET in from the content's right edge, and 13px
+        below the bar, which centres its 40px on the line the sidebar's header
+        and the right panel's tab row share (33px below the bar).
+
+        While the panel is open, the toggle is translated left by the panel's
+        width so it stays at the content's corner, beside the panel's edge. A
+        transform rather than a layout move, so it never remounts; index.css
+        animates it on the panel's curve. Hidden rather than unmounted on the
+        home screen, so the pill keeps its position to animate from.
+      */}
+      <div
+        aria-hidden={onHomeScreen || undefined}
+        className={`fixed z-40 ${onHomeScreen ? 'invisible' : ''}`}
+        data-slot="mode-toggle-shift"
+        style={{
+          top: 'calc(var(--app-bar-height) + 13px)',
+          right: MODE_TOGGLE_INSET,
+          transform: `translateX(${-modeToggleShift(rightOpen, rightWidth ?? 0)}px)`,
+        }}
+      >
+        <ModeToggle value={mode} onValueChange={setMode} />
       </div>
 
       {/*
