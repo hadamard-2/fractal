@@ -107,60 +107,6 @@ const bindWindowShortcuts = (window: BrowserWindow) => {
   });
 };
 
-/**
- * Collapses the layout's title-bar offset while the window is fullscreen.
- *
- * The window is frameless with a `titleBarOverlay`, and the renderer reserves
- * `--titlebar-height` for it. Measured in the running app: fullscreen does not
- * zero `env(titlebar-area-height)` — it makes the variable *unavailable*, so
- * the `2.25rem` fallback in index.css takes over and the app keeps reserving a
- * 36px strip for chrome that is no longer drawn. That empty bar is ours, not
- * the OS's, so it is ours to collapse.
- *
- * `!important` is load-bearing, also measured: stylesheets inserted this way
- * lose to the document's own at equal specificity, so a plain `:root` rule here
- * is silently overridden by the `:root` in index.css and does nothing.
- *
- * A media query would be tidier, but Electron reports `display-mode: browser`
- * in both states, so there is nothing for CSS alone to key off. Injecting from
- * the main process keeps this out of the preload contract: no new IPC surface,
- * no renderer code.
- */
-const bindFullScreenChrome = (window: BrowserWindow) => {
-  const FULLSCREEN_CSS = ':root { --titlebar-height: 0px !important; }';
-  let appliedKey: string | null = null;
-
-  // Serialised: enter/leave can arrive faster than insertCSS resolves, and
-  // interleaving them would strand a key and leave the offset stuck.
-  let queue = Promise.resolve();
-
-  const sync = (fullScreen: boolean) => {
-    queue = queue
-      .then(async () => {
-        if (window.isDestroyed()) return;
-        if (fullScreen && !appliedKey) {
-          appliedKey = await window.webContents.insertCSS(FULLSCREEN_CSS);
-        } else if (!fullScreen && appliedKey) {
-          await window.webContents.removeInsertedCSS(appliedKey);
-          appliedKey = null;
-        }
-      })
-      .catch(() => {
-        // The window went away mid-flight; nothing left to style.
-      });
-  };
-
-  window.on('enter-full-screen', () => sync(true));
-  window.on('leave-full-screen', () => sync(false));
-
-  // Inserted CSS belongs to the loaded document, so a reload — Vite's, or a
-  // manual one — drops it. The old key dies with the old document.
-  window.webContents.on('did-finish-load', () => {
-    appliedKey = null;
-    sync(window.isFullScreen());
-  });
-};
-
 let mainWindowRef: BrowserWindow | null = null;
 let conversationService: ConversationService | undefined;
 let codexServer: CodexAppServer | undefined;
@@ -196,11 +142,13 @@ const createWindow = () => {
     icon: iconPath,
     // Hide the native title bar but keep the real window controls as an overlay;
     // the renderer draws the bar itself and inset via the titlebar-area-* env vars.
+    // `height` is the app bar's height too, and index.css falls back to it in
+    // fullscreen, where the overlay's env vars go away.
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: TITLE_BAR_BACKGROUND,
       symbolColor: TITLE_BAR_SYMBOL,
-      height: 36,
+      height: 48,
     },
     backgroundColor: TITLE_BAR_BACKGROUND,
     webPreferences: {
@@ -213,7 +161,6 @@ const createWindow = () => {
   mainWindowRef = mainWindow;
 
   bindWindowShortcuts(mainWindow);
-  bindFullScreenChrome(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindowRef = null;

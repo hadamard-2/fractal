@@ -79,48 +79,46 @@ export default function App() {
       <TitleBar />
 
       {/*
-        The corner strip: the mode toggle, then the right-panel toggle in the
-        far-right corner. Rendered once, outside the mode branch, and never
-        moved in the tree — the toggle's sliding pill animates a transform and
-        needs to survive a mode change to have something to animate from.
+        The corner strip: the mode toggle, then the right-panel toggle at the
+        band's right end, just left of the OS window controls. Rendered once,
+        outside the mode branch, and never moved in the tree — the toggle's
+        sliding pill animates a transform and needs to survive a mode change
+        to have something to animate from.
 
-        The strip matches execute's header row: same height, same
-        `items-center`, riding the same offset below the title bar, so both
-        toggles sit on that row's baseline. It ignores pointer events so it
-        doesn't swallow clicks across the full width; only the controls take
-        them back.
+        The strip spans the app bar, the band across the top of the window,
+        so both toggles sit on the breadcrumb's line. It ignores pointer
+        events so it doesn't swallow clicks across the full width; only the
+        controls take them back, and opt out of the window's drag region.
 
-        The corner inset is (--app-bar-height − 2rem) / 2, the 2rem being the
-        panel toggle's own size, so that toggle is as far from the window edge
-        as from the band's top and bottom. That inset, the 4px `gap-1`, and
-        the 32px toggle are what CLOSED_MODE_TOGGLE_RIGHT in
-        right-panel-layout.ts adds up; change them together.
+        The 16px inset from the window controls (room enough that reaching for
+        the panel toggle doesn't land on them), the 4px `gap-1`, and the 28px
+        panel toggle are what CLOSED_MODE_TOGGLE_RIGHT in right-panel-layout.ts
+        adds up; change them together.
 
         While the panel is open, the mode toggle is translated left to sit just
         outside the panel's edge. A transform rather than a layout move, so it
         never remounts; index.css animates it on the panel's curve.
       */}
       <div
-        className="pointer-events-none fixed inset-x-0 z-50 flex items-center justify-end gap-1"
+        className="pointer-events-none fixed inset-x-0 top-0 z-50 flex items-center justify-end gap-1"
         style={{
-          top: 'calc(var(--titlebar-height) + var(--app-bar-offset))',
           height: 'var(--app-bar-height)',
-          paddingRight: 'calc((var(--app-bar-height) - 2rem) / 2)',
+          paddingRight: 'calc(var(--window-controls-inset) + 16px)',
         }}
       >
         {/* Hidden rather than unmounted, so the pill keeps its position to animate from. */}
         <div
           aria-hidden={onHomeScreen || undefined}
-          className={onHomeScreen ? 'invisible' : 'pointer-events-auto'}
+          className={onHomeScreen ? 'invisible' : 'pointer-events-auto app-region-no-drag'}
           data-slot="mode-toggle-shift"
-          style={{ transform: `translateX(${-modeToggleShift(rightOpen, rightWidth ?? 0)}px)` }}
+          style={{ transform: `translateX(${modeToggleShift(rightOpen, rightWidth ?? 0)})` }}
         >
           <ModeToggle value={mode} onValueChange={setMode} />
         </div>
         <Button
           aria-expanded={rightOpen}
           aria-label={rightOpen ? 'Close right panel' : 'Open right panel'}
-          className="pointer-events-auto size-8"
+          className="pointer-events-auto size-7 app-region-no-drag"
           onClick={() => setRightOpen((open) => !open)}
           size="icon"
           variant="ghost"
@@ -131,12 +129,11 @@ export default function App() {
 
       {/*
         One shell frames every mode. Execute stays mounted (hidden) outside
-        its own mode so a running session survives a mode switch.
+        its own mode so a running session survives a mode switch. It runs to
+        the top of the window: the content's header is the app bar, and the
+        sidebar and right panel each hang themselves below it.
       */}
-      <div
-        className="flex h-full flex-col"
-        style={{ paddingTop: 'var(--titlebar-height)' }}
-      >
+      <div className="flex h-full flex-col">
         <RightWorkspace
           leftInsetRef={shellInsetRef}
           onOpenChange={setRightOpen}

@@ -243,15 +243,15 @@ export function DashboardSidebar({
       <SidebarHeader
         className={cn(
           'flex md:pt-3.5',
-          // Collapsed rail: centre the logo on the app bar's trigger row.
-          // The 19px subtracts the floating rail's 8px inset, 1px border,
-          // and half of the logo's 20px height.
+          // Collapsed rail: keep the logo where the expanded header puts it —
+          // that header's 14px top padding plus half its 36px row, less half
+          // the logo's 20px height.
           //
           // Expanded: the header's own p-2 gives 8px, but the nav icons below
           // sit at 16px (SidebarContent px-2 + button px-2), so bump the
           // header to pl-4 to line the logo mark up with them.
           isCollapsed
-            ? 'flex-row items-center justify-center gap-y-6 md:flex-col md:pt-[calc(var(--app-bar-offset)+var(--app-bar-height)/2-19px)]'
+            ? 'flex-row items-center justify-center gap-y-6 md:flex-col md:pt-[22px]'
             : 'flex-row items-center justify-between pl-4'
         )}
       >

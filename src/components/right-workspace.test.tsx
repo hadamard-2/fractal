@@ -102,11 +102,11 @@ test('splits beside content right of the left inset and reserves header space', 
   render(<Harness withInset />);
   const content = screen.getByText('Content').parentElement as HTMLElement;
   const gap = document.querySelector('[data-slot="right-panel-gap"]') as HTMLElement;
-  expect(content.style.getPropertyValue('--app-bar-reserve')).toBe('184px');
+  expect(content.style.getPropertyValue('--app-bar-reserve')).toBe('calc(var(--window-controls-inset) + 156px)');
   await user.click(screen.getByRole('button', { name: 'Open panel' }));
   expect(panel().style.width).toBe('520px');
   expect(gap.style.width).toBe('520px');
-  expect(content.style.getPropertyValue('--app-bar-reserve')).toBe('136px');
+  expect(content.style.getPropertyValue('--app-bar-reserve')).toBe('108px');
 });
 
 test('Ctrl+` opens and creates, focuses from elsewhere, and closes from inside a terminal', async () => {

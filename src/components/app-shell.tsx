@@ -44,14 +44,15 @@ export type ShellContext = {
  * lives here because it is shared across modes; the modes themselves are
  * `children`, given the selection and loaded history.
  *
- * The sidebar sits *below* the title bar rather than running to the top edge.
- * That needs an override: `Sidebar`'s desktop container is `position: fixed`
- * with `inset-y-0 h-svh`, so it escapes the padding App applies to make room
- * for the title bar and would otherwise slide underneath it. Re-anchoring the
- * top and shortening the height by the same amount puts it back in the flow
- * visually. These go through `style` rather than `className` on purpose: a
- * `top-*` class would not displace the container's own `inset-y-0`, leaving two
- * equal-specificity `top` rules whose winner depends on stylesheet order.
+ * The header row is the app bar: it runs along the top of the window, in the
+ * band the OS window controls share, and the sidebar sits *below* it rather
+ * than running to the top edge. That needs an override: `Sidebar`'s desktop
+ * container is `position: fixed` with `inset-y-0 h-svh`, so it would otherwise
+ * slide up under the band. Re-anchoring the top and shortening the height by
+ * the same amount hangs it below the band. These go through `style` rather
+ * than `className` on purpose: a `top-*` class would not displace the
+ * container's own `inset-y-0`, leaving two equal-specificity `top` rules whose
+ * winner depends on stylesheet order.
  */
 export function AppShell({
   sidebarOpen,
@@ -169,7 +170,7 @@ export function AppShell({
 
   return (
     <SidebarProvider
-      className="h-full min-h-0 overflow-hidden"
+      className="h-full min-h-0 flex-col overflow-hidden"
       data-sidebar-resizing={resizing || undefined}
       open={sidebarOpen}
       onOpenChange={onSidebarOpenChange}
@@ -179,97 +180,109 @@ export function AppShell({
         } as CSSProperties
       }
     >
-      <DashboardSidebar
-        onCollapse={() => onSidebarOpenChange?.(false)}
-        onConversationCreated={selectCreated}
-        onNewProject={actions.addProject}
-        onOpenSettings={onOpenSettings}
-        onRemoveProject={removeProject}
-        onConversationRenamed={history.refresh}
-        refreshSignal={historyRefreshes}
-        onSearchOpenChange={setSearchOpen}
-        projectVisibility={projectVisibility}
-        showAgentColorTags={showAgentColorTags}
-        onResizingChange={setResizing}
-        onWidthChange={onSidebarWidthChange}
-        onItemSelect={(item) => {
-          setSelectedRef((previous) =>
-            previous && conversationKey(previous) === conversationKey(item.ref)
-              ? previous
-              : item.ref
-          );
-          setSelectedItem(item);
-        }}
-        searchOpen={searchOpen}
-        selected={selectedRef}
+      {/*
+        The app bar's share of the window's top band, running from the far
+        left over the sidebar and the content alike, so nothing in it moves
+        when the sidebar opens, closes, or resizes. The title bar strip behind
+        it makes the band draggable, so the controls here opt out of the drag
+        region. App's corner strip floats the mode and panel toggles over this
+        row's right-hand side; `--app-bar-reserve`, set by the right panel, is
+        how much of that side they cover, and the title ellipsizes before it.
+        index.css animates the padding on the toggles' curve so the two never
+        meet mid-slide.
+
+        The left padding centres the trigger 33px in, on the sidebar's icon
+        column: the floating sidebar's 8px inset and 1px border, 16px to its
+        icons, and half a 16px icon. The collapsed rail centres its icons
+        there too. Window controls on the left (macOS) push it right instead.
+      */}
+      <header
+        className="relative z-10 flex shrink-0 items-center gap-2"
+        data-slot="app-bar-reserve"
         style={{
-          top: 'var(--titlebar-height)',
-          height: 'calc(100svh - var(--titlebar-height))',
+          height: 'var(--app-bar-height)',
+          paddingLeft: 'max(19px, calc(var(--window-controls-left) + 8px))',
+          paddingRight: 'var(--app-bar-reserve, 1rem)',
         }}
-        width={sidebarWidth}
-      />
-      <SidebarInset className="min-h-0 overflow-hidden" ref={insetRef}>
+      >
         {/*
-          The row's height comes from `--app-bar-height`, the same token App's
-          corner strip uses, so the mode and panel toggles float over this
-          row's right-hand side already on its baseline. `--app-bar-reserve`,
-          set by the right panel, is how much of that side they cover; the
-          title ellipsizes before it. index.css animates the padding on the
-          toggles' curve so the two never meet mid-slide.
+          The picked chat as a breadcrumb: its project as the muted
+          ancestor, the chat itself as the current page. Projects are pure
+          folders (never selectable), so a selection always arrives with a
+          section — but standalone leaves without one render fine too,
+          just pageless of an ancestor. The sidebar trigger belongs to this
+          navigation context, so it appears with the breadcrumb rather than
+          alone in an otherwise empty app bar.
         */}
-        <header
-          // The `after:` strip hangs below the bar and fades whatever scrolls
-          // up beneath it into the bar's background instead of cutting it off.
-          className="relative z-10 flex shrink-0 items-center gap-2 pl-4 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-linear-to-b after:from-background after:to-transparent"
-          data-slot="app-bar-reserve"
-          style={{
-            height: 'var(--app-bar-height)',
-            marginTop: 'var(--app-bar-offset)',
-            paddingRight: 'var(--app-bar-reserve, 1rem)',
-          }}
-        >
-          {/*
-            The picked chat as a breadcrumb: its project as the muted
-            ancestor, the chat itself as the current page. Projects are pure
-            folders (never selectable), so a selection always arrives with a
-            section — but standalone leaves without one render fine too,
-            just pageless of an ancestor. The sidebar trigger belongs to this
-            navigation context, so it appears with the breadcrumb rather than
-            alone in an otherwise empty app bar.
-          */}
-          <SidebarTrigger className="-ml-1" />
-          {selectedItem && (
-            <>
-              <Separator
-                orientation="vertical"
-                className="mr-2 data-[orientation=vertical]:h-4"
-              />
-              <Breadcrumb className="min-w-0">
-                <BreadcrumbList className="min-w-0 flex-nowrap">
-                  {selectedItem.section && (
-                    <>
-                      <BreadcrumbItem className="shrink-0 whitespace-nowrap">{selectedItem.section}</BreadcrumbItem>
-                      <BreadcrumbSeparator />
-                    </>
+        <SidebarTrigger className="app-region-no-drag" />
+        {selectedItem && (
+          <>
+            <Separator
+              orientation="vertical"
+              className="mr-2 data-[orientation=vertical]:h-4"
+            />
+            <Breadcrumb className="min-w-0">
+              <BreadcrumbList className="min-w-0 flex-nowrap">
+                {selectedItem.section && (
+                  <>
+                    <BreadcrumbItem className="shrink-0 whitespace-nowrap">{selectedItem.section}</BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                  </>
+                )}
+                <BreadcrumbItem className="min-w-0">
+                  <BreadcrumbPage className="min-w-0 truncate font-medium">
+                    {currentSummary?.title ?? selectedItem.title}
+                  </BreadcrumbPage>
+                  {selectedRuntime && (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      ({providerName(selectedItem.ref.provider)} · {runtimeLabel(selectedRuntime)})
+                    </span>
                   )}
-                  <BreadcrumbItem className="min-w-0">
-                    <BreadcrumbPage className="min-w-0 truncate font-medium">
-                      {currentSummary?.title ?? selectedItem.title}
-                    </BreadcrumbPage>
-                    {selectedRuntime && (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        ({providerName(selectedItem.ref.provider)} · {runtimeLabel(selectedRuntime)})
-                      </span>
-                    )}
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </>
-          )}
-          {starter.status && <span className="ml-auto shrink-0 text-xs text-muted-foreground" role="status">{starter.status}</span>}
-        </header>
-        {children({ selectedRef, history, actions })}
-      </SidebarInset>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </>
+        )}
+        {starter.status && <span className="ml-auto shrink-0 text-xs text-muted-foreground" role="status">{starter.status}</span>}
+      </header>
+      <div className="flex min-h-0 flex-1">
+        <DashboardSidebar
+          onCollapse={() => onSidebarOpenChange?.(false)}
+          onConversationCreated={selectCreated}
+          onNewProject={actions.addProject}
+          onOpenSettings={onOpenSettings}
+          onRemoveProject={removeProject}
+          onConversationRenamed={history.refresh}
+          refreshSignal={historyRefreshes}
+          onSearchOpenChange={setSearchOpen}
+          projectVisibility={projectVisibility}
+          showAgentColorTags={showAgentColorTags}
+          onResizingChange={setResizing}
+          onWidthChange={onSidebarWidthChange}
+          onItemSelect={(item) => {
+            setSelectedRef((previous) =>
+              previous && conversationKey(previous) === conversationKey(item.ref)
+                ? previous
+                : item.ref
+            );
+            setSelectedItem(item);
+          }}
+          searchOpen={searchOpen}
+          selected={selectedRef}
+          style={{
+            top: 'var(--app-bar-height)',
+            height: 'calc(100svh - var(--app-bar-height))',
+            // The floating sidebar hangs straight from the app bar, with no top inset.
+            paddingTop: 0,
+          }}
+          width={sidebarWidth}
+        />
+        <SidebarInset className="min-h-0 overflow-hidden" ref={insetRef}>
+          {/* Fades whatever scrolls up to the app bar into its background instead of cutting it off. */}
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background to-transparent" />
+          {children({ selectedRef, history, actions })}
+        </SidebarInset>
+      </div>
       <ProjectPickerDialog onOpenChange={setPickerOpen} onPick={(target) => void starter.start(target)} open={pickerOpen} projects={visibleProjects(projects, projectVisibility.visibility, 'startable')} />
       {starter.chooser}
     </SidebarProvider>

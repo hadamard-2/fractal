@@ -54,13 +54,13 @@ test('keeps one right panel across modes and slides the mode toggle to its edge'
   expect(shift.style.transform).toBe('translateX(0px)');
 
   await user.click(screen.getByRole('button', { name: 'Open right panel' }));
-  expect(shift.style.transform).toBe('translateX(-272px)');
+  expect(shift.style.transform).toBe('translateX(calc(var(--window-controls-inset) - 272px))');
   await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
   expect(screen.getByTestId('terminal').getAttribute('data-cwd')).toBe('/work/fractal');
 
   await user.click(screen.getByRole('radio', { name: 'Map' }));
   expect(screen.getAllByRole('tab')).toHaveLength(1);
-  expect(shift.style.transform).toBe('translateX(-272px)');
+  expect(shift.style.transform).toBe('translateX(calc(var(--window-controls-inset) - 272px))');
   await user.click(screen.getByRole('button', { name: 'Add tool' }));
   await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
   expect(screen.getAllByTestId('terminal').map((terminal) => terminal.getAttribute('data-cwd'))).toEqual(['/work/fractal', '/work/fractal']);

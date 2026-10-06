@@ -12,25 +12,23 @@
 
 :root {
   /*
-   * The OS titlebar overlay's height, read once here so the title bar strip,
-   * the content offset below it, and anything that has to escape that offset
-   * (the sidebar, which is `position: fixed`) all derive from one value.
+   * The app bar is the window frame: one band across the top holding the
+   * sidebar trigger and breadcrumb from the far left, the mode and panel
+   * toggles, and the OS window controls the titlebar overlay draws over its
+   * right end. Its height is the overlay's, so the two can't drift apart.
+   * Fullscreen makes the env var unavailable rather than zero, and the
+   * fallback (main.ts's overlay height) keeps the band, which still carries
+   * the app's own controls there.
    */
-  --titlebar-height: env(titlebar-area-height, 2.25rem);
+  --app-bar-height: env(titlebar-area-height, 3rem);
   /*
-   * The bar directly below the title bar: execute's header row, and the
-   * invisible strip the other modes position the mode toggle inside. Both
-   * read this, so the toggle lands in the same place in every mode instead
-   * of two offsets being tuned to agree.
+   * How far the window controls reach in from each edge of the window: the
+   * part of the band the overlay leaves us runs from titlebar-area-x for
+   * titlebar-area-width. Zero wherever there are no controls on that side —
+   * fullscreen, a plain browser, and the left everywhere but macOS.
    */
-  --app-bar-height: 3.5rem;
-  /*
-   * How far the app-bar band sits below the title bar. Execute's header row
-   * takes it as a top margin, and the mode-toggle strip adds it to its `top`,
-   * so both move together — the toggle keeps the row's baseline without a
-   * second magic number to tune.
-   */
-  --app-bar-offset: 12px;
+  --window-controls-left: env(titlebar-area-x, 0px);
+  --window-controls-inset: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -156,6 +154,16 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/*
+ * The title bar strip makes the whole app-bar band a window drag handle, and a
+ * drag region swallows clicks. Anything clickable in the band opts back out;
+ * Electron subtracts these from the drag region because they come later in
+ * the document than the strip.
+ */
+@utility app-region-no-drag {
+  -webkit-app-region: no-drag;
 }
 
 @layer base {

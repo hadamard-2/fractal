@@ -171,7 +171,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         Content headers read --app-bar-reserve to keep their titles clear of
         the mode and panel toggles, which float over the header row.
       */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': `${layout.headerReserve}px` } as CSSProperties}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': layout.headerReserve } as CSSProperties}>
         <TerminalLauncherContext.Provider value={launcher}>{children}</TerminalLauncherContext.Provider>
       </div>
       {/*
@@ -180,10 +180,15 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         for both lives in index.css.
       */}
       <div aria-hidden className="shrink-0" data-slot="right-panel-gap" style={{ width: layout.split ? width : 0 }} />
+      {/*
+        The panel hangs straight from the app bar, with no top inset, like the
+        left sidebar: the bar is the window frame, and its right end holds the
+        panel toggle and the OS window controls.
+      */}
       <aside
         aria-hidden={!open}
         aria-label="Right workspace"
-        className="absolute inset-y-0 right-0 z-20 p-2"
+        className="absolute top-(--app-bar-height) right-0 bottom-0 z-20 px-2 pb-2"
         data-open={open || undefined}
         data-slot="right-panel"
         inert={!open}
@@ -194,14 +199,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         <TooltipProvider>
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
             {/*
-              The tab row sits on the app bar's centerline, level with the
-              mode toggle, the panel toggle, and Execute's title: the band's
-              centre is --app-bar-offset + --app-bar-height / 2 below this
-              panel's top, less the aside's 8px inset, plus half the 32px row
-              because the row is bottom-aligned. pr-10 clears the panel
-              toggle, which App floats over this corner.
+              The tab row lines up with the left sidebar's header row. Both
+              panels hang straight from the app bar behind a 1px border, and
+              the sidebar's header (14px of top padding, then a 36px row)
+              centres 32px below that border — where this 48px bottom-aligned
+              row centres its 32px controls.
             */}
-            <div className="flex shrink-0 items-end gap-1 pr-10 pl-2" style={{ height: 'calc(var(--app-bar-offset) + var(--app-bar-height) / 2 + 8px)' }}>
+            <div className="flex h-12 shrink-0 items-end gap-1 px-2">
               {selectedFileTab && (
                 <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
                   <ListTree aria-hidden className="size-4" />
