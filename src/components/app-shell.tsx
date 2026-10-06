@@ -96,6 +96,9 @@ export function AppShell({
   // Lifted out of the sidebar so Mod+K and the empty state can open it.
   const [searchOpen, setSearchOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Bumped by Mod+R. The sidebar keeps its own copy of the history and
+  // refreshes it when this changes.
+  const [historyRefreshes, setHistoryRefreshes] = useState(0);
   const projectVisibility = useProjectVisibility();
   // Every conversation Fractal starts makes its folder active again: that is
   // how an archived project is unarchived by use, and how a removed one comes
@@ -128,6 +131,14 @@ export function AppShell({
     addProject: () => void starter.start(null),
     canStart: starter.canStart,
   };
+  // Re-lists conversations and re-checks each agent, e.g. after signing one
+  // in from a terminal.
+  const refreshHistory = () => {
+    void history.refresh();
+    setHistoryRefreshes((count) => count + 1);
+  };
+  const refreshHistoryRef = useRef(refreshHistory);
+  refreshHistoryRef.current = refreshHistory;
   // Read by the listener below, which subscribes once.
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
@@ -138,6 +149,7 @@ export function AppShell({
         isAppShortcut(event, 'KeyN') ? actionsRef.current.newConversation
         : isAppShortcut(event, 'KeyK') ? actionsRef.current.search
         : isAppShortcut(event, 'KeyO') ? actionsRef.current.addProject
+        : isAppShortcut(event, 'KeyR') ? refreshHistoryRef.current
         : null;
       if (!action) return;
       event.preventDefault();
@@ -174,6 +186,7 @@ export function AppShell({
         onOpenSettings={onOpenSettings}
         onRemoveProject={removeProject}
         onConversationRenamed={history.refresh}
+        refreshSignal={historyRefreshes}
         onSearchOpenChange={setSearchOpen}
         projectVisibility={projectVisibility}
         showAgentColorTags={showAgentColorTags}

@@ -2,7 +2,7 @@
 
 import { motion } from 'motion/react';
 import { FolderPlus, ListFilter, Search } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -168,6 +168,7 @@ export function DashboardSidebar({
   projectVisibility,
   onRemoveProject,
   onConversationRenamed,
+  refreshSignal = 0,
   showAgentColorTags,
   width,
   onWidthChange,
@@ -203,6 +204,9 @@ export function DashboardSidebar({
   // Called after a chat rename lands, so AppShell can refresh its own copy of
   // the history (the header shows the selected chat's title from it).
   onConversationRenamed?: () => Promise<void>;
+  // Changes when AppShell refreshes its history on request; the sidebar
+  // refreshes its own copy to match.
+  refreshSignal?: number;
   // Whether chat rows show their agent's color dot. Defaults to shown.
   showAgentColorTags?: boolean;
   // Chosen sidebar width in px, owned by App for the same reason as the
@@ -214,6 +218,9 @@ export function DashboardSidebar({
 }) {
   const { state } = useSidebar();
   const { projects, providers, loaded, error, refresh } = useConversationHistory();
+  useEffect(() => {
+    if (refreshSignal > 0) void refresh();
+  }, [refreshSignal, refresh]);
   const renameChat = async (ref: ConversationRef, title: string) => {
     await window.fractal.conversations.rename(ref, title);
     await Promise.all([refresh(), onConversationRenamed?.()]);
