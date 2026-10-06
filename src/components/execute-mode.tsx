@@ -1,11 +1,12 @@
-import { Loader2, Plus } from 'lucide-react';
+import { Check, Copy, Loader2, Plus } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { ConversationPanel } from '@/components/conversation-panel';
 import { providerName } from '@/components/sidebar-03/nav-main';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ShellContext } from '@/components/app-shell';
 import { MOD_KEY_LABEL } from '@/renderer/shortcuts';
-import type { HarnessStatus } from '@/shared/conversation-contract';
+import type { HarnessStatus, ProviderId } from '@/shared/conversation-contract';
 
 const AVAILABILITY_TEXT: Record<Exclude<HarnessStatus['availability'], 'available'>, string> = {
   unavailable: "isn't available",
@@ -13,15 +14,24 @@ const AVAILABILITY_TEXT: Record<Exclude<HarnessStatus['availability'], 'availabl
   unsupported: "isn't a supported version",
 };
 
+const LOGIN_COMMAND: Record<ProviderId, string> = {
+  claude: 'claude auth login',
+  codex: 'codex login',
+};
+
+
 function Kbd({ children }: { children: string }) {
   return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">{children}</kbd>;
 }
 
+const NOTICE_CLASS = 'flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground';
+const NoticeDot = () => <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-amber-500" />;
+
 /** A quiet one-line notice under the empty state; `detail` goes in a tooltip. */
 function Notice({ children, detail }: { children: string; detail?: string }) {
   const notice = (
-    <p className="flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground" role="status">
-      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-amber-500" />
+    <p className={NOTICE_CLASS} role="status">
+      <NoticeDot />
       {children}
     </p>
   );
@@ -31,6 +41,32 @@ function Notice({ children, detail }: { children: string; detail?: string }) {
       <TooltipTrigger asChild>{notice}</TooltipTrigger>
       <TooltipContent>{detail}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** A notice whose fix is a shell command; clicking it copies the command. */
+function CommandNotice({ lead, command, trail }: { lead: string; command: string; trail: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const Icon = copied ? Check : Copy;
+  return (
+    <button
+      aria-label={`${lead} ${command} ${trail}. Copy the command`}
+      className={`${NOTICE_CLASS} cursor-pointer transition-colors hover:border-foreground/20 hover:text-foreground`}
+      onClick={() => { navigator.clipboard.writeText(command).then(() => setCopied(true), (): void => undefined); }}
+      type="button"
+    >
+      <NoticeDot />
+      <span>
+        {lead} <code className="rounded bg-muted px-1 py-px font-mono text-[11px] text-foreground">{command}</code> {trail}
+      </span>
+      <Icon aria-hidden className="size-3 shrink-0" />
+      <span aria-live="polite" className="sr-only">{copied ? 'Copied' : ''}</span>
+    </button>
   );
 }
 
@@ -74,9 +110,18 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
           <div className="mt-7 flex flex-col items-center gap-2">
             {error && <Notice detail={error.message}>Your conversations couldn't be loaded</Notice>}
             {providers.filter((provider) => provider.availability !== 'available').map((provider) => (
-              <Notice detail={provider.message} key={provider.provider}>
-                {`${providerName(provider.provider)} ${AVAILABILITY_TEXT[provider.availability as keyof typeof AVAILABILITY_TEXT]}, so its conversations are hidden`}
-              </Notice>
+              provider.availability === 'unauthenticated' ? (
+                <CommandNotice
+                  command={LOGIN_COMMAND[provider.provider]}
+                  key={provider.provider}
+                  lead={`${providerName(provider.provider)} isn't signed in; run`}
+                  trail="to show its conversations"
+                />
+              ) : (
+                <Notice detail={provider.message} key={provider.provider}>
+                  {`${providerName(provider.provider)} ${AVAILABILITY_TEXT[provider.availability as keyof typeof AVAILABILITY_TEXT]}, so its conversations are hidden`}
+                </Notice>
+              )
             ))}
           </div>
         </div>
