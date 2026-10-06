@@ -13,8 +13,13 @@ import { useConversation } from '@/renderer/use-conversation';
 import { useModelChoice } from '@/renderer/use-model-choice';
 import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type PromptAttachment, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
-// The transcript and composer share a reading measure at every panel width.
-const COLUMN = 'px-4 lg:px-[8%] xl:px-[14%] 2xl:px-[20%]';
+// The transcript and composer share one reading column. On a wide panel only the
+// padding absorbs a resize and the column holds at its 46rem cap; once that padding
+// falls to 6% of the panel, the column and padding shrink together. `cqw` is the
+// panel's width (it is the `@container`), so rows inside the scrolling transcript and
+// the composer outside it resolve the padding against the same width. Both regions
+// reserve a stable scrollbar gutter so the column's edges line up between them.
+const COLUMN = 'px-[max(1rem,6cqw,(100cqw_-_46rem)/2)]';
 
 function AttachButton({ disabled }: { disabled: boolean }) {
   const attachments = usePromptInputAttachments();
@@ -106,11 +111,11 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   };
 
   return (
-    <div className="relative flex size-full flex-col overflow-hidden">
+    <div className="@container relative flex size-full flex-col overflow-hidden">
       {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
       {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
       {turns.length ? <AttachmentPreviewProvider conversationRef={conversationRef}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
-      <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 ${COLUMN}`}>
+      <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 [scrollbar-gutter:stable] ${COLUMN}`}>
         {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
         {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}

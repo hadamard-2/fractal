@@ -139,7 +139,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
   // default `outline: auto` ring around the whole transcript. The ring is suppressed on purpose.
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none" onScroll={() => { remember(); syncAwayFromBottom(); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
+      <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] focus-visible:outline-none" onScroll={() => { remember(); syncAwayFromBottom(); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
         <div className="relative w-full" style={{ height: size }}>
           {virtualizer.getVirtualItems().map((item) => <div className={`absolute left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ top: item.start }}>
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />
