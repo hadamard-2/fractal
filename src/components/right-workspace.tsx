@@ -94,6 +94,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
 
   const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
   const addTerminal = (paste?: string) => {
+    if (projectPath === null) return;
     const id = crypto.randomUUID();
     setPanelTabs((previous) => addTerminalTab(previous, id, projectPath, paste));
     focusTerminal(id);
@@ -101,6 +102,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   // Read through a ref so the context value stays stable across renders.
   const openTerminalWith = useRef<OpenTerminalWith>(() => undefined);
   openTerminalWith.current = (text) => {
+    if (projectPath === null) return;
     if (!open) onOpenChange(true);
     addTerminal(text);
   };
@@ -127,6 +129,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   // registered once, always sees the latest tabs and open state.
   const toggleTerminal = useRef<() => void>(() => undefined);
   toggleTerminal.current = () => {
+    if (projectPath === null) return;
     const focused = document.activeElement;
     const focusInTerminal = focused instanceof Element
       && focused.closest('[data-slot="terminal"]') !== null
@@ -172,7 +175,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         the mode and panel toggles, which float over the header row.
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': layout.headerReserve } as CSSProperties}>
-        <TerminalLauncherContext.Provider value={launcher}>{children}</TerminalLauncherContext.Provider>
+        <TerminalLauncherContext.Provider value={projectPath === null ? null : launcher}>{children}</TerminalLauncherContext.Provider>
       </div>
       {/*
         The panel keeps its full width and slides; this in-flow gap is what
@@ -223,13 +226,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                   <DropdownMenuTrigger asChild>
                     <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={() => addTerminal()} /></DropdownMenuContent>
+                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} /></DropdownMenuContent>
                 </DropdownMenu>
               )}
             </div>
             {tabs.length === 0 ? (
               <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList filesAvailable={projectPath !== null} onFiles={openFiles} onTerminal={() => addTerminal()} />
+                <ToolList onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} />
               </div>
             ) : (
               <div className="mx-2 mt-1 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">

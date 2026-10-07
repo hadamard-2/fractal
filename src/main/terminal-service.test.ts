@@ -20,7 +20,7 @@ describe('TerminalService', () => {
     const f = fixture();
     const service = new TerminalService(f.factory);
     const owner = {}, stranger = {};
-    service.create(owner, { id: 'one', cols: 80, rows: 24 }, '/repo', (event) => f.events.push(event));
+    service.create(owner, { id: 'one', cwd: '/repo', cols: 80, rows: 24 }, '/repo', (event) => f.events.push(event));
     expect(f.factory).toHaveBeenCalledWith(expect.any(String), '/repo', 80, 24);
     expect(() => service.write(stranger, 'one', 'pwd\r')).toThrow();
     expect(() => service.close(stranger, 'one')).toThrow();
@@ -39,7 +39,7 @@ describe('TerminalService', () => {
     const f = fixture();
     const service = new TerminalService(f.factory);
     const owner = {};
-    service.create(owner, { id: 'one', cols: 80, rows: 24 }, '/repo', (event) => f.events.push(event));
+    service.create(owner, { id: 'one', cwd: '/repo', cols: 80, rows: 24 }, '/repo', (event) => f.events.push(event));
     f.emitExit(130);
     service.close(owner, 'one');
     f.emitExit(130);
@@ -51,8 +51,8 @@ describe('TerminalService', () => {
     const f = fixture();
     const service = new TerminalService(f.factory);
     const owner = {};
-    service.create(owner, { id: 'one', cols: 80, rows: 24 }, '/repo', () => undefined);
-    expect(() => service.create(owner, { id: 'one', cols: 80, rows: 24 }, '/repo', () => undefined)).toThrow();
+    service.create(owner, { id: 'one', cwd: '/repo', cols: 80, rows: 24 }, '/repo', () => undefined);
+    expect(() => service.create(owner, { id: 'one', cwd: '/repo', cols: 80, rows: 24 }, '/repo', () => undefined)).toThrow();
     service.closeOwner(owner);
     expect(f.pty.kill).toHaveBeenCalledTimes(1);
   });

@@ -9,7 +9,7 @@ afterEach(cleanup);
 test('lists every tool in order, with Terminal and Files available', async () => {
   const onTerminal = vi.fn();
   const onFiles = vi.fn();
-  render(<ToolList filesAvailable onFiles={onFiles} onTerminal={onTerminal} />);
+  render(<ToolList onFiles={onFiles} onTerminal={onTerminal} projectOpen />);
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
     'ReviewSoon', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
   ]);
@@ -26,9 +26,12 @@ test('lists every tool in order, with Terminal and Files available', async () =>
   expect(onFiles).toHaveBeenCalledTimes(1);
 });
 
-test('disables Files until there is a project', () => {
-  render(<ToolList filesAvailable={false} onFiles={vi.fn()} onTerminal={vi.fn()} />);
-  const files = screen.getByRole('menuitem', { name: 'Files' });
-  expect(files.hasAttribute('disabled')).toBe(true);
-  expect(files.textContent).toBe('FilesOpen a project first');
+test('disables Terminal and Files until there is a project', () => {
+  render(<ToolList onFiles={vi.fn()} onTerminal={vi.fn()} projectOpen={false} />);
+  for (const name of ['Terminal', 'Files']) {
+    const item = screen.getByRole('menuitem', { name });
+    expect(item.hasAttribute('disabled')).toBe(true);
+    expect(item.hasAttribute('aria-keyshortcuts')).toBe(false);
+    expect(item.textContent).toBe(`${name}Open a project first`);
+  }
 });

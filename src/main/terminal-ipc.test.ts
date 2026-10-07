@@ -61,9 +61,17 @@ test('rejects missing or non-directory projects before spawning a shell', async 
   f.registration.dispose();
 });
 
-test('sanitizes a native spawn error and defaults to process cwd', async () => {
+test('sanitizes a native spawn error', async () => {
   const f = fixture(() => { throw new Error('private native details'); });
-  await expect(f.invoke({ method: 'create', id: 'one', cols: 80, rows: 24 })).rejects.toThrow('Terminal could not start');
+  await expect(f.invoke({ method: 'create', id: 'one', cwd: f.cwd, cols: 80, rows: 24 })).rejects.toThrow('Terminal could not start');
+  f.registration.dispose();
+});
+
+test('refuses to create a terminal without a project directory', async () => {
+  const spawn = vi.fn(() => { throw new Error('should not spawn'); });
+  const f = fixture(spawn);
+  await expect(f.invoke({ method: 'create', id: 'one', cols: 80, rows: 24 })).rejects.toThrow('Invalid terminal request');
+  expect(spawn).not.toHaveBeenCalled();
   f.registration.dispose();
 });
 

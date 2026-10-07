@@ -5,7 +5,7 @@ export const TERMINAL_CHANNELS = {
 
 export interface CreateTerminalRequest {
   id: string;
-  cwd?: string;
+  cwd: string;
   cols: number;
   rows: number;
 }
@@ -47,10 +47,9 @@ const keys = (value: Record<string, unknown>, allowed: string[]) =>
 
 export function parseTerminalRequest(value: unknown): TerminalRequest {
   if (!object(value) || !id(value.id)) throw new Error('Invalid terminal request');
-  if (value.method === 'create' && dimensions(value.cols, value.rows) &&
-    (value.cwd === undefined || absolutePath(value.cwd)) &&
+  if (value.method === 'create' && dimensions(value.cols, value.rows) && absolutePath(value.cwd) &&
     keys(value, ['method', 'id', 'cwd', 'cols', 'rows'])) {
-    return { method: 'create', id: value.id, ...(value.cwd === undefined ? {} : { cwd: value.cwd as string }), cols: value.cols, rows: value.rows as number };
+    return { method: 'create', id: value.id, cwd: value.cwd, cols: value.cols, rows: value.rows as number };
   }
   if (value.method === 'write' && data(value.data) && keys(value, ['method', 'id', 'data'])) {
     return { method: 'write', id: value.id, data: value.data };

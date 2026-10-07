@@ -10,7 +10,7 @@ const PASTE_WAIT_MS = 3000;
 
 export function TerminalView({ id, cwd, visible, focusToken = 0, paste, onPasted, onShellReady, onExitedChange }: {
   id: string;
-  cwd: string | null;
+  cwd: string;
   visible: boolean;
   // Bumped by the panel to ask for keyboard focus; each value is honoured once.
   focusToken?: number;
@@ -112,7 +112,7 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, paste, onPasted
 
     setState('starting');
     setExitCode(null);
-    const creating = window.fractal.terminals.create({ id, cwd: cwd ?? undefined, cols: 80, rows: 24 });
+    const creating = window.fractal.terminals.create({ id, cwd, cols: 80, rows: 24 });
     void creating.then(({ shell, cwd: startedIn }) => {
       if (disposed) { void window.fractal.terminals.close(id).catch((): void => undefined); return; }
       started = true;

@@ -153,10 +153,31 @@ test('Ctrl+Shift+F does nothing without a project', () => {
   expect(panel().getAttribute('aria-hidden')).toBe('true');
 });
 
-test('Files is unavailable without a project', async () => {
+test('Ctrl+` does nothing without a project or an open terminal', () => {
+  render(<Harness projectPath={null} />);
+  pressToggle(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('true');
+  expect(screen.queryByRole('tab')).toBeNull();
+});
+
+test('Ctrl+` does nothing without a project, even with a terminal already open', () => {
+  const view = render(<Harness />);
+  pressToggle(document.body);
+  const input = screen.getByLabelText('Terminal input');
+  input.focus();
+  pressToggle(input);
+  expect(panel().getAttribute('aria-hidden')).toBe('true');
+  view.rerender(<Harness projectPath={null} />);
+  pressToggle(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('true');
+  expect(input.getAttribute('data-focus-token')).toBe('1');
+});
+
+test('Terminal and Files are unavailable without a project', async () => {
   const user = userEvent.setup();
   render(<Harness projectPath={null} />);
   await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  expect(screen.getByRole('menuitem', { name: 'Terminal' }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByRole('menuitem', { name: 'Files' }).hasAttribute('disabled')).toBe(true);
 });
 

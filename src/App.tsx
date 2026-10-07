@@ -37,6 +37,11 @@ export default function App() {
   // The home screen is Execute with nothing selected; the selected project is
   // null exactly then. The mode toggle stays out of it.
   const onHomeScreen = mode === 'execute' && projectPath === null;
+  // The panel's tools all work inside a project, so without one it stays shut
+  // and its toggle goes away. rightOpen is kept, so selecting a project again
+  // brings the panel back as it was.
+  const panelAvailable = projectPath !== null;
+  const panelOpen = panelAvailable && rightOpen;
 
   useEffect(() => {
     let cancelled = false;
@@ -93,16 +98,18 @@ export default function App() {
           paddingRight: 'calc(var(--window-controls-inset) + 16px)',
         }}
       >
-        <Button
-          aria-expanded={rightOpen}
-          aria-label={rightOpen ? 'Close right panel' : 'Open right panel'}
-          className="pointer-events-auto size-7 app-region-no-drag"
-          onClick={() => setRightOpen((open) => !open)}
-          size="icon"
-          variant="ghost"
-        >
-          <PanelRight aria-hidden className="size-4" />
-        </Button>
+        {panelAvailable && (
+          <Button
+            aria-expanded={panelOpen}
+            aria-label={panelOpen ? 'Close right panel' : 'Open right panel'}
+            className="pointer-events-auto size-7 app-region-no-drag"
+            onClick={() => setRightOpen((open) => !open)}
+            size="icon"
+            variant="ghost"
+          >
+            <PanelRight aria-hidden className="size-4" />
+          </Button>
+        )}
       </div>
 
       {/*
@@ -128,7 +135,7 @@ export default function App() {
         style={{
           top: 'calc(var(--app-bar-height) + 13px)',
           right: MODE_TOGGLE_INSET,
-          transform: `translateX(${-modeToggleShift(rightOpen, rightWidth ?? 0)}px)`,
+          transform: `translateX(${-modeToggleShift(panelOpen, rightWidth ?? 0)}px)`,
         }}
       >
         <ModeToggle value={mode} onValueChange={setMode} />
@@ -146,7 +153,7 @@ export default function App() {
           onOpenChange={setRightOpen}
           onResizingChange={setRightResizing}
           onWidthChange={setRightWidth}
-          open={rightOpen}
+          open={panelOpen}
           projectPath={projectPath}
           width={rightWidth}
         >

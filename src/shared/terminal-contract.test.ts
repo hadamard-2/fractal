@@ -8,13 +8,14 @@ describe('terminal IPC contract', () => {
   });
 
   test.each([
-    { method: 'create', id: '', cols: 80, rows: 24 },
+    { method: 'create', id: '', cwd: '/repo', cols: 80, rows: 24 },
+    { method: 'create', id: 'one', cols: 80, rows: 24 },
     { method: 'create', id: 'one', cwd: 'relative', cols: 80, rows: 24 },
-    { method: 'create', id: 'one', cols: 0, rows: 24 },
-    { method: 'create', id: 'one', cols: NaN, rows: 24 },
-    { method: 'create', id: 'one', cols: 501, rows: 24 },
-    { method: 'create', id: 'one', cols: 80, rows: 301 },
-    { method: 'create', id: 'one', cols: 80, rows: 24, extra: true },
+    { method: 'create', id: 'one', cwd: '/repo', cols: 0, rows: 24 },
+    { method: 'create', id: 'one', cwd: '/repo', cols: NaN, rows: 24 },
+    { method: 'create', id: 'one', cwd: '/repo', cols: 501, rows: 24 },
+    { method: 'create', id: 'one', cwd: '/repo', cols: 80, rows: 301 },
+    { method: 'create', id: 'one', cwd: '/repo', cols: 80, rows: 24, extra: true },
     { method: 'write', id: 'one', data: 'x'.repeat(1_048_577) },
     { method: 'unknown', id: 'one' },
   ])('rejects malformed request %#', (request) => {

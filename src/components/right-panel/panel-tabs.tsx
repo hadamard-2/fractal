@@ -13,7 +13,7 @@ export function panelTabLabel(tab: PanelTab, terminalCount: number): string {
 export const tabPanelId = (tab: PanelTab): string => (tab.kind === 'terminal' ? `terminal-panel-${tab.id}` : `panel-${tab.id}`);
 
 function tooltipFor(tab: PanelTab): string {
-  if (tab.kind === 'terminal') return tab.startedIn ?? tab.cwd ?? 'App working directory';
+  if (tab.kind === 'terminal') return tab.startedIn ?? tab.cwd;
   return tab.path === null ? tab.projectPath : absoluteProjectPath(tab.projectPath, tab.path);
 }
 

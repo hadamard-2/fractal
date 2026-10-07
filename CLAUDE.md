@@ -45,7 +45,7 @@ src/
 
 `contextIsolation` is on and `nodeIntegration` is off. `preload.ts` is empty, so the renderer has no channel to the main process yet — expose one through `contextBridge` before reaching for Node APIs in the renderer. Do not weaken either setting to make something work; the agent-driven filesystem access explain mode needs belongs behind a preload API, not in the renderer.
 
-The window is frameless, and the app bar is the window frame: one `--app-bar-height` band across the top holds the sidebar toggle and breadcrumb from the far left (fixed in place, whatever the sidebar does), the right-panel toggle, and the OS window controls (overlaid at its right end; `--window-controls-inset` is their width). The mode toggle floats below the bar, at the content area's top-right corner. `components/title-bar.tsx` makes the whole band a drag region behind its contents, so anything clickable placed in the band needs the `app-region-no-drag` utility or the drag region swallows its clicks.
+The window is frameless, and the app bar is the window frame: one `--app-bar-height` band across the top holds the sidebar toggle and breadcrumb from the far left (fixed in place, whatever the sidebar does), the right-panel toggle (shown only while a project is selected, since every panel tool works inside one), and the OS window controls (overlaid at its right end; `--window-controls-inset` is their width). The mode toggle floats below the bar, at the content area's top-right corner. `components/title-bar.tsx` makes the whole band a drag region behind its contents, so anything clickable placed in the band needs the `app-region-no-drag` utility or the drag region swallows its clicks.
 
 ## Gotchas
 

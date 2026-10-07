@@ -1,7 +1,7 @@
 export type TerminalTab = {
   id: string;
-  // The directory requested at creation; null lets the main process choose.
-  cwd: string | null;
+  // The project directory the terminal was asked to start in.
+  cwd: string;
   // The lowest number free among open tabs when this one was created; it
   // never changes while the tab is open, so labels don't shift as others close.
   number: number;

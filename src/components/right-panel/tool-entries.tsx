@@ -14,12 +14,13 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
   { id: 'side-chat', label: 'Side chat', Icon: MessageCirclePlus },
 ];
 
-type Handlers = { onTerminal: () => void; onFiles: () => void; filesAvailable: boolean };
+type Handlers = { onTerminal: () => void; onFiles: () => void; projectOpen: boolean };
 type State = { onSelect?: () => void; hint?: string; shortcut?: string };
 
-function stateOf(id: ToolId, { onTerminal, onFiles, filesAvailable }: Handlers): State {
-  if (id === 'terminal') return { onSelect: onTerminal, hint: 'Ctrl+`', shortcut: 'Control+`' };
-  if (id === 'files') return filesAvailable ? { onSelect: onFiles, hint: 'Ctrl+Shift+F', shortcut: 'Control+Shift+F' } : { hint: 'Open a project first' };
+// Terminal and Files both work inside the project, so neither has anywhere to start without one.
+function stateOf(id: ToolId, { onTerminal, onFiles, projectOpen }: Handlers): State {
+  if (id === 'terminal') return projectOpen ? { onSelect: onTerminal, hint: 'Ctrl+`', shortcut: 'Control+`' } : { hint: 'Open a project first' };
+  if (id === 'files') return projectOpen ? { onSelect: onFiles, hint: 'Ctrl+Shift+F', shortcut: 'Control+Shift+F' } : { hint: 'Open a project first' };
   return { hint: 'Soon' };
 }
 

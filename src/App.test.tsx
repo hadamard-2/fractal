@@ -70,6 +70,23 @@ test('keeps one right panel across modes and slides the mode toggle to its edge'
   expect(screen.getByRole('button', { name: 'Open right panel' })).toBeTruthy();
 });
 
+test('offers the right panel only once a project is selected', async () => {
+  installApi();
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole('button', { name: 'Fractal' });
+  expect(screen.queryByRole('button', { name: 'Open right panel' })).toBeNull();
+  await user.keyboard('{Control>}`{/Control}');
+  expect(document.querySelector('aside[data-slot="right-panel"]')?.getAttribute('aria-hidden')).toBe('true');
+  await user.keyboard('{Control>}2{/Control}');
+  expect(screen.queryByRole('button', { name: 'Open right panel' })).toBeNull();
+
+  await user.keyboard('{Control>}1{/Control}');
+  await user.click(screen.getByRole('button', { name: 'Fractal' }));
+  await user.click(screen.getByRole('button', { name: /Existing chat, Codex conversation/ }));
+  expect(await screen.findByRole('button', { name: 'Open right panel' })).toBeTruthy();
+});
+
 test('Mod+1–3 switch modes in the toggle order', async () => {
   installApi();
   const user = userEvent.setup();

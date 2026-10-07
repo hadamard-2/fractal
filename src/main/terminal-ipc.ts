@@ -13,11 +13,10 @@ export function registerTerminalIpc(service: TerminalService, getWindow: () => B
     const owner = owners.authorize(event);
     const request = parseTerminalRequest(input);
     if (request.method === 'create') {
-      const inputCwd = request.cwd ?? process.cwd();
       let cwd: string;
       try {
-        if (!isAbsolute(inputCwd) || !(await stat(inputCwd)).isDirectory()) throw new Error('Not a directory');
-        cwd = await realpath(inputCwd);
+        if (!isAbsolute(request.cwd) || !(await stat(request.cwd)).isDirectory()) throw new Error('Not a directory');
+        cwd = await realpath(request.cwd);
       } catch { throw new Error('Terminal could not start in this folder'); }
       if (owners.disposed || owner.closed) throw new Error('Terminal operation failed');
       try {
