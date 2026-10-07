@@ -21,6 +21,8 @@ function codexModel(model: string, efforts: string[]) {
   };
 }
 
+const workspaceWrite = { type: 'workspaceWrite', writableRoots: ['/extra'], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
+
 function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], repeatCursor = false, importedThreads: string[] | Error = []) {
   const listeners = new Set<(notification: unknown) => void>();
   const requestListeners = new Set<(request: unknown) => void>();
@@ -28,6 +30,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
   const requests: Array<{ method: string; params: unknown }> = [];
   const responses: Array<{ id: string | number; result: unknown }> = [];
   let duringTurnStart: (() => void) | undefined;
+  const resumeAccess = { approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: workspaceWrite };
   return {
     status: { availability: 'available' as const }, requests, responses,
     request: vi.fn(async (method: string, params: Record<string, unknown>) => {
@@ -46,7 +49,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
       if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
-      if (method === 'thread/resume') return { thread: threadRead.thread, model: 'gpt-5.6-terra', reasoningEffort: 'high' };
+      if (method === 'thread/resume') return { thread: threadRead.thread, model: 'gpt-5.6-terra', reasoningEffort: 'high', ...resumeAccess };
       if (method === 'model/list') return params.cursor === 'models-2'
         ? { data: [codexModel('gpt-5.5', ['low', 'medium', 'high', 'xhigh'])], nextCursor: null }
         : { data: [codexModel('gpt-5.6-terra', ['low', 'medium', 'ultra']), { ...codexModel('codex-auto-review', ['low']), hidden: true }], nextCursor: 'models-2' };
@@ -76,6 +79,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       Object.assign(this.status, status); statusListeners.forEach((listener) => listener(status));
     },
     duringTurnStart(callback: () => void) { duringTurnStart = callback; },
+    setResumeAccess(access: Record<string, unknown>) { Object.assign(resumeAccess, access); },
   };
 }
 
@@ -154,6 +158,25 @@ describe('Codex read adapter', () => {
     const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
     await expect(adapter.readLastRun({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/work/fractal' })).resolves.toEqual({ model: 'gpt-5.6-terra', effort: 'high' });
     expect(server.requests).toEqual([{ method: 'thread/resume', params: { threadId: 'thread-1', cwd: '/work/fractal' } }]);
+  });
+
+  test('reads the thread access from thread/resume', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+    await expect(adapter.readAccess(ref)).resolves.toEqual({ kind: 'level', level: 'auto' });
+    server.setResumeAccess({ approvalPolicy: 'never' });
+    await expect(adapter.readAccess(ref)).resolves.toEqual({ kind: 'custom', label: 'workspace-write · never ask' });
+  });
+
+  test('shares one thread/resume between concurrent reads, and asks again afterwards', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+    await Promise.all([adapter.readAccess(ref), adapter.readLastRun(ref)]);
+    expect(server.requests.filter((request) => request.method === 'thread/resume')).toHaveLength(1);
+    await adapter.readAccess(ref);
+    expect(server.requests.filter((request) => request.method === 'thread/resume')).toHaveLength(2);
   });
 
   test('only loads a discovered Codex thread with matching provider ID and canonical project path', async () => {
@@ -288,6 +311,30 @@ describe('Codex native continuation', () => {
     const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
     const run = await adapter.continueConversation(ref, { text: '', attachments: [{ path: '/tmp/shot.png', image: 'image/png' }] });
     expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'localImage', path: '/tmp/shot.png' }] } });
+    await run.dispose();
+  });
+
+  const turnStartParams = (server: ReturnType<typeof createFakeAppServer>) => server.requests.findLast((request) => request.method === 'turn/start')?.params as Record<string, unknown>;
+
+  test('sends a picked level as turn/start overrides built from the resumed sandbox', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Go', access: { state: { kind: 'level', level: 'auto-review' }, picked: true } });
+    expect(turnStartParams(server)).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandboxPolicy: workspaceWrite });
+    await run.dispose();
+  });
+
+  test.each([
+    ['a read-back level', { state: { kind: 'level', level: 'auto' }, picked: false }],
+    ['a custom state', { state: { kind: 'custom', label: 'workspace-write · never ask' }, picked: true }],
+  ] as const)('sends no access overrides for %s', async (_name, access) => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    const run = await adapter.continueConversation(ref, { text: 'Go', access });
+    const params = turnStartParams(server);
+    expect(params).not.toHaveProperty('approvalPolicy');
+    expect(params).not.toHaveProperty('approvalsReviewer');
+    expect(params).not.toHaveProperty('sandboxPolicy');
     await run.dispose();
   });
 

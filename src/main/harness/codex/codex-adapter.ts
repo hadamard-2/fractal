@@ -4,9 +4,11 @@ import { createCodexLiveNormalizationContext, normalizeCodexNotification, normal
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import type { AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
+import type { AccessState, AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import { codexAccessOverrides, codexAccessState } from '@/main/harness/codex/codex-access';
 import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
+import type { ThreadResumeResponse as CodexResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
 
 type CodexServer = Pick<CodexAppServer, 'request' | 'onNotification' | 'onServerRequest' | 'respond' | 'respondError' | 'status'> & Partial<Pick<CodexAppServer, 'onStatus'>>;
 type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: string; text: string } };
@@ -25,6 +27,8 @@ function codexTurnInput(prompt: AgentPrompt): UserInput[] {
 
 export class CodexAdapter implements HarnessAdapter {
   readonly provider = 'codex' as const;
+
+  private readonly resumes = new Map<string, Promise<CodexResumeResponse>>();
 
   constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath } = {}) {}
 
@@ -159,19 +163,35 @@ export class CodexAdapter implements HarnessAdapter {
 
   async readLastRun(ref: ConversationRef): Promise<ModelChoice | undefined> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
-    // The thread/resume response is the protocol surface that carries the
-    // thread's model and effort. The thread stays subscribed, as it does
-    // after continueConversation: this connection is shared, and
-    // unsubscribing would also silence a run streaming on it.
-    const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: await this.canonicalPath(ref.projectPath) });
+    const resumed = await this.resumeThread(ref);
     if (!resumed.model) return undefined;
     return resumed.reasoningEffort ? { model: resumed.model, effort: resumed.reasoningEffort } : { model: resumed.model };
+  }
+
+  async readAccess(ref: ConversationRef): Promise<AccessState | undefined> {
+    if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    return codexAccessState(await this.resumeThread(ref));
+  }
+
+  // The thread/resume response is the protocol surface that carries the
+  // thread's model, effort and access settings. The thread stays subscribed,
+  // as it does after continueConversation: this connection is shared, and
+  // unsubscribing would also silence a run streaming on it. Concurrent calls
+  // for one thread share a single request.
+  private resumeThread(ref: ConversationRef): Promise<CodexResumeResponse> {
+    const existing = this.resumes.get(ref.nativeSessionId);
+    if (existing) return existing;
+    const resume = this.canonicalPath(ref.projectPath)
+      .then((cwd) => this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd }))
+      .finally(() => { this.resumes.delete(ref.nativeSessionId); });
+    this.resumes.set(ref.nativeSessionId, resume);
+    return resume;
   }
 
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);
-    const resumed = await this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd: projectPath });
+    const resumed = await this.resumeThread(ref);
     if (resumed.thread.id !== ref.nativeSessionId) throw new Error('Resumed Codex thread does not match the requested thread');
     if (await this.canonicalPath(resumed.thread.cwd) !== projectPath) throw new Error('Resumed Codex project does not match the requested project');
     const queue = new NativeEventQueue();
@@ -283,6 +303,7 @@ export class CodexAdapter implements HarnessAdapter {
         // Codex applies both to this turn and the thread's later turns.
         ...(prompt.model ? { model: prompt.model } : {}),
         ...(prompt.effort ? { effort: prompt.effort } : {}),
+        ...(prompt.access?.picked && prompt.access.state.kind === 'level' ? codexAccessOverrides(prompt.access.state.level, resumed.sandbox) : {}),
       });
       turnId = started.turn.id;
       for (const traffic of bufferedTraffic.splice(0)) {
