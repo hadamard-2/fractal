@@ -167,7 +167,10 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   async readAccess(ref: ConversationRef): Promise<AccessState | undefined> {
     const mode = await readClaudeLastPermissionMode((await this.find(ref)).filePath);
-    return mode ? claudeAccessState(mode) : undefined;
+    if (!mode) return undefined;
+    const state = claudeAccessState(mode);
+    // A custom mode that cannot be sent would not be applied next turn, so Claude's default is what really runs.
+    return state.kind === 'custom' && state.mode === undefined ? undefined : state;
   }
 
   private async rereadExact(ref: ConversationRef): Promise<NativeEvent[]> {

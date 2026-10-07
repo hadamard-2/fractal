@@ -51,6 +51,8 @@ describe('Claude adapter', () => {
     const turn = { type: 'user', permissionMode: 'bypassPermissions', sessionId: 'claude-session-1', cwd: '/work/fractal', uuid: 'user-last', parentUuid: null as string | null, timestamp: '2026-09-30T00:00:00.000Z', message: { role: 'user', content: 'Go' } };
     await writeFile(file, `${source.trimEnd()}\n${JSON.stringify(turn)}\n`);
     await expect(adapter.readAccess(ref)).resolves.toEqual({ kind: 'level', level: 'bypassPermissions' });
+    await writeFile(file, `${source.trimEnd()}\n${JSON.stringify({ ...turn, permissionMode: '--weird mode' })}\n`);
+    await expect(adapter.readAccess(ref)).resolves.toBeUndefined();
     await rm(directory, { recursive: true, force: true });
   });
 
