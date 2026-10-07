@@ -15,6 +15,7 @@ type ChoiceStore = Pick<AccessChoiceStore, 'get' | 'set'>;
 export class AccessChoices {
   private readonly sources = new Map<ProviderId, AccessSource>();
   private readonly readBacks = new Map<string, AccessState | undefined>();
+  private readonly sendCounts = new Map<string, number>();
 
   constructor(
     sources: AccessSource[],
@@ -59,14 +60,17 @@ export class AccessChoices {
     const key = conversationKey(ref);
     if (access?.picked) this.store.set(key, { state: access.state, sent: true });
     this.readBacks.delete(key);
+    this.sendCounts.set(key, (this.sendCounts.get(key) ?? 0) + 1);
   }
 
   private async readBack(ref: ConversationRef): Promise<AccessState | undefined> {
     const key = conversationKey(ref);
     if (this.readBacks.has(key)) return this.readBacks.get(key);
+    const sendsBefore = this.sendCounts.get(key) ?? 0;
     try {
       const result = await this.sources.get(ref.provider)?.readAccess?.(ref);
-      this.readBacks.set(key, result);
+      // A send that landed while reading makes this result pre-send; the caller may use it, the cache may not.
+      if ((this.sendCounts.get(key) ?? 0) === sendsBefore) this.readBacks.set(key, result);
       return result;
     } catch { return undefined; }
   }

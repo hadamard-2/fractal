@@ -55,6 +55,40 @@ describe('AccessChoices', () => {
     expect(readAccess).toHaveBeenCalledTimes(2);
   });
 
+  test('drops the cached read-back when a picked state is sent', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => level('default'));
+    const { choices } = setup(readAccess);
+    await choices.resolve(claudeRef);
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not cache a read that a send overtook', async () => {
+    let release!: (state: AccessState) => void;
+    const readAccess = vi.fn<() => Promise<AccessState | undefined>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue(level('auto'));
+    const { choices } = setup(readAccess);
+    choices.choose(claudeRef, 'auto');
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    const inFlight = choices.resolve(claudeRef);
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    release(level('default'));
+    await expect(inFlight).resolves.toEqual({ access: { state: level('auto'), picked: true }, observed: level('default') });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('a new pick over a sent one is unsent again and reports no observed state', async () => {
+    const { choices, store } = setup(async () => level('default'));
+    store.set('claude:a', { state: level('auto'), sent: true });
+    await expect(choices.resolve(claudeRef)).resolves.toMatchObject({ observed: level('default') });
+    choices.choose(claudeRef, 'plan');
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: false });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: true } });
+  });
+
   test('caches an absent read-back too', async () => {
     const readAccess = vi.fn(async (): Promise<AccessState | undefined> => undefined);
     const { choices } = setup(readAccess);
