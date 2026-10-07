@@ -28,7 +28,7 @@ export function ModelPicker({ models, choice, onChoose, onOpen }: Props) {
       <DropdownMenu onOpenChange={(open) => { if (open) onOpen(); }}>
         <Trigger className="max-w-48" label="Model">{selected?.label ?? 'Default'}</Trigger>
         {/* Both menus open above the composer with every option in view. */}
-        <DropdownMenuContent align="start" side="top">
+        <DropdownMenuContent align="end" side="top">
           {primary.map(modelOption)}
           {more.length > 0 && (
             <>
@@ -45,7 +45,7 @@ export function ModelPicker({ models, choice, onChoose, onOpen }: Props) {
       {selected && selected.efforts.length > 0 && (
         <DropdownMenu>
           <Trigger className="capitalize" label="Effort">{effort ?? 'Default'}</Trigger>
-          <DropdownMenuContent align="start" side="top">
+          <DropdownMenuContent align="end" side="top">
             {/* Most effort first. */}
             {[...selected.efforts].reverse().map((level) => (
               <Option className="capitalize" current={level === effort} key={level} onSelect={() => onChoose({ model: selected.id, effort: level })}>{level}</Option>
