@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { FolderPlus, ListFilter, Search } from 'lucide-react';
+import { FolderPlus, Funnel, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavSettings } from '@/components/nav-settings';
 import { Button } from '@/components/ui/button';
@@ -23,15 +23,15 @@ import {
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import { FractalMark } from '@/components/fractal-mark';
-import type { NavSelection } from '@/components/sidebar-03/nav-main';
+import { AGENT_DOT_CLASS, providerName, type NavSelection } from '@/components/sidebar-03/nav-main';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { visibleProjects } from '@/renderer/project-visibility';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { visibleProjects, withoutAgents } from '@/renderer/project-visibility';
 import type { ProjectVisibilityState } from '@/renderer/use-project-visibility';
 import type { ProjectFilter } from '@/shared/settings-contract';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
-import type { ConversationRef, ProjectConversationGroup } from '@/shared/conversation-contract';
+import type { ConversationRef, ProjectConversationGroup, ProviderId } from '@/shared/conversation-contract';
 import { SearchDialog } from '@/components/conversation/search-dialog';
 import { useSidebarOrder } from '@/components/sidebar-03/use-sidebar-order';
 
@@ -56,6 +56,15 @@ const PLACEHOLDER_WIDTHS = ['w-32', 'w-24', 'w-40', 'w-28', 'w-20'];
 
 const FILTER_LABELS: Record<ProjectFilter, string> = { active: 'Active', archived: 'Archived', all: 'All' };
 const EMPTY_FILTER_TEXT: Partial<Record<ProjectFilter, string>> = { active: 'No active projects.', archived: 'No archived projects.' };
+// Same order as the settings dialog's agent list.
+const FILTER_AGENTS: readonly ProviderId[] = ['claude', 'codex'];
+
+/** The filter button's accessible name: the status, plus which agents show when some are hidden. */
+function filterSummary(filter: ProjectFilter, hiddenAgents: readonly ProviderId[]): string {
+  if (hiddenAgents.length === 0) return FILTER_LABELS[filter];
+  const shown = FILTER_AGENTS.filter((agent) => !hiddenAgents.includes(agent));
+  return `${FILTER_LABELS[filter]}, ${shown.length === 0 ? 'no agents' : `${shown.map(providerName).join(' and ')} only`}`;
+}
 
 /**
  * A grab strip on the sidebar's right edge. Lives inside the fixed sidebar
@@ -229,9 +238,13 @@ export function DashboardSidebar({
   const isCollapsed = state === 'collapsed';
   const [pendingRemoval, setPendingRemoval] = useState<ProjectConversationGroup | null>(null);
   const filter = projectVisibility?.filter ?? 'all';
-  const shownProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, filter) : orderedProjects;
+  const hiddenAgents = projectVisibility?.hiddenAgents ?? [];
+  const statusShownProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, filter) : orderedProjects;
+  const shownProjects = withoutAgents(statusShownProjects, hiddenAgents);
   const searchableProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, 'searchable') : orderedProjects;
-  const emptyFilterText = orderReady && projects.length > 0 && shownProjects.length === 0 ? EMPTY_FILTER_TEXT[filter] : undefined;
+  const emptyFilterText = orderReady && projects.length > 0 && shownProjects.length === 0
+    ? (statusShownProjects.length === 0 ? EMPTY_FILTER_TEXT[filter] : 'No chats from the selected agents.')
+    : undefined;
 
   return (
     <Sidebar
@@ -313,16 +326,16 @@ export function DashboardSidebar({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
-                    {/* Tinted away from the default Active view, so a different list reads as filtered. */}
+                    {/* Tinted away from the default view (Active, every agent), so a different list reads as filtered. */}
                     <SidebarGroupAction
-                      aria-label={`Filter projects by status: ${FILTER_LABELS[filter]}`}
-                      className={cn('top-1.5 right-2 text-sidebar-foreground/60', filter !== 'active' && 'text-primary-text')}
+                      aria-label={`Filter projects: ${filterSummary(filter, hiddenAgents)}`}
+                      className={cn('top-1.5 right-2 text-sidebar-foreground/60', (filter !== 'active' || hiddenAgents.length > 0) && 'text-primary-text')}
                     >
-                      <ListFilter />
+                      <Funnel />
                     </SidebarGroupAction>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
-                <TooltipContent side="right">Filter by status</TooltipContent>
+                <TooltipContent side="right">Filter</TooltipContent>
               </Tooltip>
               <DropdownMenuContent align="start" className="min-w-36" side="right">
                 <DropdownMenuLabel className="text-xs text-muted-foreground">Status</DropdownMenuLabel>
@@ -331,6 +344,20 @@ export function DashboardSidebar({
                     <DropdownMenuRadioItem key={value} value={value}>{FILTER_LABELS[value]}</DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground">Agent</DropdownMenuLabel>
+                {FILTER_AGENTS.map((agent) => (
+                  <DropdownMenuCheckboxItem
+                    checked={!hiddenAgents.includes(agent)}
+                    key={agent}
+                    onCheckedChange={(checked) => projectVisibility.setAgentShown(agent, checked)}
+                    // Stay open so several agents can be toggled in one visit.
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    <span className="flex-1">{providerName(agent)}</span>
+                    {showAgentColorTags !== false && <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', AGENT_DOT_CLASS[agent])} />}
+                  </DropdownMenuCheckboxItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

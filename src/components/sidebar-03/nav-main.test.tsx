@@ -296,7 +296,7 @@ describe('NavMain', () => {
     const user = userEvent.setup();
     const create = vi.fn(async () => fractalGroup.conversations[0].ref);
     const onCreated = vi.fn();
-    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null }) } } });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null }) } } });
     renderNav([fractalGroup], null, vi.fn(), onCreated);
 
     const project = screen.getByRole('button', { name: 'Fractal' });

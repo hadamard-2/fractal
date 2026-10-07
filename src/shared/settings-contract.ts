@@ -2,6 +2,7 @@
 // no Electron imports, no React. It is imported by
 // both the main and renderer processes; the single source of truth.
 
+import type { ProviderId } from '@/shared/conversation-contract';
 import type { FileOpenerId } from '@/shared/files-contract';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -67,6 +68,8 @@ export interface FractalSettings {
   sidebarOrder: SidebarOrder;
   projectVisibility: ProjectVisibility;
   projectFilter: ProjectFilter;
+  /** Agents whose chats the sidebar filter hides. Stored as the hidden set so an agent added later shows by default. */
+  hiddenAgents: ProviderId[];
   /** Colored per-agent dot on each sidebar chat row. */
   showAgentColorTags: boolean;
   agentExecutables: AgentExecutables;

@@ -1,19 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ProviderId } from '@/shared/conversation-contract';
 import type { FractalSettings, ProjectFilter, ProjectVisibility } from '@/shared/settings-contract';
 import { projectStatus, withProjectStatus, type ProjectStatus } from './project-visibility';
 
 const emptyVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
 
 /**
- * The archived/removed project lists and the sidebar's status filter, loaded
- * from settings and saved back on every change. One instance lives in the app
- * shell so the sidebar, search, and the new-conversation picker agree.
+ * The archived/removed project lists and the sidebar's status and agent
+ * filters, loaded from settings and saved back on every change. One instance
+ * lives in the app shell so the sidebar, search, and the new-conversation
+ * picker agree.
  */
 export function useProjectVisibility() {
   const [visibility, setVisibility] = useState<ProjectVisibility>(emptyVisibility);
   const [filter, setFilterState] = useState<ProjectFilter>('active');
+  const [hiddenAgents, setHiddenAgentsState] = useState<ProviderId[]>([]);
   const [error, setError] = useState(false);
   const visibilityRef = useRef(visibility);
+  const hiddenAgentsRef = useRef(hiddenAgents);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
@@ -25,6 +29,9 @@ export function useProjectVisibility() {
       visibilityRef.current = loaded;
       setVisibility(loaded);
       setFilterState(settings.projectFilter ?? 'active');
+      const hidden = settings.hiddenAgents ?? [];
+      hiddenAgentsRef.current = hidden;
+      setHiddenAgentsState(hidden);
     }).catch(() => {
       if (active) setError(true);
     });
@@ -47,15 +54,26 @@ export function useProjectVisibility() {
     save({ projectVisibility: next });
   };
 
+  const setAgentShown = (agent: ProviderId, shown: boolean) => {
+    const current = hiddenAgentsRef.current;
+    if (current.includes(agent) !== shown) return;
+    const next = shown ? current.filter((item) => item !== agent) : [...current, agent];
+    hiddenAgentsRef.current = next;
+    setHiddenAgentsState(next);
+    save({ hiddenAgents: next });
+  };
+
   return {
     visibility,
     filter,
+    hiddenAgents,
     error,
     statusOf: (projectPath: string) => projectStatus(visibility, projectPath),
     setFilter: (next: ProjectFilter) => {
       setFilterState(next);
       save({ projectFilter: next });
     },
+    setAgentShown,
     setStatus,
   };
 }

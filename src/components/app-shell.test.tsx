@@ -173,7 +173,8 @@ describe('home screen actions', () => {
 describe('project status', () => {
   const creatable = { ...capabilities, create: true };
   const atlasRef: ConversationRef = { provider: 'codex', nativeSessionId: 'native-atlas', projectPath: '/work/atlas' };
-  function install({ create = vi.fn<ConversationApi['create']>(async () => null), stored: initial = {} }: { create?: ConversationApi['create']; stored?: Partial<FractalSettings> } = {}) {
+  const atlasClaudeRef: ConversationRef = { provider: 'claude', nativeSessionId: 'native-atlas-claude', projectPath: '/work/atlas' };
+  function install({ create = vi.fn<ConversationApi['create']>(async () => null), stored: initial = {}, atlasClaudeChat = false }: { create?: ConversationApi['create']; stored?: Partial<FractalSettings>; atlasClaudeChat?: boolean } = {}) {
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
     window.ResizeObserver = class { observe(): void { return undefined; } unobserve(): void { return undefined; } disconnect(): void { return undefined; } };
     // Filtering shifts sortable rows, and dnd-kit animates the shift through
@@ -184,14 +185,17 @@ describe('project status', () => {
       list: async () => ({
         projects: [
           { projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Fractal chat', updatedAt: 5, runtime: 'idle', captureCompleteness: 'complete' }] },
-          { projectPath: atlasRef.projectPath, displayName: 'Atlas', conversations: [{ ref: atlasRef, title: 'Atlas chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] },
+          { projectPath: atlasRef.projectPath, displayName: 'Atlas', conversations: [
+            { ref: atlasRef, title: 'Atlas chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' },
+            ...(atlasClaudeChat ? [{ ref: atlasClaudeRef, title: 'Atlas Claude chat', updatedAt: 2, runtime: 'idle' as const, captureCompleteness: 'complete' as const }] : []),
+          ] },
         ],
         providers: [{ provider: 'codex', availability: 'available', capabilities: creatable }],
       }),
       open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
       close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, onEvent: () => () => undefined,
     };
-    let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, ...initial };
+    let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, ...initial };
     const set = vi.fn(async (patch: Partial<FractalSettings>) => { stored = { ...stored, ...patch }; return stored; });
     Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => stored, set } } });
     render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
@@ -203,7 +207,7 @@ describe('project status', () => {
     return screen.findByRole('menu');
   }
   async function chooseFilter(user: ReturnType<typeof userEvent.setup>, label: 'Active' | 'Archived' | 'All') {
-    await user.click(screen.getByRole('button', { name: /Filter projects by status/ }));
+    await user.click(screen.getByRole('button', { name: /^Filter projects/ }));
     await user.click(await screen.findByRole('menuitemradio', { name: label }));
   }
 
@@ -277,6 +281,47 @@ describe('project status', () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith({ provider: 'codex' }));
     await waitFor(() => expect(stored().projectVisibility).toEqual({ archived: [], removed: [] }));
     expect(await screen.findByRole('button', { name: 'Atlas' })).toBeTruthy();
+  });
+
+  test('the agent filter hides that agent\'s chats, drops emptied projects, and is remembered', async () => {
+    const { stored } = install({ atlasClaudeChat: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Atlas' }));
+    expect(await screen.findByText('Atlas Claude chat')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Filter projects: Active' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Codex' }));
+    // The menu stays open, so agents can be toggled together.
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Claude Code' }).getAttribute('aria-checked')).toBe('true');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(projectRow('Fractal')).toBeNull());
+    expect(screen.getByText('Atlas Claude chat')).toBeTruthy();
+    expect(screen.queryByText('Atlas chat')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Filter projects: Active, Claude Code only' })).toBeTruthy();
+    await waitFor(() => expect(stored().hiddenAgents).toEqual(['codex']));
+
+    // Search is not narrowed by the sidebar filter.
+    await user.keyboard('{Control>}k{/Control}');
+    expect(await screen.findByRole('button', { name: /Fractal chat/ })).toBeTruthy();
+    await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('button', { name: /^Filter projects/ }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Claude Code' }));
+    expect(await screen.findByText('No chats from the selected agents.')).toBeTruthy();
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Codex' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'Claude Code' }));
+    await user.keyboard('{Escape}');
+    expect(await screen.findByRole('button', { name: 'Fractal' })).toBeTruthy();
+    await waitFor(() => expect(stored().hiddenAgents).toEqual([]));
+  });
+
+  test('the agent filter loads from settings', async () => {
+    install({ atlasClaudeChat: true, stored: { hiddenAgents: ['claude'] } });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Atlas' }));
+    expect(await screen.findByText('Atlas chat')).toBeTruthy();
+    expect(screen.queryByText('Atlas Claude chat')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Filter projects: Active, Codex only' })).toBeTruthy();
   });
 
   test('removing the project of the open conversation closes it', async () => {

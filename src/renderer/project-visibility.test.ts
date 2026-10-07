@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { ProjectVisibility } from '@/shared/settings-contract';
-import { projectStatus, visibleProjects, withProjectStatus } from './project-visibility';
+import { projectStatus, visibleProjects, withoutAgents, withProjectStatus } from './project-visibility';
 
 const empty: ProjectVisibility = { archived: [], removed: [] };
 const projects = [{ projectPath: '/a' }, { projectPath: '/b' }, { projectPath: '/c' }];
@@ -28,5 +28,17 @@ describe('project visibility', () => {
     expect(paths('all')).toEqual(['/a', '/b']);
     expect(paths('searchable')).toEqual(['/a', '/b']);
     expect(paths('startable')).toEqual(['/a']);
+  });
+
+  test('hides the chosen agents\' chats and drops projects left empty', () => {
+    const chat = (provider: 'claude' | 'codex') => ({ ref: { provider } });
+    const groups = [
+      { projectPath: '/mixed', conversations: [chat('claude'), chat('codex')] },
+      { projectPath: '/codex', conversations: [chat('codex')] },
+    ];
+    expect(withoutAgents(groups, [])).toBe(groups);
+    expect(withoutAgents(groups, ['codex'])).toEqual([{ projectPath: '/mixed', conversations: [chat('claude')] }]);
+    expect(withoutAgents(groups, ['claude']).map((group) => group.conversations.length)).toEqual([1, 1]);
+    expect(withoutAgents(groups, ['claude', 'codex'])).toEqual([]);
   });
 });

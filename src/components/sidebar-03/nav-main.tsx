@@ -44,6 +44,9 @@ export type NavSelection = {
 export const providerName = (provider: ConversationRef['provider']) =>
   provider === 'claude' ? 'Claude Code' : 'Codex';
 
+/** The per-agent color tag on chat rows and the sidebar's agent filter. */
+export const AGENT_DOT_CLASS: Record<ConversationRef['provider'], string> = { claude: 'bg-[#D97757]', codex: 'bg-[#3941FF]' };
+
 export function runtimeLabel(runtime: ConversationRuntime): string {
   switch (runtime) {
     case 'idle': return 'Idle';
@@ -327,7 +330,7 @@ export default function NavMain({
                             {showAgentColorTags && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${conversation.ref.provider === 'claude' ? 'bg-[#D97757]' : 'bg-[#3941FF]'}`} />
+                                  <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', AGENT_DOT_CLASS[conversation.ref.provider])} />
                                 </TooltipTrigger>
                                 <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
                               </Tooltip>

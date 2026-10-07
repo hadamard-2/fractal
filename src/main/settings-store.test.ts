@@ -13,8 +13,8 @@ test('persists the coding agent alongside theme and sidebar order', () => {
   const store = new SettingsStore(dir);
   const sidebarOrder = { projects: ['/work/atlas', '/work/fractal'], chatsByProject: { '/work/fractal': ['codex:a', 'claude:b'] } };
   const agentExecutables = { claude: '', codex: '' };
-  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables, fileOpener: null });
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: false, agentExecutables, fileOpener: null });
+  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null });
 });
 
 test('keeps older settings files valid and filters malformed saved order', () => {
@@ -22,7 +22,7 @@ test('keeps older settings files valid and filters malformed saved order', () =>
   dirs.push(dir);
   const file = path.join(dir, 'settings.json');
   writeFileSync(file, JSON.stringify({ theme: 'light' }));
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null });
 
   writeFileSync(file, JSON.stringify({ theme: 'light', sidebarOrder: { projects: ['/a', 4, '/a'], chatsByProject: { '/a': ['codex:x', null, 'codex:x'] } } }));
   expect(new SettingsStore(dir).load().sidebarOrder).toEqual({ projects: ['/a'], chatsByProject: { '/a': ['codex:x'] } });
@@ -47,6 +47,19 @@ test('persists project visibility and the sidebar filter, and repairs malformed 
   // A path in both lists is removed: removal is the stronger state.
   writeFileSync(file, JSON.stringify({ projectVisibility: { archived: ['/a', 3, '/b', '/a'], removed: ['/b', null] }, projectFilter: 'sometimes' }));
   expect(new SettingsStore(dir).load()).toMatchObject({ projectVisibility: { archived: ['/a'], removed: ['/b'] }, projectFilter: 'active' });
+});
+
+test('persists hidden agents, keeping only known agents once each', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fractal-settings-'));
+  dirs.push(dir);
+  const file = path.join(dir, 'settings.json');
+  const store = new SettingsStore(dir);
+  store.save({ ...store.load(), hiddenAgents: ['codex'] });
+  expect(new SettingsStore(dir).load().hiddenAgents).toEqual(['codex']);
+  writeFileSync(file, JSON.stringify({ hiddenAgents: ['claude', 'gemini', 3, 'claude'] }));
+  expect(new SettingsStore(dir).load().hiddenAgents).toEqual(['claude']);
+  writeFileSync(file, JSON.stringify({ hiddenAgents: 'codex' }));
+  expect(new SettingsStore(dir).load().hiddenAgents).toEqual([]);
 });
 
 test('shows agent color tags unless the file explicitly turns them off', () => {
