@@ -15,6 +15,8 @@ interface Loaded { root: string; snapshot: ChangesSnapshot | null; failed: boole
 interface Reader {
   /** `queue` runs the read after the one in flight; otherwise a read in flight absorbs the request. */
   read(queue: boolean): void;
+  /** Drops a read queued behind the one in flight. */
+  cancelQueued(): void;
   discard(): void;
 }
 
@@ -32,8 +34,11 @@ export function useChanges(root: string, active: boolean): ChangesView {
     let inFlight = false;
     let queued = false;
     let fingerprint: string | undefined;
-    const update = (change: Partial<Loaded>) => setLoaded((previous) => (
-      previous.root === root ? { ...previous, ...change } : { root, snapshot: null, failed: false, checkedAt: null, ...change }
+    const update = (change: Partial<Loaded>) => setLoaded((previous) => ({ ...previous, ...change }));
+    setLoaded((previous) => (
+      previous.root === root && previous.snapshot === null && !previous.failed && previous.checkedAt === null
+        ? previous
+        : { root, snapshot: null, failed: false, checkedAt: null }
     ));
     const apply = (result: ChangesResult) => {
       if (result.kind === 'error') return update({ failed: true });
@@ -59,7 +64,7 @@ export function useChanges(root: string, active: boolean): ChangesView {
         }
       });
     };
-    const self: Reader = { read, discard: () => { current = false; } };
+    const self: Reader = { read, cancelQueued: () => { queued = false; }, discard: () => { current = false; } };
     reader.current = self;
     return () => {
       self.discard();
@@ -74,6 +79,7 @@ export function useChanges(root: string, active: boolean): ChangesView {
     const stop = () => {
       clearInterval(timer);
       timer = undefined;
+      reader.current?.cancelQueued();
     };
     const start = () => {
       if (timer === undefined) timer = setInterval(() => reader.current?.read(false), CHANGES_POLL_MS);

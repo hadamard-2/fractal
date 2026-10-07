@@ -140,12 +140,51 @@ describe('useChanges', () => {
     await act(async () => { settlers['/a'](changed('from-a')); });
     expect(result.current.snapshot).toMatchObject({ fingerprint: 'from-b' });
 
+    await tick(CHANGES_POLL_MS);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenLastCalledWith('/b', 'from-b');
+    act(() => result.current.refresh());
     unmount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    settlers['/b'](changed('late'));
-    await Promise.resolve();
+    await act(async () => { settlers['/b'](changed('late')); });
+    await tick(CHANGES_POLL_MS * 3);
+    expect(read).toHaveBeenCalledTimes(3);
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+
+  test('runs no queued read once the tool is deselected or the window is hidden', async () => {
+    const settlers: Array<(result: ChangesResult) => void> = [];
+    read.mockImplementation(() => new Promise((resolve) => { settlers.push(resolve); }));
+    const { result, rerender } = renderHook(({ active }) => useChanges('/a', active), { initialProps: { active: true } });
+    expect(read).toHaveBeenCalledTimes(1);
+    act(() => result.current.refresh());
+    rerender({ active: false });
+    await act(async () => { settlers[0](changed('fp1')); });
+    await tick(CHANGES_POLL_MS * 3);
+    expect(read).toHaveBeenCalledTimes(1);
+
+    rerender({ active: true });
+    expect(read).toHaveBeenCalledTimes(2);
+    act(() => result.current.refresh());
+    setVisibility('hidden');
+    await act(async () => { settlers[1](changed('fp2')); });
+    await tick(CHANGES_POLL_MS * 3);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not re-expose an earlier state of a root revisited before the other root resolved', async () => {
+    const settlers: Array<(result: ChangesResult) => void> = [];
+    read.mockImplementation(() => new Promise((resolve) => { settlers.push(resolve); }));
+    const { result, rerender } = renderHook(({ root }) => useChanges(root, true), { initialProps: { root: '/a' } });
+    await act(async () => { settlers[0](changed('x')); });
+    expect(result.current.snapshot).toMatchObject({ fingerprint: 'x' });
+
+    rerender({ root: '/b' });
+    rerender({ root: '/a' });
+    expect(result.current).toMatchObject({ snapshot: null, failed: false, checkedAt: null });
+    expect(read).toHaveBeenCalledTimes(3);
+    await act(async () => { settlers[2](changed('y')); });
+    expect(result.current.snapshot).toMatchObject({ fingerprint: 'y' });
   });
 
   test('clears the snapshot and the failure when the root changes', async () => {
