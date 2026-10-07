@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { parseAccessState } from '@/shared/conversation-ipc';
 import { claudeAccessState, claudePermissionMode } from './claude-access';
 
 describe('Claude access mapping', () => {
@@ -19,5 +20,14 @@ describe('Claude access mapping', () => {
   test('keeps a recorded value that is not a safe mode as a label only', () => {
     expect(claudeAccessState('--dangerous flag')).toEqual({ kind: 'custom', label: '--dangerous flag' });
     expect(claudeAccessState('x'.repeat(33))).toEqual({ kind: 'custom', label: 'x'.repeat(33) });
+  });
+
+  test('keeps every read-back state within the IPC contract', () => {
+    const long = 'x'.repeat(201);
+    expect(claudeAccessState(long)).toEqual({ kind: 'custom', label: 'x'.repeat(200) });
+    for (const mode of ['auto', 'manual', 'dontAsk', '--dangerous flag', 'x'.repeat(33), long, ' dontAsk ']) {
+      const state = claudeAccessState(mode);
+      expect(parseAccessState(state)).toEqual(state);
+    }
   });
 });

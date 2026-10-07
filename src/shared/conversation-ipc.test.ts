@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ACCESS_CHANNELS, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, isSendableAccessMode, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
 
 const loadId = 'abcdef12-3456-4abc-8def-1234567890ab';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
@@ -200,6 +200,11 @@ test('parses an access state and drops unknown keys', () => {
   ];
   for (const state of bad) expect(() => parseAccessState(state)).toThrow('Invalid access');
   expect(parseAccessState({ kind: 'level', level: 'x'.repeat(64) })).toEqual({ kind: 'level', level: 'x'.repeat(64) });
+});
+
+test('recognises a mode the CLI can safely be sent', () => {
+  for (const mode of ['dontAsk', 'a', 'x'.repeat(32)]) expect(isSendableAccessMode(mode)).toBe(true);
+  for (const mode of ['', ' ', 'x'.repeat(33), 'dont-ask', '--flag', 7, undefined, null]) expect(isSendableAccessMode(mode)).toBe(false);
 });
 
 test('parses a level id', () => {

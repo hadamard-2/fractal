@@ -66,6 +66,11 @@ const RUNTIMES: readonly ConversationRuntime[] = [
 const COMPLETENESS: readonly CaptureCompleteness[] = ['complete', 'partial', 'unknown'];
 const PROVIDERS: readonly ProviderId[] = ['codex', 'claude'];
 
+/** A permission mode short and plain enough to hand to an agent CLI as a flag value. */
+export function isSendableAccessMode(value: unknown): value is string {
+  return typeof value === 'string' && ACCESS_MODE.test(value);
+}
+
 function plainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -187,7 +192,7 @@ export function parseAccessState(value: unknown): AccessState {
   if (value.kind === 'custom') {
     if (!nonblankText(value.label, MAX_ACCESS_LABEL_LENGTH)) invalidAccess();
     if (value.mode === undefined) return { kind: 'custom', label: value.label };
-    if (typeof value.mode !== 'string' || !ACCESS_MODE.test(value.mode)) invalidAccess();
+    if (!isSendableAccessMode(value.mode)) invalidAccess();
     return { kind: 'custom', label: value.label, mode: value.mode };
   }
   return invalidAccess();

@@ -315,7 +315,7 @@ export async function readClaudeLastPermissionMode(filePath: string): Promise<st
   let last: string | undefined;
   const take = (value: unknown): void => {
     const mode = objectValue(value)?.permissionMode;
-    if (typeof mode === 'string' && mode) last = mode;
+    if (typeof mode === 'string' && mode.trim()) last = mode;
   };
   for await (const chunk of createReadStream(filePath)) {
     for (const line of decoder.push(chunk as Buffer)) if (line.ok) take(line.value);

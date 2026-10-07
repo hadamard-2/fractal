@@ -46,6 +46,10 @@ describe('Claude native history', () => {
     await expect(readClaudeLastPermissionMode(file)).resolves.toBeUndefined();
     await writeFile(file, `${user('plan')}\n${user('bypassPermissions')}`);
     await expect(readClaudeLastPermissionMode(file)).resolves.toBe('bypassPermissions');
+    await writeFile(file, `${user('plan')}\n${user('   ')}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBe('plan');
+    await writeFile(file, `${user('  ')}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBeUndefined();
     await rm(directory, { recursive: true, force: true });
   });
 

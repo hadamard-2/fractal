@@ -1,8 +1,9 @@
 import { findAccessLevel } from '@/shared/access-levels';
 import type { AccessState, TurnAccess } from '@/shared/conversation-contract';
+import { isSendableAccessMode } from '@/shared/conversation-ipc';
 
-// Mirrors the custom-mode rule in conversation-ipc: a recorded value outside it is shown but never passed back to the CLI.
-const SENDABLE_MODE = /^[A-Za-z]{1,32}$/;
+// The IPC contract caps a custom label at 200 characters.
+const MAX_LABEL_LENGTH = 200;
 
 export function claudePermissionMode(access: TurnAccess | undefined): string | undefined {
   if (!access) return undefined;
@@ -13,5 +14,6 @@ export function claudeAccessState(mode: string): AccessState {
   // Claude records `manual` for what its picker calls default.
   const id = mode === 'manual' ? 'default' : mode;
   if (findAccessLevel('claude', id)) return { kind: 'level', level: id };
-  return SENDABLE_MODE.test(mode) ? { kind: 'custom', label: mode, mode } : { kind: 'custom', label: mode };
+  const label = mode.slice(0, MAX_LABEL_LENGTH);
+  return isSendableAccessMode(mode) ? { kind: 'custom', label, mode } : { kind: 'custom', label };
 }
