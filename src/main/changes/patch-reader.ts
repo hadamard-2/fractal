@@ -9,7 +9,7 @@ import {
 import { entryKind, type DiffRecord } from './git-records';
 
 export interface PatchLimits { fileMaxLines: number; fileMaxBytes: number; totalMaxBytes: number }
-export interface PatchOutcome { bodies: ChangeBody[]; truncated: boolean }
+export interface PatchOutcome { bodies: ChangeBody[]; truncated: boolean; /** Bytes kept toward the total cap. */ bytes: number }
 
 const DEFAULT_LIMITS: PatchLimits = {
   fileMaxLines: CHANGES_FILE_MAX_LINES,
@@ -166,7 +166,7 @@ export function createPatchReader(records: DiffRecord[], limits: PatchLimits = D
 
     finish(): PatchOutcome {
       if (!truncated) finalize();
-      return { bodies: bodies.map((body) => body ?? { kind: 'not-loaded' }), truncated };
+      return { bodies: bodies.map((body) => body ?? { kind: 'not-loaded' }), truncated, bytes: total };
     },
   };
 }

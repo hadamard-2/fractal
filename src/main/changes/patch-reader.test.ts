@@ -217,6 +217,7 @@ test('stops at the total cap, marking the rest not loaded', () => {
   const outcome = read(names.map((path) => record({ path })), names.map(forty).join('\n'), { fileMaxLines: 100, fileMaxBytes: 1_000, totalMaxBytes: 100 });
   expect(outcome.bodies.map((body) => body.kind)).toEqual(['hunks', 'hunks', 'not-loaded']);
   expect(outcome.truncated).toBe(true);
+  expect(outcome.bytes).toBe(80);
   expect(outcome.kept).toBe(false);
 });
 

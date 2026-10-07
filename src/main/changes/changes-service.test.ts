@@ -232,6 +232,20 @@ test('treats untracked files over the per-file bounds as too large', async () =>
   expect(byPath(files, 'long.txt')).toMatchObject({ status: 'added', added: 30, removed: 0, body: { kind: 'too-large' } });
 });
 
+test('bounds untracked files by the total shared with the tracked patch', async () => {
+  await write('tracked.txt', 't\n');
+  commitAll();
+  await write('tracked.txt', 't2\n');
+  await write('a-new.txt', 'aaaa\n');
+  await write('b-new.txt', 'bbbb\n');
+  // the tracked patch keeps 19 bytes, the first untracked file 5 more; the second would pass 25
+  const { files, truncated } = await changes({ limits: { fileMaxLines: 5_000, fileMaxBytes: 1_000_000, totalMaxBytes: 25 } });
+  expect(truncated).toBe(true);
+  expect(byPath(files, 'tracked.txt').body.kind).toBe('hunks');
+  expect(byPath(files, 'a-new.txt')).toMatchObject({ added: 1, body: { kind: 'hunks' } });
+  expect(byPath(files, 'b-new.txt')).toMatchObject({ added: null, removed: null, body: { kind: 'not-loaded' } });
+});
+
 test('shows only the project folder of a larger repository, relative to it', async () => {
   await mkdir(join(root, 'app'));
   await mkdir(join(root, 'other'));

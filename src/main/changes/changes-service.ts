@@ -77,6 +77,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
 
   let bodies: ChangeBody[] = [];
   let truncated = false;
+  let keptBytes = 0;
   if (records.length > 0) {
     const reader = createPatchReader(records, limits);
     const streamed = await streamGitLines(
@@ -85,7 +86,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
       reader.onLine,
     );
     if (streamed.code !== 0 && !streamed.stopped) return READ_ERROR;
-    ({ bodies, truncated } = reader.finish());
+    ({ bodies, truncated, bytes: keptBytes } = reader.finish());
   }
 
   const files = new Map<string, ChangedFile>();
@@ -96,13 +97,14 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
     if (existing === undefined || (existing.body.kind !== 'hunks' && file.body.kind === 'hunks')) files.set(file.path, file);
   }
 
-  for (const path of status.untracked) {
-    const file = await untrackedFile(root, path, limits, deps);
+  const budget: TotalBudget = { used: keptBytes, exhausted: false };
+  for (const path of [...status.untracked].sort()) {
+    const file = await untrackedFile(root, path, limits, budget, deps);
     if (file !== undefined && !files.has(file.path)) files.set(file.path, file);
   }
 
   const sorted = [...files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { kind: 'changes', fingerprint: nextFingerprint, head: status.head, files: sorted, truncated };
+  return { kind: 'changes', fingerprint: nextFingerprint, head: status.head, files: sorted, truncated: truncated || budget.exhausted };
 }
 
 function collapsed(added: number | null, removed: number | null): boolean {
@@ -144,7 +146,10 @@ async function withBinarySize(root: string, record: DiffRecord, body: ChangeBody
   }
 }
 
-async function untrackedFile(root: string, path: string, limits: PatchLimits, deps: Required<ChangesDeps>): Promise<ChangedFile | undefined> {
+/** Bytes of diff kept so far in one read, shared by the tracked patch and untracked files. */
+interface TotalBudget { used: number; exhausted: boolean }
+
+async function untrackedFile(root: string, path: string, limits: PatchLimits, budget: TotalBudget, deps: Required<ChangesDeps>): Promise<ChangedFile | undefined> {
   if (path.endsWith('/')) {
     return { path: path.slice(0, -1), status: 'added', added: null, removed: null, collapsed: false, body: { kind: 'folder' } };
   }
@@ -155,6 +160,8 @@ async function untrackedFile(root: string, path: string, limits: PatchLimits, de
   try {
     const absolute = join(root, path);
     const stats = await deps.lstat(absolute);
+
+    if ((stats.isSymbolicLink() || stats.isFile()) && budget.exhausted) return entry({ kind: 'not-loaded' }, null);
 
     if (stats.isSymbolicLink()) {
       return entry(hunkBody([{ kind: 'added', text: await readlink(absolute), newNumber: 1 }, { kind: 'no-newline', text: NO_NEWLINE }]), 1);
@@ -175,6 +182,11 @@ async function untrackedFile(root: string, path: string, limits: PatchLimits, de
       newNumber: index + 1,
     }));
     if (rows.length > limits.fileMaxLines || bytes.length > limits.fileMaxBytes) return entry({ kind: 'too-large' }, rows.length);
+    if (budget.used + bytes.length > limits.totalMaxBytes) {
+      budget.exhausted = true;
+      return entry({ kind: 'not-loaded' }, null);
+    }
+    budget.used += bytes.length;
     if (!endsWithNewline) lines.push({ kind: 'no-newline', text: NO_NEWLINE });
     return entry(hunkBody(lines), rows.length);
   } catch {
