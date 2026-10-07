@@ -190,7 +190,7 @@ const loadWindow = (mainWindow: BrowserWindow) => {
 app.on('ready', () => {
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
-  const settingsStore = registerSettingsIpc(agentEnvironment);
+  const settingsStore = registerSettingsIpc(agentEnvironment, () => mainWindowRef);
   terminalService = new TerminalService(createNativePty);
   terminalRegistration = registerTerminalIpc(terminalService, () => mainWindowRef);
   const window = createWindow();

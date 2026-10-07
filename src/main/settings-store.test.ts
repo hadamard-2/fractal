@@ -13,8 +13,8 @@ test('persists the coding agent alongside theme and sidebar order', () => {
   const store = new SettingsStore(dir);
   const sidebarOrder = { projects: ['/work/atlas', '/work/fractal'], chatsByProject: { '/work/fractal': ['codex:a', 'claude:b'] } };
   const agentExecutables = { claude: '', codex: '' };
-  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null });
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null });
+  store.save({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null, allowDangerousAccess: {} });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'dark', defaultCodingAgent: 'ask', sidebarOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: false, agentExecutables, fileOpener: null, allowDangerousAccess: {} });
 });
 
 test('keeps older settings files valid and filters malformed saved order', () => {
@@ -22,7 +22,7 @@ test('keeps older settings files valid and filters malformed saved order', () =>
   dirs.push(dir);
   const file = path.join(dir, 'settings.json');
   writeFileSync(file, JSON.stringify({ theme: 'light' }));
-  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null });
+  expect(new SettingsStore(dir).load()).toEqual({ theme: 'light', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {} });
 
   writeFileSync(file, JSON.stringify({ theme: 'light', sidebarOrder: { projects: ['/a', 4, '/a'], chatsByProject: { '/a': ['codex:x', null, 'codex:x'] } } }));
   expect(new SettingsStore(dir).load().sidebarOrder).toEqual({ projects: ['/a'], chatsByProject: { '/a': ['codex:x'] } });
@@ -98,4 +98,22 @@ test('persists the file opener and drops unknown ones', () => {
   expect(new SettingsStore(dir).load().fileOpener).toBe('zed');
   writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ fileOpener: 'emacs' }));
   expect(new SettingsStore(dir).load().fileOpener).toBeNull();
+});
+
+test('a missing or malformed allowDangerousAccess loads as empty', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fractal-settings-'));
+  dirs.push(dir);
+  const file = path.join(dir, 'settings.json');
+  expect(new SettingsStore(dir).load().allowDangerousAccess).toEqual({});
+  for (const value of ['yes', null, [true], 3]) {
+    writeFileSync(file, JSON.stringify({ allowDangerousAccess: value }));
+    expect(new SettingsStore(dir).load().allowDangerousAccess).toEqual({});
+  }
+});
+
+test('allowDangerousAccess keeps only known agents set to true or false', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'fractal-settings-'));
+  dirs.push(dir);
+  writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ allowDangerousAccess: { claude: true, codex: 'yes', other: true } }));
+  expect(new SettingsStore(dir).load().allowDangerousAccess).toEqual({ claude: true });
 });
