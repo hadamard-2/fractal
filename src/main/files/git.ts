@@ -1,24 +1,6 @@
 import { spawn } from 'node:child_process';
+import { gitEnvironment, runGit } from '@/main/git';
 import type { FileList } from '@/shared/files-contract';
-
-// Read at call time: main adds the login shell's PATH after this module loads.
-// GIT_OPTIONAL_LOCKS=0 keeps these read-only queries from taking the index lock.
-const gitEnvironment = () => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
-
-/** Runs git in `cwd`. Resolves with a null code when git could not be started. */
-export function runGit(cwd: string, args: string[], input?: string): Promise<{ code: number | null; stdout: string }> {
-  return new Promise((resolve) => {
-    const child = spawn('git', ['-C', cwd, ...args], { shell: false, stdio: ['pipe', 'pipe', 'ignore'], env: gitEnvironment() });
-    let stdout = '';
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.once('error', () => resolve({ code: null, stdout: '' }));
-    child.once('close', (code) => resolve({ code, stdout }));
-    // git can exit before reading all of stdin; the exit code still says what happened.
-    child.stdin.on('error', () => undefined);
-    child.stdin.end(input ?? '');
-  });
-}
 
 /** Which of `names` in `directory` git ignores; none outside a repository or without git. */
 export async function ignoredNames(directory: string, names: string[]): Promise<Set<string>> {

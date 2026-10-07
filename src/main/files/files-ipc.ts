@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { createOwnerTracker, type IpcOwner } from '@/main/ipc-owners';
+import { createRootCheck, UnknownProjectError } from '@/main/project-roots';
 import { FILES_CHANNELS, parseFilesRequest, type FilesEvent, type FilesRequest, type OpenAction, type OpenResult } from '@/shared/files-contract';
 import type { DetectedEditor } from './editors';
 import { listDirectory, listProjectFiles, readProjectFile } from './file-service';
@@ -15,19 +16,9 @@ export interface FilesIpcDeps {
   open(action: OpenAction, target: { root: string; file: string; line?: number }): Promise<OpenResult>;
 }
 
-class UnknownProjectError extends Error {
-  override name = 'UnknownProjectError';
-}
-
 export function registerFilesIpc(deps: FilesIpcDeps, getWindow: () => BrowserWindow | null): { dispose(): void } {
   const owners = createOwnerTracker(getWindow, (owner) => deps.watches.closeOwner(owner), 'Unauthorized files sender');
-  const knownRoots = new Set<string>();
-
-  const checkRoot = async (root: string) => {
-    if (knownRoots.has(root)) return;
-    if (!(await deps.knowsProject(root))) throw new UnknownProjectError('Unknown project');
-    knownRoots.add(root);
-  };
+  const checkRoot = createRootCheck(deps.knowsProject);
 
   const sendTo = (owner: IpcOwner) => (event: FilesEvent) => {
     if (owner.closed || owner.sender.isDestroyed()) return;
