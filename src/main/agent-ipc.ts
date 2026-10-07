@@ -6,8 +6,9 @@ import { AttachmentError, resolveAttachments } from '@/main/attachments/resolve'
 import { readAttachmentPreview } from '@/main/attachments/preview';
 import type { ConversationService } from '@/main/conversation-service';
 import { canonicalizeProjectPath } from '@/main/harness/project-path';
+import type { AccessChoices } from '@/main/access-choices';
 import type { ModelChoices } from '@/main/model-choices';
-import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ProviderId, type TurnAccess } from '@/shared/conversation-contract';
 import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 
 type Owner = { sender: WebContents; closed: boolean; detach: () => void };
@@ -15,7 +16,7 @@ type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
 type Registration = { emit: (payload: unknown) => void; dispose: () => Promise<void> };
 let activeRegistration: { service: ConversationService; registration: Registration } | undefined;
 
-export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'> }): Registration {
+export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>; accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend'> }): Registration {
   if (activeRegistration) {
     if (activeRegistration.service !== service) throw new Error('Conversation IPC is already registered');
     return activeRegistration.registration;
@@ -27,6 +28,9 @@ export function registerConversationIpc(service: ConversationService, getWindow:
   };
   const recordChoice = (ref: ConversationRef, model: string | undefined, effort: string | undefined): void => {
     try { options.modelChoices?.recordSend(ref, model ? { model, ...(effort ? { effort } : {}) } : null); } catch { /* See above. */ }
+  };
+  const recordAccess = (ref: ConversationRef, access: TurnAccess | undefined): void => {
+    try { options.accessChoices?.recordSend(ref, access); } catch { /* See above. */ }
   };
   const owners = new Map<WebContents, Owner>();
   const loads = new Map<string, OwnedLoad>();
@@ -170,9 +174,12 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     });
     invoke(CHANNELS.continue, 2, ([input, promptInput], owner) => {
       const ref = parseConversationRef(input), prompt = parsePromptInput(promptInput); requireLoad(owner, ref);
+      // Here rather than in the returned run: only errors thrown in this phase reach the renderer with their own message.
+      options.accessChoices?.validateSend(ref, prompt.access);
       return async () => {
         await service.continue(ref, await resolveAttachments(prompt, { root: options.attachmentsRoot, ref }), String(owner.sender.id));
         recordChoice(ref, prompt.model, prompt.effort);
+        recordAccess(ref, prompt.access);
       };
     });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {

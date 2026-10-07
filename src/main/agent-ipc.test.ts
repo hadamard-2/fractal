@@ -5,6 +5,7 @@ import * as boundary from '@/main/agent-ipc';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import type { HarnessAdapter } from '@/main/harness/types';
+import type { AccessChoices } from '@/main/access-choices';
 import type { ModelChoices } from '@/main/model-choices';
 
 const electron = vi.hoisted(() => ({
@@ -45,7 +46,7 @@ class Sender extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   destroy() { this.destroyed = true; this.emit('destroyed'); }
 }
-function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>) {
+function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend'>) {
   const service = {
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
@@ -56,7 +57,7 @@ function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>) {
   const sender = new Sender();
   let current = sender;
   const getWindow = () => ({ webContents: current, isDestroyed: () => current.destroyed }) as unknown as BrowserWindow;
-  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow, { attachmentsRoot: '/data/attachments', ...(modelChoices ? { modelChoices } : {}) });
+  const register = () => boundary.registerConversationIpc(service as unknown as ConversationService, getWindow, { attachmentsRoot: '/data/attachments', ...(modelChoices ? { modelChoices } : {}), ...(accessChoices ? { accessChoices } : {}) });
   const registration = register();
   const invokeAs = async (source: Sender, channel: string, ...args: unknown[]) => {
     const handler = electron.handlers.get(`fractal:conversations:${channel}`);
@@ -332,5 +333,38 @@ describe('conversation IPC', () => {
     await expect(f.invoke('create', { provider: 'codex', projectPath: '/tmp' })).resolves.toEqual(ref);
     await f.invoke('open', ref, loadId);
     await expect(f.invoke('continue', ref, { text: 'Go', model: 'gpt-5.5' })).resolves.toBeUndefined();
+  });
+  describe('access on send', () => {
+    const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
+    test('validates before sending and records after', async () => {
+      const order: string[] = [];
+      const accessChoices = { validateSend: vi.fn(() => { order.push('validate'); }), recordSend: vi.fn(() => { order.push('record'); }) };
+      const f = fixture(undefined, accessChoices);
+      f.service.continue.mockImplementation(async () => { order.push('continue'); });
+      await f.invoke('open', ref, loadId);
+      await f.invoke('continue', ref, { text: 'Go', access });
+      expect(accessChoices.validateSend).toHaveBeenCalledWith(ref, access);
+      expect(accessChoices.recordSend).toHaveBeenCalledWith(ref, access);
+      expect(order).toEqual(['validate', 'continue', 'record']);
+      await f.invoke('continue', ref, { text: 'Again' });
+      expect(accessChoices.recordSend).toHaveBeenLastCalledWith(ref, undefined);
+    });
+
+    test('a rejected access reaches the renderer verbatim and nothing is sent', async () => {
+      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn() };
+      const f = fixture(undefined, accessChoices);
+      await f.invoke('open', ref, loadId);
+      await expect(f.invoke('continue', ref, { text: 'Go', access })).rejects.toThrow('Bypass is turned off in Settings');
+      expect(f.service.continue).not.toHaveBeenCalled();
+      expect(accessChoices.recordSend).not.toHaveBeenCalled();
+    });
+
+    test('a failing record does not fail the send', async () => {
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(() => { throw new Error('disk full'); }) };
+      const f = fixture(undefined, accessChoices);
+      await f.invoke('open', ref, loadId);
+      await expect(f.invoke('continue', ref, { text: 'Go', access })).resolves.toBeUndefined();
+      expect(f.service.continue).toHaveBeenCalled();
+    });
   });
 });

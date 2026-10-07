@@ -16,6 +16,9 @@ import { configuredExecutable } from '@/main/harness/executable';
 import { detectEditors, openWith, type DetectedEditor } from '@/main/files/editors';
 import { FileWatchService } from '@/main/files/file-watch-service';
 import { registerFilesIpc } from '@/main/files/files-ipc';
+import { AccessChoiceStore } from '@/main/access-choice-store';
+import { AccessChoices } from '@/main/access-choices';
+import { registerAccessIpc } from '@/main/access-ipc';
 import { ModelChoiceStore } from '@/main/model-choice-store';
 import { ModelChoices } from '@/main/model-choices';
 import { registerModelIpc } from '@/main/model-ipc';
@@ -117,6 +120,7 @@ let shutdown: Promise<void> | undefined;
 let terminalService: TerminalService | undefined;
 let terminalRegistration: { dispose(): void } | undefined;
 let modelRegistration: { dispose(): void } | undefined;
+let accessRegistration: { dispose(): void } | undefined;
 let fileWatches: FileWatchService | undefined;
 let filesRegistration: { dispose(): void } | undefined;
 
@@ -220,8 +224,10 @@ app.on('ready', () => {
     // Once per launch, in the background; until a list arrives the picker shows only the current choice.
     void modelChoices.fetchCatalogs();
     modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
+    const accessChoices = new AccessChoices([codexAdapter, claudeAdapter], new AccessChoiceStore(app.getPath('userData')), (provider) => settingsStore.load().allowDangerousAccess[provider] === true);
+    accessRegistration = registerAccessIpc(accessChoices, () => mainWindowRef);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
-    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices });
+    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices, accessChoices });
     // Editors are found on first use, by which point the login shell's PATH has been merged above.
     let editors: Promise<DetectedEditor[]> | undefined;
     const detectedEditors = () => (editors ??= detectEditors(process.platform, process.env.PATH ?? ''));
@@ -249,6 +255,7 @@ app.on('before-quit', (event) => {
     filesRegistration?.dispose();
     fileWatches?.dispose();
     modelRegistration?.dispose();
+    accessRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();
