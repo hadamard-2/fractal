@@ -174,6 +174,12 @@ function blockingRequest(input: ClaudePermissionToolInput): BlockingRequest | un
       allowFreeText: !first.options?.length, status: 'open',
     };
   }
+  if (input.tool_name === 'ExitPlanMode') {
+    // Claude Code reads the plan file into the input; it is missing when the file wasn't written yet.
+    const plan = typeof input.input.plan === 'string' ? input.input.plan : '';
+    const filePath = typeof input.input.planFilePath === 'string' && input.input.planFilePath.trim() ? input.input.planFilePath : 'ExitPlanMode';
+    return { id: input.tool_use_id, kind: 'approval', provider: 'claude', title: 'Review plan', operation: filePath, plan, status: 'open' };
+  }
   const command = input.tool_name === 'Bash' ? COMMAND_INPUT.safeParse(input.input) : undefined;
   if (command && !command.success) return undefined;
   const operation = command?.success ? command.data.command : summarizeOperation(input.tool_name, input.input);

@@ -50,6 +50,22 @@ describe('ClaudePermissionBridge', () => {
     }
   });
 
+  test('routes ExitPlanMode as a plan approval carrying the plan Claude Code read from disk', async () => {
+    const onRequest = vi.fn<(request: BlockingRequest, signal: AbortSignal) => Promise<UserDecision>>(async () => ({ kind: 'deny', reason: 'Add JSDoc.' }));
+    const bridge = await ClaudePermissionBridge.start({ tempDir, onRequest });
+    try {
+      const plan: ClaudePermissionToolInput = { tool_name: 'ExitPlanMode', tool_use_id: 'plan-1', input: { plan: '# Plan', planFilePath: '/plans/x.md' } };
+      await expect(callTool(bridge, plan)).resolves.toEqual({ behavior: 'deny', message: 'Add JSDoc.' });
+      await callTool(bridge, { ...plan, tool_use_id: 'plan-2', input: {} });
+      expect(onRequest.mock.calls.map(([request]) => request)).toEqual([
+        { id: 'plan-1', kind: 'approval', provider: 'claude', title: 'Review plan', operation: '/plans/x.md', plan: '# Plan', status: 'open' },
+        { id: 'plan-2', kind: 'approval', provider: 'claude', title: 'Review plan', operation: 'ExitPlanMode', plan: '', status: 'open' },
+      ]);
+    } finally {
+      await bridge.dispose();
+    }
+  });
+
   test('routes AskUserQuestion separately and returns renderer answers as updated input', async () => {
     const onRequest = vi.fn(async () => ({ kind: 'answer', answers: { deploy: 'Production' } } as const));
     const bridge = await ClaudePermissionBridge.start({ tempDir, onRequest });

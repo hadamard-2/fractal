@@ -8,6 +8,7 @@ import { AgentAction, UnsupportedActivity } from './agent-action';
 import { BlockingRequest } from './blocking-request';
 import { ConversationImages } from './conversation-images';
 import { MessageAttachments } from './message-attachments';
+import { PlanBlock } from './plan-block';
 import { CodeBlockTerminalActions } from './code-block-terminal-actions';
 import { WorkPacket, workPacketSummary } from './work-packet';
 
@@ -26,16 +27,22 @@ function answerStart(blocks: TurnBlock[]): number {
  * Splits a finished turn at the start of the message the provider marked as ending it.
  * Without that mark (a running or interrupted turn, or a provider that doesn't report it)
  * nothing is split, since there's no recorded answer to separate the work from.
+ * A plan is lifted out of the work into its own fold, ahead of it.
  */
-export function splitTurnWork(turn: ConversationTurnData): { lead: TurnBlock[]; work: TurnBlock[]; answer: TurnBlock[] } {
+export function splitTurnWork(turn: ConversationTurnData): { lead: TurnBlock[]; plans: TurnBlock[]; work: TurnBlock[]; answer: TurnBlock[] } {
   // Notices that open a turn say what started it (a background task finishing, a slash command's
   // output), so they stay visible rather than folding into the work.
   let leadEnd = 0;
   while (turn.blocks[leadEnd]?.kind === 'system-notice') leadEnd += 1;
   const start = turn.status === 'active' ? -1 : answerStart(turn.blocks);
-  return start > leadEnd
-    ? { lead: turn.blocks.slice(0, leadEnd), work: turn.blocks.slice(leadEnd, start), answer: turn.blocks.slice(start) }
-    : { lead: [], work: [], answer: turn.blocks };
+  if (start <= leadEnd) return { lead: [], plans: [], work: [], answer: turn.blocks };
+  const work = turn.blocks.slice(leadEnd, start);
+  return {
+    lead: turn.blocks.slice(0, leadEnd),
+    plans: work.filter((block) => block.kind === 'plan'),
+    work: work.filter((block) => block.kind !== 'plan'),
+    answer: turn.blocks.slice(start),
+  };
 }
 
 // A URL, path, or hash with no spaces would otherwise keep its full width and push the transcript sideways.
@@ -47,8 +54,12 @@ function TurnBlockView({ block, onResolve }: { block: TurnBlock; onResolve: Reso
       return <CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{block.text}</MessageResponse></CodeBlockTerminalActions>;
     case 'work-packet':
       return <WorkPacket packet={block} />;
+    case 'plan':
+      return <PlanBlock plan={block} />;
     case 'approval':
     case 'question':
+      // A plan approval's outcome is shown by the plan block.
+      if (block.request.kind === 'approval' && block.request.plan !== undefined) return null;
       return <BlockingRequest onResolve={onResolve} request={block.request} />;
     case 'system-notice':
       return <p className={`rounded border px-3 py-2 text-sm ${block.tone === 'error' ? 'border-destructive/30 text-destructive' : 'text-muted-foreground'}`}>{block.message}</p>;
@@ -90,7 +101,7 @@ function CopyResponse({ text }: { text: string }) {
 }
 
 export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
-  const { lead, work, answer } = splitTurnWork(turn);
+  const { lead, plans, work, answer } = splitTurnWork(turn);
   const { images, attachments, text } = turn.userMessage;
   // The recorded answer's markdown source, even while the turn still reads as active (a transcript
   // never records a turn ending); without an answer, a finished turn copies all of its prose.
@@ -108,6 +119,7 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
       )}
       <div className="space-y-4" aria-label="Agent response">
         {lead.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
+        {plans.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
         {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {responseText && <CopyResponse text={responseText} />}

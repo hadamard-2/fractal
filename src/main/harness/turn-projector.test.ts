@@ -340,3 +340,37 @@ describe('TurnProjector lifecycle', () => {
     });
   });
 });
+
+describe('plan projection', () => {
+  const request = (id: string, plan: string) => ({ id, kind: 'approval' as const, provider: 'claude' as const, title: 'Review plan', operation: '/plans/x.md', plan, status: 'open' as const });
+
+  test('keeps one plan per turn, moved to the end by each new proposal, with earlier drafts and feedback', () => {
+    const [turn] = projectTurns([
+      event('u1', 1, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'Plan first' }),
+      event('read', 2, { kind: 'action-requested', turnId: 't1', actionId: 'read', actionKind: 'file-read', label: 'greet.js' }),
+      event('p1', 3, { kind: 'plan-proposed', turnId: 't1', planId: 'p1' }),
+      event('p1:opened', 4, { kind: 'request-opened', turnId: 't1', request: request('p1', '# Draft') }),
+      event('p1:resolved', 5, { kind: 'request-resolved', turnId: 't1', requestId: 'p1', decision: { kind: 'deny', reason: 'Add JSDoc.' } }),
+      event('edit', 6, { kind: 'action-requested', turnId: 't1', actionId: 'edit', actionKind: 'file-edit', label: '/plans/x.md' }),
+      event('p2', 7, { kind: 'plan-proposed', turnId: 't1', planId: 'p2', text: '# Final' }),
+      event('p2:decided', 8, { kind: 'plan-decided', turnId: 't1', planId: 'p2', approved: true, text: '# Final' }),
+      event('t1:done', 9, { kind: 'turn-finished', turnId: 't1', status: 'completed' }),
+    ]);
+
+    expect(turn.blocks.map((block) => block.kind)).toEqual(['work-packet', 'approval', 'work-packet', 'plan']);
+    expect(turn.blocks.at(-1)).toEqual({ id: 'plan:p1', kind: 'plan', provider: 'codex', proposals: [
+      { id: 'p1', status: 'rejected', text: '# Draft', feedback: 'Add JSDoc.' },
+      { id: 'p2', status: 'approved', text: '# Final' },
+    ] });
+  });
+
+  test('a plan the turn ended on without a decision reads as not reviewed', () => {
+    const [turn] = projectTurns([
+      event('u1', 1, { kind: 'turn-started', turnId: 't1', userMessageId: 'u1', text: 'Plan first' }),
+      event('p1:opened', 2, { kind: 'request-opened', turnId: 't1', request: request('p1', '') }),
+      event('t1:done', 3, { kind: 'turn-finished', turnId: 't1', status: 'interrupted' }),
+    ]);
+    expect(turn.blocks.find((block) => block.kind === 'plan')).toMatchObject({ proposals: [{ id: 'p1', status: 'interrupted' }] });
+    expect(turn.blocks.find((block) => block.kind === 'plan')).not.toHaveProperty('proposals.0.text');
+  });
+});

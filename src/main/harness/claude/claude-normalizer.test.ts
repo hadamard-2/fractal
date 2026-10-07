@@ -249,6 +249,34 @@ describe('normalizeClaudeRecord', () => {
     for (const record of kept) expect(normalizeClaudeRecord(record, 9, context)).toMatchObject([{ payload: { kind: 'unsupported' } }]);
   });
 
+  test('drops plan mode markers and turns ExitPlanMode calls into plan proposals and decisions', () => {
+    const context = createClaudeNormalizationContext();
+    normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Plan first' } }, 0, context);
+    for (const [ordinal, type] of ['plan_mode', 'plan_mode_exit', 'credential_org'].entries()) {
+      expect(normalizeClaudeRecord({ type: 'attachment', uuid: `a${ordinal}`, parentUuid: 'u1', attachment: { type } }, ordinal + 1, context)).toEqual([]);
+    }
+    const call = (uuid: string, id: string, input: Record<string, unknown>) => normalizeClaudeRecord({ type: 'assistant', uuid, parentUuid: 'u1', message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input }] } }, 5, context);
+    const result = (uuid: string, block: Record<string, unknown>, extra: Record<string, unknown> = {}) => normalizeClaudeRecord({ type: 'user', uuid, parentUuid: 'u1', ...extra, message: { role: 'user', content: [{ type: 'tool_result', ...block }] } }, 6, context);
+
+    expect(call('r1', 'p1', {})).toEqual([expect.objectContaining({ payload: { kind: 'plan-proposed', turnId: 'u1', planId: 'p1' } })]);
+    expect(result('t1', { tool_use_id: 'p1', is_error: true, content: 'Also add a JSDoc comment.' })).toEqual([
+      expect.objectContaining({ payload: { kind: 'plan-decided', turnId: 'u1', planId: 'p1', approved: false, feedback: 'Also add a JSDoc comment.' } }),
+    ]);
+    expect(call('r2', 'p2', { plan: '# Plan v2', planFilePath: '/plans/x.md' })).toMatchObject([{ payload: { kind: 'plan-proposed', planId: 'p2', text: '# Plan v2' } }]);
+    expect(result('t2', { tool_use_id: 'p2', content: 'User has approved your plan.\n\n## Approved Plan:\n# Plan v2' }, { toolUseResult: { plan: '# Plan v2 (recorded)' } })).toMatchObject([
+      { payload: { kind: 'plan-decided', planId: 'p2', approved: true, text: '# Plan v2 (recorded)' } },
+    ]);
+    call('r3', 'p3', {});
+    expect(result('t3', { tool_use_id: 'p3', content: [{ type: 'text', text: 'User has approved your plan.\n\n## Approved Plan:\n# Plan v3' }] })).toMatchObject([
+      { payload: { kind: 'plan-decided', planId: 'p3', approved: true, text: '# Plan v3' } },
+    ]);
+  });
+
+  test('reads a ToolSearch tool_reference as the tool it loaded', () => {
+    const events = normalizeClaudeRecord({ type: 'user', uuid: 't1', parentUuid: 'u1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'search-1', content: [{ type: 'tool_reference', tool_name: 'ExitPlanMode' }] }] } }, 0, createClaudeNormalizationContext());
+    expect(events).toMatchObject([{ payload: { kind: 'action-updated', actionId: 'search-1', status: 'completed', output: 'Loaded tool: ExitPlanMode' } }]);
+  });
+
   test('keeps the turn chain through a dropped bookkeeping record', () => {
     const context = createClaudeNormalizationContext();
     normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Hi' } }, 0, context);

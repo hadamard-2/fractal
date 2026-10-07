@@ -4,6 +4,7 @@ import type {
   CaptureCompleteness,
   ConversationImage,
   ConversationTurn,
+  PlanProposal,
   TurnBlock,
 } from '@/shared/conversation-contract';
 import { splitAttachmentBlock } from '@/main/harness/attachment-block';
@@ -53,6 +54,7 @@ export class TurnProjector {
   private actionById = new Map<string, AgentAction>();
   private pendingActionResults = new Map<string, PendingActionResult>();
   private requestById = new Map<string, Extract<TurnBlock, { kind: 'approval' | 'question' }>>();
+  private plan: Extract<TurnBlock, { kind: 'plan' }> | null = null;
   private unanchoredUnsupported: Extract<TurnBlock, { kind: 'unsupported' }>[] = [];
   private unanchoredCompleteness: CaptureCompleteness = 'complete';
   private finishEmitted = false;
@@ -85,6 +87,16 @@ export class TurnProjector {
       case 'request-resolved':
         this.projectRequestResolved(event);
         break;
+      case 'plan-proposed':
+        this.proposePlan(event, event.payload.planId, event.payload.text);
+        break;
+      case 'plan-decided': {
+        const proposal = this.proposePlan(event, event.payload.planId);
+        proposal.status = event.payload.approved ? 'approved' : 'rejected';
+        if (event.payload.text) proposal.text = event.payload.text;
+        if (event.payload.feedback) proposal.feedback = event.payload.feedback;
+        break;
+      }
       case 'turn-finished':
         this.finalizeCurrent(event.payload.status, event.observedAt);
         this.finishEmitted = true;
@@ -138,6 +150,7 @@ export class TurnProjector {
       this.actionById = new Map();
       this.pendingActionResults = new Map();
       this.requestById = new Map();
+      this.plan = null;
       this.finishEmitted = true;
       updates.push({
         finalized: true,
@@ -177,6 +190,7 @@ export class TurnProjector {
     this.actionById = new Map();
     this.pendingActionResults = new Map();
     this.requestById = new Map();
+    this.plan = null;
     this.finishEmitted = false;
     updates.push({ turn: snapshot(this.current), finalized: false });
     return updates;
@@ -204,6 +218,7 @@ export class TurnProjector {
     this.actionById = new Map();
     this.pendingActionResults = new Map();
     this.requestById = new Map();
+    this.plan = null;
     this.finishEmitted = false;
     return updates;
   }
@@ -334,6 +349,8 @@ export class TurnProjector {
     if (!this.current || event.payload.kind !== 'request-opened') return;
     const action = this.actionById.get(event.payload.request.id);
     if (action) action.status = 'awaiting-approval';
+    const { request: opened } = event.payload;
+    if (opened.kind === 'approval' && opened.plan !== undefined) this.proposePlan(event, opened.id, opened.plan || undefined);
 
     const request = structuredClone(event.payload.request);
     const existing = this.requestById.get(request.id);
@@ -357,6 +374,31 @@ export class TurnProjector {
     if (!block) return;
     block.request.status = 'resolved';
     block.request.decision = structuredClone(event.payload.decision);
+    const { decision, requestId } = event.payload;
+    const proposal = this.plan?.proposals.find((item) => item.id === requestId);
+    if (proposal?.status === 'proposed') {
+      proposal.status = decision.kind === 'deny' ? 'rejected' : 'approved';
+      if (decision.kind === 'deny' && decision.reason) proposal.feedback = decision.reason;
+    }
+  }
+
+  /** The turn's plan proposal with this id, added as the latest one if new; a new proposal moves the plan to the end of the turn. */
+  private proposePlan(event: NativeEvent, planId: string, text?: string): PlanProposal {
+    if (!this.current) throw new Error('Cannot project a plan without a turn');
+    const existing = this.plan?.proposals.find((proposal) => proposal.id === planId);
+    if (existing) {
+      if (text) existing.text = text;
+      return existing;
+    }
+    const proposal: PlanProposal = { id: planId, status: 'proposed', ...(text ? { text } : {}) };
+    if (this.plan) {
+      this.current.blocks.splice(this.current.blocks.indexOf(this.plan), 1);
+      this.plan.proposals.push(proposal);
+    } else {
+      this.plan = { id: `plan:${planId}`, kind: 'plan', provider: event.provider, proposals: [proposal] };
+    }
+    this.current.blocks.push(this.plan);
+    return proposal;
   }
 
   private actionFromRequest(event: NativeEvent): AgentAction {
@@ -474,6 +516,9 @@ export class TurnProjector {
     this.current.status = status;
     const actionStatus = actionStatusForTurn(status);
     this.current.blocks.forEach((block) => {
+      if (block.kind === 'plan') {
+        block.proposals.forEach((proposal) => { if (proposal.status === 'proposed') proposal.status = 'interrupted'; });
+      }
       if (block.kind !== 'work-packet') return;
       this.finalizeActions(block.actions, actionStatus, observedAt);
     });

@@ -36,6 +36,14 @@ describe('splitTurnWork', () => {
     expect(splitTurnWork(turn([notice, prose('a1', true)]))).toMatchObject({ lead: [], work: [], answer: [{ id: 'n1' }, { id: 'a1' }] });
   });
 
+  test('lifts the plan out of the work into its own fold', () => {
+    const plan: TurnBlock = { id: 'plan', kind: 'plan', provider: 'claude', proposals: [{ id: 'p1', status: 'approved', text: '# Plan' }] };
+    const { plans, work, answer } = splitTurnWork(turn([packet('p1'), plan, packet('p2'), prose('a1', true)]));
+    expect(ids(plans)).toEqual(['plan']);
+    expect(ids(work)).toEqual(['p1', 'p2']);
+    expect(ids(answer)).toEqual(['a1']);
+  });
+
   test('leaves running, unmarked, and answer-only turns whole', () => {
     const blocks = [packet('p1'), prose('a1', true)];
     expect(splitTurnWork(turn(blocks, 'active')).work).toEqual([]);
@@ -55,6 +63,19 @@ describe('ConversationTurn copy button', () => {
   test('stays hidden on a running turn with no recorded answer', () => {
     render(<ConversationTurn onResolve={() => undefined} turn={turn([packet('p1'), prose('status')], 'active')} />);
     expect(copyButton()).toBeNull();
+  });
+});
+
+describe('ConversationTurn plan', () => {
+  test('folds the plan under its outcome and hides the approval it replaces', () => {
+    const plan: TurnBlock = { id: 'plan', kind: 'plan', provider: 'claude', proposals: [
+      { id: 'p1', status: 'rejected', text: '# Draft', feedback: 'Add JSDoc' },
+      { id: 'p2', status: 'approved', text: '# Final' },
+    ] };
+    const approval: TurnBlock = { id: 'p2', kind: 'approval', request: { id: 'p2', kind: 'approval', provider: 'claude', title: 'Review plan', operation: 'ExitPlanMode', plan: '# Final', status: 'resolved', decision: { kind: 'allow-once' } } };
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([packet('p1'), plan, approval, prose('a1', true)])} />);
+    expect(screen.getByRole('button', { name: 'Plan · Approved after 1 revision' })).toBeTruthy();
+    expect(screen.queryByText('Review plan')).toBeNull();
   });
 });
 

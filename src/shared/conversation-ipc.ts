@@ -15,6 +15,8 @@ import {
   type ConversationSummary,
   type ConversationTurn,
   type ModelChoice,
+  type PlanProposal,
+  type PlanProposalStatus,
   type PromptAttachment,
   type PromptInput,
   type ProviderId,
@@ -291,8 +293,8 @@ function cloneBlockingRequest(value: unknown): BlockingRequest {
   if (!plainObject(value) || !nonblankText(value.id) || !provider(value.provider) || !['open', 'resolved'].includes(String(value.status))) invalidEvent();
   const decision = value.decision === undefined ? {} : { decision: cloneUserDecision(value.decision, invalidEvent) };
   if (value.kind === 'approval') {
-    if (!text(value.title) || !text(value.operation) || (value.rememberScope !== undefined && !nonblankText(value.rememberScope, MAX_DECISION_TEXT_LENGTH))) invalidEvent();
-    return { id: value.id, kind: 'approval', provider: value.provider, title: value.title as string, operation: value.operation as string, ...(value.rememberScope === undefined ? {} : { rememberScope: value.rememberScope as string }), status: value.status as 'open' | 'resolved', ...decision };
+    if (!text(value.title) || !text(value.operation) || (value.plan !== undefined && !text(value.plan)) || (value.rememberScope !== undefined && !nonblankText(value.rememberScope, MAX_DECISION_TEXT_LENGTH))) invalidEvent();
+    return { id: value.id, kind: 'approval', provider: value.provider, title: value.title as string, operation: value.operation as string, ...(value.plan === undefined ? {} : { plan: value.plan as string }), ...(value.rememberScope === undefined ? {} : { rememberScope: value.rememberScope as string }), status: value.status as 'open' | 'resolved', ...decision };
   }
   if (value.kind === 'question') {
     if (!text(value.prompt) || !nonblankText(value.fieldId) || typeof value.allowFreeText !== 'boolean' || (value.choices !== undefined && !denseArray(value.choices))) invalidEvent();
@@ -305,6 +307,17 @@ function cloneBlockingRequest(value: unknown): BlockingRequest {
   invalidEvent();
 }
 
+function clonePlanProposal(value: unknown): PlanProposal {
+  if (!plainObject(value) || !nonblankText(value.id) || !['proposed', 'approved', 'rejected', 'interrupted'].includes(String(value.status))) invalidEvent();
+  if ((value.text !== undefined && !text(value.text)) || (value.feedback !== undefined && !text(value.feedback, MAX_DECISION_TEXT_LENGTH))) invalidEvent();
+  return {
+    id: value.id,
+    status: value.status as PlanProposalStatus,
+    ...(value.text === undefined ? {} : { text: value.text as string }),
+    ...(value.feedback === undefined ? {} : { feedback: value.feedback as string }),
+  };
+}
+
 function cloneTurnBlock(value: unknown): TurnBlock {
   if (!plainObject(value) || !nonblankText(value.id) || typeof value.kind !== 'string') invalidEvent();
   switch (value.kind) {
@@ -312,6 +325,9 @@ function cloneTurnBlock(value: unknown): TurnBlock {
       if (!text(value.text) || !provider(value.provider)) invalidEvent();
       if (value.concludesTurn !== undefined && value.concludesTurn !== true) invalidEvent();
       return { id: value.id, kind: 'assistant-prose', text: value.text, provider: value.provider, ...(value.concludesTurn ? { concludesTurn: true } : {}) };
+    case 'plan':
+      if (!provider(value.provider) || !denseArray(value.proposals) || value.proposals.length === 0) invalidEvent();
+      return { id: value.id, kind: 'plan', provider: value.provider, proposals: mapDense(value.proposals, clonePlanProposal) };
     case 'work-packet':
       if (!['active', 'completed', 'failed'].includes(String(value.status)) || !denseArray(value.actions)) invalidEvent();
       if (value.startedAt !== undefined && !finiteNumber(value.startedAt)) invalidEvent();

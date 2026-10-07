@@ -170,11 +170,25 @@ export type UserDecision =
   | { kind: 'answer'; answers: Record<string, string> };
 
 export type BlockingRequest =
-  | { id: string; kind: 'approval'; provider: ProviderId; title: string; operation: string; rememberScope?: string; status: 'open' | 'resolved'; decision?: UserDecision }
+  // plan: set when approving runs the agent's plan rather than one operation; empty when the agent proposed it unwritten.
+  | { id: string; kind: 'approval'; provider: ProviderId; title: string; operation: string; plan?: string; rememberScope?: string; status: 'open' | 'resolved'; decision?: UserDecision }
   | { id: string; kind: 'question'; provider: ProviderId; prompt: string; fieldId: string; choices?: Array<{ value: string; label: string }>; allowFreeText: boolean; status: 'open' | 'resolved'; decision?: UserDecision };
+
+export type PlanProposalStatus = 'proposed' | 'approved' | 'rejected' | 'interrupted';
+
+/** One time the agent put its plan up for approval. text is absent when the provider didn't record it. */
+export interface PlanProposal {
+  id: string;
+  status: PlanProposalStatus;
+  text?: string;
+  /** Why it wasn't approved: the user's requested changes, or the reason the provider gave. */
+  feedback?: string;
+}
 
 export type TurnBlock =
   | { id: string; kind: 'assistant-prose'; text: string; provider: ProviderId; concludesTurn?: true }
+  // Every proposal of the turn's plan, oldest first; the last one is the plan as it stands.
+  | { id: string; kind: 'plan'; provider: ProviderId; proposals: PlanProposal[] }
   | { id: string; kind: 'work-packet'; status: 'active' | 'completed' | 'failed'; actions: AgentAction[]; startedAt?: number; completedAt?: number }
   | { id: string; kind: 'approval'; request: BlockingRequest }
   | { id: string; kind: 'question'; request: BlockingRequest }

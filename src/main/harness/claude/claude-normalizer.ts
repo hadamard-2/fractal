@@ -25,6 +25,8 @@ export interface ClaudeNormalizationContext {
   streamText?: Map<number, string>;
   /** Final text of the streaming message, re-emitted as concluding once its stop reason arrives. */
   streamFinalText?: NativeEvent[];
+  /** Tool use ids of ExitPlanMode calls, so their results read as plan decisions. */
+  planIds?: Set<string>;
 }
 
 class NormalizationContext implements ClaudeNormalizationContext {
@@ -32,6 +34,7 @@ class NormalizationContext implements ClaudeNormalizationContext {
   streamMessageId?: string;
   streamText = new Map<number, string>();
   streamFinalText: NativeEvent[] = [];
+  planIds = new Set<string>();
 
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined {
     const uuid = nativeId;
@@ -109,7 +112,7 @@ export function normalizeClaudeRecord(
   if ((nativeType === 'assistant' || nativeType === 'user') && message) {
     const content = arrayValue(message.content);
     if (content) {
-      const events = normalizeContent(record, content, turnId, contentId, nativeType, observedAt);
+      const events = normalizeContent(record, content, turnId, contentId, nativeType, observedAt, context);
       if (nativeType !== 'assistant') return events;
       // A transcript records the stop reason on every record of the message; live output leaves it null.
       if (stringValue(message.stop_reason) === 'end_turn') return events.map(concluding);
@@ -145,6 +148,7 @@ function normalizeContent(
   uuid: string,
   nativeType: string,
   observedAt: number,
+  context: ClaudeNormalizationContext,
 ): NativeEvent[] {
   const events: NativeEvent[] = [];
   for (let index = 0; index < content.length; index += 1) {
@@ -184,6 +188,12 @@ function normalizeContent(
       const toolId = stringValue(block?.id) ?? `${uuid}:tool:${index}`;
       const name = stringValue(block?.name) ?? 'Unknown Claude tool';
       const input = objectValue(block?.input);
+      if (name === 'ExitPlanMode' && record.isSidechain !== true) {
+        context.planIds?.add(toolId);
+        const text = stringValue(input?.plan);
+        events.push(event(toolId, blockType, observedAt, { kind: 'plan-proposed', turnId, planId: toolId, ...(text ? { text } : {}) }));
+        continue;
+      }
       const actionKind = actionKindFor(name, record.isSidechain === true);
       const parentActionId = stringValue(record.parent_tool_use_id);
       events.push(event(toolId, blockType, observedAt, {
@@ -199,6 +209,10 @@ function normalizeContent(
     }
     if (blockType === 'tool_result') {
       const actionId = stringValue(block?.tool_use_id) ?? `${uuid}:unknown-tool:${index}`;
+      if (context.planIds?.has(actionId)) {
+        events.push(planDecision(record, block, uuid, index, actionId, turnId, observedAt));
+        continue;
+      }
       events.push(...toolResultEvents(block, uuid, index, actionId, turnId, observedAt));
       continue;
     }
@@ -287,11 +301,13 @@ const BOOKKEEPING_RECORD_TYPES = new Set([
 
 // Context Claude Code injects for the model (reminders, tool and skill listings, environment).
 // File, diagnostic, and queued-prompt attachments are left out: those can carry user content.
+// Plan mode entry and exit are here too: the plan block carries what they mark.
 const BOOKKEEPING_ATTACHMENT_TYPES = new Set([
-  'agent_listing_delta', 'auto_mode', 'auto_mode_exit', 'command_permissions', 'date', 'date_change',
+  'agent_listing_delta', 'auto_mode', 'auto_mode_exit', 'command_permissions', 'credential_org', 'date', 'date_change',
   'deferred_tools_delta', 'deferred_tools_record', 'environment', 'hook_additional_context', 'hook_success',
-  'instructions', 'mcp_instructions_delta', 'model', 'nested_memory', 'prompt_snapshot', 'remote_session_change',
-  'session_context', 'silent_turn_reminder', 'skill_listing', 'task_reminder', 'thinking_drop', 'total_tokens_reminder',
+  'instructions', 'mcp_instructions_delta', 'model', 'nested_memory', 'plan_mode', 'plan_mode_exit', 'prompt_snapshot',
+  'remote_session_change', 'session_context', 'silent_turn_reminder', 'skill_listing', 'task_reminder', 'thinking_drop',
+  'total_tokens_reminder',
 ]);
 
 const BOOKKEEPING_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration']);
@@ -483,6 +499,29 @@ function resultDetails(block: Record<string, unknown> | undefined): Pick<Extract
   return {};
 }
 
+function planDecision(
+  record: ClaudeHistoryRecord,
+  block: Record<string, unknown> | undefined,
+  uuid: string,
+  index: number,
+  planId: string,
+  turnId: string,
+  observedAt: number,
+): NativeEvent {
+  const content = block?.content;
+  const message = typeof content === 'string'
+    ? content
+    : (arrayValue(content) ?? []).map((part) => textOf(objectValue(part))).filter((part) => part !== undefined).join('\n');
+  const nativeId = `${uuid}:${planId}:${index}`;
+  if (block?.is_error === true) {
+    return event(nativeId, 'tool_result', observedAt, { kind: 'plan-decided', turnId, planId, approved: false, ...(message ? { feedback: message } : {}) });
+  }
+  // Transcripts keep the approved plan in toolUseResult and live output in tool_use_result; both also quote it in the result text.
+  const recorded = objectValue(record.toolUseResult) ?? objectValue(record.tool_use_result);
+  const text = stringValue(recorded?.plan) || message.split('## Approved Plan:\n')[1];
+  return event(nativeId, 'tool_result', observedAt, { kind: 'plan-decided', turnId, planId, approved: true, ...(text ? { text } : {}) });
+}
+
 function toolResultEvents(
   block: Record<string, unknown> | undefined,
   uuid: string,
@@ -499,10 +538,7 @@ function toolResultEvents(
     })];
   }
 
-  const validTextCount = content.filter((part) => {
-    const value = objectValue(part);
-    return value?.type === 'text' && typeof value.text === 'string';
-  }).length;
+  const validTextCount = content.filter((part) => textOf(objectValue(part)) !== undefined).length;
   const images = content.map((part) => imageValue(objectValue(part))).filter((image) => image !== undefined);
   // Images ride on the update that carries the final status.
   const withImages = images.length > 0 ? { images } : {};
@@ -511,8 +547,9 @@ function toolResultEvents(
   let textCount = 0;
   for (let index = 0; index < content.length; index += 1) {
     const value = objectValue(content[index]);
-    if (value?.type === 'text' && typeof value.text === 'string') {
-      text.push(value.text);
+    const partText = textOf(value);
+    if (partText !== undefined) {
+      text.push(partText);
       textCount += 1;
       result.push(event(textCount === 1 ? baseId : `${baseId}:text:${index}`, 'tool_result', observedAt, {
         kind: 'action-updated',
@@ -533,6 +570,13 @@ function toolResultEvents(
     }));
   }
   return result;
+}
+
+// A tool_reference part is ToolSearch loading a deferred tool's schema; its tool name is all it carries.
+function textOf(part: Record<string, unknown> | undefined): string | undefined {
+  if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+  if (part?.type === 'tool_reference' && typeof part.tool_name === 'string') return `Loaded tool: ${part.tool_name}`;
+  return undefined;
 }
 
 function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' | undefined {

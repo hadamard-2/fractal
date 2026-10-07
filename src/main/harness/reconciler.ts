@@ -14,6 +14,8 @@ export type NativeEventPayload =
   | { kind: 'assistant-text'; turnId: string; blockId?: string; text: string; final: boolean; concludesTurn?: true }
   | { kind: 'action-requested'; turnId: string; actionId: string; actionKind: 'file-read' | 'file-edit' | 'command' | 'search' | 'tool' | 'subagent'; label: string; parentActionId?: string; detail?: string }
   | { kind: 'action-updated'; turnId: string; actionId: string; status: ActionStatus; output?: string; exitCode?: number; patch?: string; images?: ConversationImage[] }
+  | { kind: 'plan-proposed'; turnId: string; planId: string; text?: string }
+  | { kind: 'plan-decided'; turnId: string; planId: string; approved: boolean; text?: string; feedback?: string }
   | { kind: 'request-opened'; turnId: string; request: BlockingRequest }
   | { kind: 'request-resolved'; turnId: string; requestId: string; decision: UserDecision }
   | { kind: 'turn-finished'; turnId: string; status: 'completed' | 'interrupted' | 'failed' }

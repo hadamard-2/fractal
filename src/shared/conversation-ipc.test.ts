@@ -64,6 +64,23 @@ describe('native conversation event validation', () => {
       request: { id: 'request-1', kind: 'approval', provider: 'codex', title: 'Run command', operation: 'pnpm test', status: 'open' },
     })).not.toThrow();
 
+    expect(parseConversationStreamEvent({
+      loadId, seq: 1, ref, type: 'turn.upserted',
+      turn: { id: 't', nativeId: 't', userMessage: { id: 'u', text: 'Plan' }, status: 'active', captureCompleteness: 'complete', blocks: [
+        { id: 'plan', kind: 'plan', provider: 'claude', proposals: [{ id: 'p1', status: 'rejected', feedback: 'More tests', extra: true }, { id: 'p2', status: 'proposed', text: '# Plan' }] },
+        { id: 'approval', kind: 'approval', request: { id: 'p2', kind: 'approval', provider: 'claude', title: 'Review plan', operation: 'ExitPlanMode', plan: '# Plan', status: 'open' } },
+      ] },
+    })).toMatchObject({ turn: { blocks: [
+      { proposals: [{ id: 'p1', status: 'rejected', feedback: 'More tests' }, { id: 'p2', status: 'proposed', text: '# Plan' }] },
+      { request: { plan: '# Plan' } },
+    ] } });
+    for (const proposals of [[], [{ id: 'p1', status: 'pending' }], [{ id: '', status: 'approved' }]]) {
+      expect(() => parseConversationStreamEvent({
+        loadId, seq: 1, ref, type: 'turn.upserted',
+        turn: { id: 't', nativeId: 't', userMessage: { id: 'u', text: 'Plan' }, status: 'active', captureCompleteness: 'complete', blocks: [{ id: 'plan', kind: 'plan', provider: 'claude', proposals }] },
+      })).toThrow('Invalid conversation stream event');
+    }
+
     expect(() => parseConversationStreamEvent({
       loadId,
       seq: 1,

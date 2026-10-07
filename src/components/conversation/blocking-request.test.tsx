@@ -20,6 +20,20 @@ const questionRequest: Extract<BlockingRequestData, { kind: 'question' }> = {
 };
 
 describe('BlockingRequest', () => {
+  test('a plan approval shows the plan and asks for changes in words', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    const plan: BlockingRequestData = { id: 'plan-1', kind: 'approval', provider: 'claude', title: 'Review plan', operation: '/plans/x.md', plan: 'Add farewell', status: 'open' };
+    render(<BlockingRequest request={plan} onResolve={resolve} />);
+
+    expect(screen.getByRole('region', { name: 'Plan review' }).textContent).toContain('Add farewell');
+    const requestChanges = screen.getByRole('button', { name: 'Request changes' });
+    expect(requestChanges.hasAttribute('disabled')).toBe(true);
+    await user.type(screen.getByRole('textbox', { name: 'What should change?' }), 'Add JSDoc');
+    await user.click(requestChanges);
+    expect(resolve).toHaveBeenCalledWith('plan-1', { kind: 'deny', reason: 'Add JSDoc' });
+  });
+
   test('approval decisions stay explicit and one-shot', async () => {
     const user = userEvent.setup();
     const resolve = vi.fn();
