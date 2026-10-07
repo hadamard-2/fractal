@@ -225,3 +225,25 @@ test('marks records the patch never reached as not loaded', () => {
   expect(outcome.bodies.map((body) => body.kind)).toEqual(['hunks', 'not-loaded']);
   expect(outcome.truncated).toBe(false);
 });
+
+test('treats empty added and deleted files as hunks, not a mode change', () => {
+  const added = read(
+    [record({ path: 'added', letter: 'A', oldMode: '000000', newMode: '100644', added: 0, removed: 0 })],
+    ['diff --git a/added b/added', 'new file mode 100644', 'index 0000000..e69de29'].join('\n'),
+  );
+  expect(added.bodies).toEqual([{ kind: 'hunks', hunks: [] }]);
+
+  const deleted = read(
+    [record({ path: 'gone', letter: 'D', oldMode: '100644', newMode: '000000', added: 0, removed: 0 })],
+    ['diff --git a/gone b/gone', 'deleted file mode 100644', 'index e69de29..0000000'].join('\n'),
+  );
+  expect(deleted.bodies).toEqual([{ kind: 'hunks', hunks: [] }]);
+});
+
+test('treats a pure rename as hunks with no changes', () => {
+  const renamed = read(
+    [record({ path: 'added', letter: 'R', added: 0, removed: 0 })],
+    ['diff --git a/gone b/added', 'similarity index 100%', 'rename from gone', 'rename to added'].join('\n'),
+  );
+  expect(renamed.bodies).toEqual([{ kind: 'hunks', hunks: [] }]);
+});

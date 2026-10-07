@@ -20,6 +20,7 @@ const DEFAULT_LIMITS: PatchLimits = {
 const SECTION_START = 'diff --git ';
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
 const SUBMODULE_LINE = /^([+-])Subproject commit ([0-9a-f]+)(-dirty)?$/;
+const NO_MODE = '000000';
 
 interface Section {
   index: number;
@@ -80,7 +81,7 @@ export function createPatchReader(records: DiffRecord[], limits: PatchLimits = D
       bodies[index] = { kind: 'submodule', commit: newCommit === undefined || newCommit === oldCommit ? null : newCommit };
     } else if (section.tooLarge) {
       bodies[index] = { kind: 'too-large' };
-    } else if (section.hunks.length === 0 && record.oldMode !== record.newMode) {
+    } else if (section.hunks.length === 0 && record.oldMode !== record.newMode && record.oldMode !== NO_MODE && record.newMode !== NO_MODE) {
       bodies[index] = { kind: 'mode', oldMode: record.oldMode, newMode: record.newMode };
     } else {
       bodies[index] = { kind: 'hunks', hunks: section.hunks };
