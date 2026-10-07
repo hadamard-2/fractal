@@ -3,6 +3,7 @@ import {
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_CONVERSATION_IMAGE_DATA_LENGTH,
   MAX_PROMPT_ATTACHMENTS,
+  type AccessState,
   type AgentAction,
   type AttachmentOpenAction,
   type BlockingRequest,
@@ -20,6 +21,7 @@ import {
   type PromptAttachment,
   type PromptInput,
   type ProviderId,
+  type TurnAccess,
   type TurnBlock,
   type UserDecision,
   type UserMessageAttachment,
@@ -36,6 +38,8 @@ export const CONVERSATION_CHANNELS = {
 
 export const MODEL_CHANNELS = { list: 'fractal:models:list', choose: 'fractal:models:choose' } as const;
 
+export const ACCESS_CHANNELS = { list: 'fractal:access:list', choose: 'fractal:access:choose' } as const;
+
 const MAX_TEXT_LENGTH = 1_000_000;
 const MAX_DECISION_TEXT_LENGTH = 100_000;
 const MAX_SESSION_ID_LENGTH = 512;
@@ -43,6 +47,9 @@ const MAX_PATH_LENGTH = 32_768;
 const MAX_HISTORY_TURNS = 50;
 const MAX_ATTACHMENT_NAME_LENGTH = 1_024;
 const MAX_MODEL_FIELD_LENGTH = 200;
+const MAX_ACCESS_LEVEL_LENGTH = 64;
+const MAX_ACCESS_LABEL_LENGTH = 200;
+const ACCESS_MODE = /^[A-Za-z]{1,32}$/;
 // Fractal's own cap: long enough for any title a person types, short enough
 // to keep a sidebar row and a history record reasonable.
 export const MAX_CONVERSATION_TITLE_LENGTH = 200;
@@ -163,7 +170,37 @@ export function parsePromptInput(value: unknown): PromptInput {
   const choice = value.model === undefined && value.effort === undefined
     ? null
     : parseModelChoice(value.effort === undefined ? { model: value.model } : { model: value.model, effort: value.effort });
-  return { text: value.text, ...(attachments.length > 0 ? { attachments } : {}), ...(choice ?? {}) };
+  const access = value.access === undefined ? undefined : parseTurnAccess(value.access);
+  return { text: value.text, ...(attachments.length > 0 ? { attachments } : {}), ...(choice ?? {}), ...(access ? { access } : {}) };
+}
+
+function invalidAccess(): never {
+  throw new Error('Invalid access');
+}
+
+export function parseAccessState(value: unknown): AccessState {
+  if (!plainObject(value)) invalidAccess();
+  if (value.kind === 'level') {
+    if (!nonblankText(value.level, MAX_ACCESS_LEVEL_LENGTH)) invalidAccess();
+    return { kind: 'level', level: value.level };
+  }
+  if (value.kind === 'custom') {
+    if (!nonblankText(value.label, MAX_ACCESS_LABEL_LENGTH)) invalidAccess();
+    if (value.mode === undefined) return { kind: 'custom', label: value.label };
+    if (typeof value.mode !== 'string' || !ACCESS_MODE.test(value.mode)) invalidAccess();
+    return { kind: 'custom', label: value.label, mode: value.mode };
+  }
+  return invalidAccess();
+}
+
+export function parseTurnAccess(value: unknown): TurnAccess {
+  if (!plainObject(value) || typeof value.picked !== 'boolean') invalidAccess();
+  return { state: parseAccessState(value.state), picked: value.picked };
+}
+
+export function parseAccessLevelId(value: unknown): string {
+  if (!nonblankText(value, MAX_ACCESS_LEVEL_LENGTH)) invalidAccess();
+  return value;
 }
 
 /** A model choice from the renderer; null is the agent's own default. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { MAX_CONVERSATION_TITLE_LENGTH, parseConversationStreamEvent, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
 
 const loadId = 'abcdef12-3456-4abc-8def-1234567890ab';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
@@ -171,4 +171,44 @@ test('accepts a trimmed single-line conversation title within the cap', () => {
   for (const invalid of ['', '   ', 'two\nlines', 'x'.repeat(MAX_CONVERSATION_TITLE_LENGTH + 1), 42, null]) {
     expect(() => parseConversationTitle(invalid)).toThrow('Invalid conversation title');
   }
+});
+
+test('names the access channels', () => {
+  expect(ACCESS_CHANNELS).toEqual({ list: 'fractal:access:list', choose: 'fractal:access:choose' });
+});
+
+test('parses turn access and rejects malformed states', () => {
+  expect(parseTurnAccess({ state: { kind: 'level', level: 'auto' }, picked: true })).toEqual({ state: { kind: 'level', level: 'auto' }, picked: true });
+  expect(parseTurnAccess({ state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false })).toEqual({ state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false });
+  for (const bad of [null, { state: { kind: 'level', level: '' }, picked: true }, { state: { kind: 'custom', label: 'x', mode: '--yolo' }, picked: false }, { state: { kind: 'level', level: 'auto' } }]) {
+    expect(() => parseTurnAccess(bad)).toThrow('Invalid access');
+  }
+});
+
+test('parses an access state and drops unknown keys', () => {
+  expect(parseAccessState({ kind: 'custom', label: 'Locked down' })).toEqual({ kind: 'custom', label: 'Locked down' });
+  expect(parseAccessState({ kind: 'level', level: 'plan', extra: 1 })).toEqual({ kind: 'level', level: 'plan' });
+  const bad = [
+    { kind: 'level', level: 'x'.repeat(65) },
+    { kind: 'level' },
+    { kind: 'custom', label: '  ' },
+    { kind: 'custom', label: 'x'.repeat(201) },
+    { kind: 'custom', label: 'x', mode: '' },
+    { kind: 'custom', label: 'x', mode: 'a'.repeat(33) },
+    { kind: 'custom', label: 'x', mode: 'dont-ask' },
+    { kind: 'other' },
+  ];
+  for (const state of bad) expect(() => parseAccessState(state)).toThrow('Invalid access');
+  expect(parseAccessState({ kind: 'level', level: 'x'.repeat(64) })).toEqual({ kind: 'level', level: 'x'.repeat(64) });
+});
+
+test('parses a level id', () => {
+  expect(parseAccessLevelId('acceptEdits')).toBe('acceptEdits');
+  for (const bad of ['', '  ', 'x'.repeat(65), 7, null]) expect(() => parseAccessLevelId(bad)).toThrow('Invalid access');
+});
+
+test('carries access through a prompt', () => {
+  expect(parsePromptInput({ text: 'hi', access: { state: { kind: 'level', level: 'plan' }, picked: true } }).access).toEqual({ state: { kind: 'level', level: 'plan' }, picked: true });
+  expect(parsePromptInput({ text: 'hi' })).not.toHaveProperty('access');
+  expect(() => parsePromptInput({ text: 'hi', access: { state: { kind: 'level', level: '' }, picked: true } })).toThrow('Invalid access');
 });

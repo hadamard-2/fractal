@@ -1,4 +1,5 @@
 import type {
+  AccessState,
   AgentModel,
   ConversationImageType,
   ConversationRef,
@@ -7,6 +8,7 @@ import type {
   HarnessStatus,
   ModelChoice,
   ProviderId,
+  TurnAccess,
   UserDecision,
 } from '@/shared/conversation-contract';
 import type { NativeEvent } from '@/main/harness/reconciler';
@@ -31,6 +33,8 @@ export interface AgentPrompt {
   /** Absent means the agent's own default model. */
   model?: string;
   effort?: string;
+  /** Absent means the conversation sends no access setting. */
+  access?: TurnAccess;
 }
 
 export interface ConversationRun {
@@ -55,4 +59,6 @@ export interface HarnessAdapter {
   listModels?(): Promise<AgentModel[]>;
   /** The model and effort this conversation's own history says it last ran with. */
   readLastRun?(ref: ConversationRef): Promise<ModelChoice | undefined>;
+  /** The access this conversation's own history says it last ran with. Absent when the agent's history does not record it. */
+  readAccess?(ref: ConversationRef): Promise<AccessState | undefined>;
 }
