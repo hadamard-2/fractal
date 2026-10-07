@@ -58,6 +58,12 @@ test('strips the project folder prefix and drops entries outside it', () => {
   expect(records.untracked).toEqual(['new']);
 });
 
+test('drops the project folder itself when status reports it as untracked', () => {
+  const records = parseStatus('? app/\0', 'app/');
+  expect(records.paths).toEqual([]);
+  expect(records.untracked).toEqual([]);
+});
+
 test('pairs raw and numstat records, including renames, binaries and odd names', () => {
   expect(parseDiffRecords(RAW_NUMSTAT)).toEqual([
     { path: 'bin.dat', letter: 'M', oldMode: '100644', newMode: '100644', oldSha: BIN_SHA, added: null, removed: null },

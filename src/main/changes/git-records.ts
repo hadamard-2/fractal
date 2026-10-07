@@ -135,7 +135,8 @@ function fixedPath(record: string, fieldCount: number): string {
 function stripPrefix(path: string, prefix: string): string | undefined {
   if (prefix.length === 0) return path;
   if (!path.startsWith(prefix)) return undefined;
-  return path.slice(prefix.length);
+  const stripped = path.slice(prefix.length);
+  return stripped.length === 0 ? undefined : stripped;
 }
 
 function addPath(paths: string[], path: string, prefix: string): string | undefined {
