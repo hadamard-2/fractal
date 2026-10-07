@@ -1,4 +1,5 @@
 import type { AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
+import type { ChangesApi } from '@/shared/changes-contract';
 import type { FilesApi } from '@/shared/files-contract';
 import type { FractalSettingsApi } from '@/shared/settings-contract';
 import type { TerminalApi } from '@/shared/terminal-contract';
@@ -12,6 +13,7 @@ declare global {
       terminals: TerminalApi;
       attachments: AttachmentsApi;
       files: FilesApi;
+      changes: ChangesApi;
     };
   }
 }

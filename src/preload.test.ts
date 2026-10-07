@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ConversationApi, ModelsApi } from '@/shared/conversation-contract';
+import type { ChangesApi } from '@/shared/changes-contract';
 import type { FilesApi } from '@/shared/files-contract';
 import type { TerminalApi } from '@/shared/terminal-contract';
 
@@ -19,7 +20,7 @@ describe('preload conversation surface', () => {
   test('exposes only settings and the hand-written conversation API, with no legacy authority', async () => {
     const { surface } = await preload();
     expect(mocks.expose.mock.calls[0][0]).toBe('fractal');
-    expect(Object.keys(surface).sort()).toEqual(['attachments', 'conversations', 'files', 'models', 'settings', 'terminals']);
+    expect(Object.keys(surface).sort()).toEqual(['attachments', 'changes', 'conversations', 'files', 'models', 'settings', 'terminals']);
     expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'previewAttachment', 'openAttachment', 'rename', 'onEvent'].sort());
     await surface.conversations.list(); await surface.conversations.open(ref, loadId); await surface.conversations.close(ref);
     await surface.conversations.create({ provider: 'claude' }); await surface.conversations.continue(ref, { text: 'hi' });
@@ -82,4 +83,15 @@ test('files preload calls one invoke channel and filters its events', async () =
   expect(listener.mock.calls).toEqual([[{ type: 'changed', watchId: 'w1' }]]);
   off();
   expect(events.listenerCount('fractal:files:event')).toBe(0);
+});
+
+test('changes preload calls one invoke channel, omitting an absent fingerprint', async () => {
+  const { surface } = await preload();
+  const changes = (surface as unknown as { changes: ChangesApi }).changes;
+  await changes.read('/repo');
+  await changes.read('/repo', 'f1');
+  expect(mocks.invoke.mock.calls).toEqual([
+    ['fractal:changes:invoke', { method: 'read', root: '/repo' }],
+    ['fractal:changes:invoke', { method: 'read', root: '/repo', fingerprint: 'f1' }],
+  ]);
 });

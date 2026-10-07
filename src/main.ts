@@ -13,6 +13,7 @@ import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harn
 import { ClaudeOwnedProcessRegistry } from '@/main/harness/claude/claude-owned-process-registry';
 import { lookUpAgent } from '@/main/harness/agent-lookup';
 import { configuredExecutable } from '@/main/harness/executable';
+import { registerChangesIpc } from '@/main/changes/changes-ipc';
 import { detectEditors, openWith, type DetectedEditor } from '@/main/files/editors';
 import { FileWatchService } from '@/main/files/file-watch-service';
 import { registerFilesIpc } from '@/main/files/files-ipc';
@@ -119,6 +120,7 @@ let terminalRegistration: { dispose(): void } | undefined;
 let modelRegistration: { dispose(): void } | undefined;
 let fileWatches: FileWatchService | undefined;
 let filesRegistration: { dispose(): void } | undefined;
+let changesRegistration: { dispose(): void } | undefined;
 
 const createWindow = () => {
   /*
@@ -232,6 +234,9 @@ app.on('ready', () => {
       editors: detectedEditors,
       open: (action, target) => openWith(action, target, { editors: detectedEditors, shell }),
     }, () => mainWindowRef);
+    changesRegistration = registerChangesIpc({
+      knowsProject: (projectPath) => conversationService?.knowsProject(projectPath) ?? Promise.resolve(false),
+    }, () => mainWindowRef);
     loadWindow(window);
   })();
   // Startup failures never forward native exception details into the renderer.
@@ -247,6 +252,7 @@ app.on('before-quit', (event) => {
     terminalRegistration?.dispose();
     terminalService?.dispose();
     filesRegistration?.dispose();
+    changesRegistration?.dispose();
     fileWatches?.dispose();
     modelRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
