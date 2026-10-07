@@ -22,6 +22,8 @@ import { createPatchReader, type PatchLimits } from './patch-reader';
 export interface ChangesDeps {
   lstat?: typeof fsLstat;
   readFile?: (path: string) => Promise<Uint8Array>;
+  /** Runs between the raw/numstat diff and the patch diff. */
+  betweenDiffs?: () => Promise<void>;
 }
 
 const DEFAULT_LIMITS: PatchLimits = {
@@ -34,15 +36,27 @@ const DEFAULT_LIMITS: PatchLimits = {
 const NO_NEWLINE = ' No newline at end of file';
 const READ_ERROR: ChangesResult = { kind: 'error', message: "Changes couldn't be read" };
 
+// Returned by a read whose two git diff calls saw different trees.
+const RACED = Symbol('raced');
+
 export async function readChanges(root: string, fingerprint?: string, limits: PatchLimits = DEFAULT_LIMITS, deps: ChangesDeps = {}): Promise<ChangesResult> {
+  const resolved: Required<ChangesDeps> = {
+    lstat: deps.lstat ?? fsLstat,
+    readFile: deps.readFile ?? ((path) => fsReadFile(path)),
+    betweenDiffs: deps.betweenDiffs ?? (() => Promise.resolve()),
+  };
   try {
-    return await read(root, fingerprint, limits, { lstat: deps.lstat ?? fsLstat, readFile: deps.readFile ?? ((path) => fsReadFile(path)) });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await read(root, fingerprint, limits, resolved);
+      if (result !== RACED) return result;
+    }
+    return READ_ERROR;
   } catch {
     return READ_ERROR;
   }
 }
 
-async function read(root: string, previous: string | undefined, limits: PatchLimits, deps: Required<ChangesDeps>): Promise<ChangesResult> {
+async function read(root: string, previous: string | undefined, limits: PatchLimits, deps: Required<ChangesDeps>): Promise<ChangesResult | typeof RACED> {
   const prefixResult = await runGit(root, ['rev-parse', '--show-prefix']);
   if (prefixResult.code === null) return { kind: 'git-unavailable' };
   if (prefixResult.code === 128) return { kind: 'not-a-repo' };
@@ -74,6 +88,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
   const diff = await runGit(root, ['diff', base, '--raw', '--numstat', '-z', '--no-abbrev', '--find-renames', '--relative']);
   if (diff.code !== 0) return READ_ERROR;
   const records = parseDiffRecords(diff.stdout);
+  await deps.betweenDiffs();
 
   let bodies: ChangeBody[] = [];
   let truncated = false;
@@ -89,6 +104,8 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
     ({ bodies, truncated, bytes: keptBytes } = reader.finish());
   }
 
+  if (records.some((record, index) => !agrees(record, bodies[index]))) return RACED;
+
   const files = new Map<string, ChangedFile>();
   for (const [index, record] of records.entries()) {
     const body = await withBinarySize(root, record, bodies[index], deps);
@@ -97,7 +114,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
     if (existing === undefined || (existing.body.kind !== 'hunks' && file.body.kind === 'hunks')) files.set(file.path, file);
   }
 
-  const budget: TotalBudget = { used: keptBytes, exhausted: false };
+  const budget: TotalBudget = { used: keptBytes, exhausted: truncated };
   for (const path of [...status.untracked].sort()) {
     const file = await untrackedFile(root, path, limits, budget, deps);
     if (file !== undefined && !files.has(file.path)) files.set(file.path, file);
@@ -105,6 +122,20 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
 
   const sorted = [...files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { kind: 'changes', fingerprint: nextFingerprint, head: status.head, files: sorted, truncated: truncated || budget.exhausted };
+}
+
+/** Whether a record's numstat counts match the lines its patch body holds; bodies that are not hunks carry no counts to check. */
+function agrees(record: DiffRecord, body: ChangeBody): boolean {
+  if (body.kind !== 'hunks') return true;
+  let added = 0;
+  let removed = 0;
+  for (const hunk of body.hunks) {
+    for (const line of hunk.lines) {
+      if (line.kind === 'added') added++;
+      else if (line.kind === 'removed') removed++;
+    }
+  }
+  return added === record.added && removed === record.removed;
 }
 
 function collapsed(added: number | null, removed: number | null): boolean {
@@ -189,8 +220,10 @@ async function untrackedFile(root: string, path: string, limits: PatchLimits, bu
     budget.used += bytes.length;
     if (!endsWithNewline) lines.push({ kind: 'no-newline', text: NO_NEWLINE });
     return entry(hunkBody(lines), rows.length);
-  } catch {
-    return undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    return entry({ kind: 'not-loaded' }, null);
   }
 }
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -339,15 +339,61 @@ test('tolerates untracked entries that vanish, link, or nest', async () => {
     hunks: [{ header: '', oldStart: 0, newStart: 1, lines: [{ kind: 'added', text: 'some/target', newNumber: 1 }, { kind: 'no-newline', text: ' No newline at end of file' }] }],
   });
   expect(byPath(result.files, 'nested')).toMatchObject({ status: 'added', added: null, removed: null, body: { kind: 'folder' } });
+});
 
-  const afterRead = await readChanges(root, undefined, undefined, {
-    readFile: async (path) => {
-      await rename(path, `${path}.moved`);
-      return readFile(`${path}.moved`);
+test('lists an unreadable untracked file as not loaded rather than dropping it', async (context) => {
+  if (process.getuid?.() === 0) context.skip();
+  await write('tracked.txt', 't\n');
+  commitAll();
+  await write('secret.txt', 's\n');
+  await chmod(join(root, 'secret.txt'), 0o000);
+  const { files } = await changes();
+  expect(byPath(files, 'secret.txt')).toMatchObject({ status: 'added', added: null, removed: null, body: { kind: 'not-loaded' } });
+});
+
+test('leaves untracked files unloaded once the tracked patch was truncated', async () => {
+  await write('tracked.txt', numbered(20));
+  commitAll();
+  await write('tracked.txt', numbered(20, 'edit'));
+  await write('new.txt', 'n\n');
+  await symlink('some/target', join(root, 'link'));
+  const nested = join(root, 'nested');
+  await mkdir(nested);
+  git(nested, 'init', '-q', '-b', 'main');
+  await writeFile(join(nested, 'inner.txt'), 'i\n');
+  const { files, truncated } = await changes({ limits: { fileMaxLines: 5_000, fileMaxBytes: 1_000_000, totalMaxBytes: 20 } });
+  expect(truncated).toBe(true);
+  expect(byPath(files, 'tracked.txt').body).toEqual({ kind: 'not-loaded' });
+  expect(byPath(files, 'new.txt')).toMatchObject({ added: null, removed: null, body: { kind: 'not-loaded' } });
+  expect(byPath(files, 'link')).toMatchObject({ added: null, removed: null, body: { kind: 'not-loaded' } });
+  expect(byPath(files, 'nested').body).toEqual({ kind: 'folder' });
+});
+
+test('re-reads once when the two diffs disagree, and returns the second read', async () => {
+  await write('a.txt', 'a\n');
+  commitAll();
+  await write('a.txt', 'b\n');
+  let calls = 0;
+  const result = await readChanges(root, undefined, undefined, {
+    betweenDiffs: async () => {
+      if (++calls === 1) await write('a.txt', 'b\nc\n');
     },
   });
-  if (afterRead.kind !== 'changes') throw new Error(JSON.stringify(afterRead));
-  expect(afterRead.files.map((file) => file.path)).toContain('link');
+  if (result.kind !== 'changes') throw new Error(JSON.stringify(result));
+  expect(calls).toBe(2);
+  expect(byPath(result.files, 'a.txt')).toMatchObject({ added: 2, removed: 1, body: { kind: 'hunks' } });
+});
+
+test('reports an error when the two diffs still disagree on the second read', async () => {
+  await write('a.txt', 'a\n');
+  commitAll();
+  await write('a.txt', 'b\n');
+  let calls = 0;
+  const result = await readChanges(root, undefined, undefined, {
+    betweenDiffs: () => write('a.txt', numbered(2 + calls++)),
+  });
+  expect(calls).toBe(2);
+  expect(result).toEqual({ kind: 'error', message: "Changes couldn't be read" });
 });
 
 test('a file that disappears before it is read is simply absent', async () => {
