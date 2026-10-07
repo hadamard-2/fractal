@@ -63,20 +63,30 @@ export function buildRows(files: ChangedFile[], overrides: ReadonlyMap<string, b
     let previous: { side: 'old' | 'new'; sideIndex: number } = { side: 'new', sideIndex: 0 };
     let noNewlines = 0;
     for (const hunk of file.body.hunks) {
-      rows.push({ kind: 'hunk', key: `h:${file.path}:${hunk.oldStart}:${hunk.newStart}`, fileIndex, header: hunk.header });
+      rows.push({ kind: 'hunk', key: `h:${file.path}:${hunk.oldStart}`, fileIndex, header: hunk.header });
       let lastNew = Math.max(1, hunk.newStart);
+      // Keys anchor on the committed side, which working-tree edits never shift.
+      let lastOld = hunk.oldStart - 1;
+      let addedSinceOld = 0;
       for (const line of hunk.lines) {
-        let key = `l:${file.path}:${line.kind}:${line.oldNumber ?? ''}:${line.newNumber ?? ''}`;
+        let key = '';
         let side = previous.side;
         let sideIndex = previous.sideIndex;
         if (line.kind === 'no-newline') {
-          key += `:${noNewlines++}`;
+          key = `l:${file.path}:no-newline:::${noNewlines++}`;
         } else {
           side = line.kind === 'removed' ? 'old' : 'new';
           sideIndex = side === 'old' ? oldIndex : newIndex;
           if (line.kind !== 'added') oldIndex++;
           if (line.kind !== 'removed') newIndex++;
           previous = { side, sideIndex };
+          if (line.kind === 'added') {
+            key = `l:${file.path}:a:${lastOld}:${++addedSinceOld}`;
+          } else {
+            lastOld = line.oldNumber ?? lastOld;
+            addedSinceOld = 0;
+            key = `l:${file.path}:${line.kind === 'removed' ? 'r' : 'c'}:${lastOld}`;
+          }
         }
         const openAt = line.kind !== 'removed' && line.kind !== 'no-newline' && line.newNumber !== undefined ? line.newNumber : lastNew;
         if (line.newNumber !== undefined && line.kind !== 'no-newline') lastNew = line.newNumber;

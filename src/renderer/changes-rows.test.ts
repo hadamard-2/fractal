@@ -19,7 +19,7 @@ describe('buildRows', () => {
     const big = file('big.lock', { body: hunks(hunk(1, 1, [add(1)])) });
     expect(buildRows([a, big], new Map()).map((row) => row.kind)).toEqual(['file', 'hunk', 'line', 'line', 'line', 'file', 'hunk', 'line']);
     expect(buildRows([a, big], new Map([['big.lock', true]])).map((row) => row.key)).toEqual([
-      'f:a.ts', 'h:a.ts:1:1', 'l:a.ts:context:1:1', 'l:a.ts:removed:2:', 'l:a.ts:added::2', 'f:big.lock',
+      'f:a.ts', 'h:a.ts:1', 'l:a.ts:c:1', 'l:a.ts:r:2', 'l:a.ts:a:2:1', 'f:big.lock',
     ]);
   });
 
@@ -66,14 +66,33 @@ describe('buildRows', () => {
   });
 
   test('keeps row keys stable when lines are added above', () => {
-    const three = (n: number): DiffLine => ctx(n, n, 'three');
-    const before = file('a.ts', { body: hunks(hunk(10, 10, [three(10)])) });
-    const after = file('a.ts', { body: hunks(hunk(1, 1, [add(1), add(2)]), hunk(10, 12, [{ ...three(10), newNumber: 12 }])) });
-    const key = (f: ChangedFile) => buildRows([f], new Map()).find((row) => row.kind === 'line' && row.line.text === 'three')?.key;
-    expect(key(before)).toBe('l:a.ts:context:10:10');
-    expect(key(after)).toBe('l:a.ts:context:10:12');
-    const hunkKeys = buildRows([after], new Map()).filter((row) => row.kind === 'hunk').map((row) => row.key);
-    expect(hunkKeys).toEqual(['h:a.ts:1:1', 'h:a.ts:10:12']);
+    const second = (shift: number) => hunk(10, 10 + shift, [ctx(10, 10 + shift), add(11 + shift), ctx(11, 12 + shift), ctx(12, 13 + shift)]);
+    const keys = (f: ChangedFile) => buildRows([f], new Map()).map((row) => row.key);
+    const before = file('a.ts', { body: hunks(second(0)) });
+    const after = file('a.ts', { body: hunks(hunk(1, 1, [add(1), add(2), ctx(1, 3)]), second(2)) });
+    const [, hunkKey, contextKey, addedKey] = keys(before);
+    expect([hunkKey, contextKey, addedKey]).toEqual(['h:a.ts:10', 'l:a.ts:c:10', 'l:a.ts:a:10:1']);
+    const afterKeys = keys(after);
+    expect(afterKeys).toContain(hunkKey);
+    expect(afterKeys).toContain(contextKey);
+    expect(afterKeys).toContain(addedKey);
+  });
+
+  test('gives every row of a multi-hunk file a distinct key', () => {
+    const f = file('a.ts', {
+      body: hunks(
+        hunk(10, 10, [add(10), add(11), ctx(10, 12), del(11), add(13), add(14), ctx(12, 15), noNewline]),
+        hunk(30, 32, [del(30), add(32), noNewline]),
+      ),
+    });
+    const rows = buildRows([f], new Map());
+    const keys = rows.map((row) => row.key);
+    expect(new Set(keys).size).toBe(rows.length);
+    expect(keys).toContain('l:a.ts:a:9:1');
+    expect(keys).toContain('l:a.ts:a:9:2');
+    expect(keys).toContain('l:a.ts:r:11');
+    expect(keys).toContain('l:a.ts:a:11:1');
+    expect(keys).toContain('l:a.ts:a:11:2');
   });
 });
 
