@@ -126,7 +126,7 @@ describe('AccessChoices', () => {
     expect(() => choices.validateSend(codexRef, { state: level('nope'), picked: true })).toThrow('Unknown access level');
     expect(() => choices.validateSend(claudeRef, { state: { kind: 'custom', label: 'x', mode: 'plan' }, picked: true })).toThrow('Unknown access level');
     expect(() => choices.validateSend(claudeRef, { state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false })).not.toThrow();
-    expect(() => choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: false })).not.toThrow();
+    expect(() => choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: false })).toThrow('Bypass is turned off in Settings');
     expect(() => choices.validateSend(claudeRef, undefined)).not.toThrow();
     expect(() => choices.validateSend(claudeRef, { state: level('auto'), picked: true })).not.toThrow();
   });
@@ -137,6 +137,19 @@ describe('AccessChoices', () => {
     expect(store.get('claude:a')).toEqual({ state: level('bypassPermissions'), sent: false });
     expect(() => choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: true })).not.toThrow();
     expect(() => choices.choose(codexRef, 'full-access')).toThrow('Full access is turned off in Settings');
+  });
+
+  test('gates read-back states by their effective level, picked or not', () => {
+    const off = setup();
+    const custom = (mode: string): AccessState => ({ kind: 'custom', label: mode, mode });
+    expect(() => off.choices.validateSend(claudeRef, { state: level('nope'), picked: false })).toThrow('Unknown access level');
+    expect(() => off.choices.validateSend(claudeRef, { state: custom('bypassPermissions'), picked: false })).toThrow('Bypass is turned off in Settings');
+    expect(() => off.choices.validateSend(codexRef, { state: level('full-access'), picked: false })).toThrow('Full access is turned off in Settings');
+    expect(() => off.choices.validateSend(claudeRef, { state: level('auto'), picked: false })).not.toThrow();
+    const on = setup(undefined, () => true);
+    expect(() => on.choices.validateSend(claudeRef, { state: custom('bypassPermissions'), picked: false })).not.toThrow();
+    expect(() => on.choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: false })).not.toThrow();
+    expect(() => on.choices.validateSend(claudeRef, { state: level('nope'), picked: false })).toThrow('Unknown access level');
   });
 
   test('counts a throwing allowDangerous as not allowed', () => {
@@ -152,5 +165,23 @@ describe('AccessChoices', () => {
     expect(store.entries.size).toBe(0);
     choices.recordSend(claudeRef, { state: level('plan'), picked: true });
     expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: true });
+  });
+
+  test('a send does not overwrite a newer unsent pick', () => {
+    const { choices, store } = setup();
+    choices.choose(claudeRef, 'plan');
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: false });
+  });
+
+  test('a send of the stored pick, or with nothing stored or already sent, saves it as sent', () => {
+    const { choices, store } = setup();
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
+    choices.choose(claudeRef, 'plan');
+    choices.recordSend(claudeRef, { state: level('plan'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: true });
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
   });
 });

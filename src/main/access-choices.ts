@@ -50,15 +50,24 @@ export class AccessChoices {
     this.store.set(conversationKey(ref), { state, sent: false });
   }
 
-  /** A read-back state only has to be well-formed, which the IPC parser has already checked. */
+  /** Any state can reach the agent's command line, so a read-back one is held to the same levels and Settings gate as a pick. */
   validateSend(ref: ConversationRef, access: TurnAccess | undefined): void {
-    if (access?.picked) this.validatePicked(ref.provider, access.state);
+    if (!access) return;
+    if (access.picked) return this.validatePicked(ref.provider, access.state);
+    const { state } = access;
+    if (state.kind === 'level' && !findAccessLevel(ref.provider, state.level)) throw new Error('Unknown access level');
+    const effective = findAccessLevel(ref.provider, state.kind === 'level' ? state.level : state.mode ?? '');
+    if (effective?.dangerous && !this.allowDangerous(ref.provider)) throw new Error(`${effective.label} is turned off in Settings`);
   }
 
   /** The send changes what the history records, so the cached read-back is dropped whatever was sent. */
   recordSend(ref: ConversationRef, access: TurnAccess | undefined): void {
     const key = conversationKey(ref);
-    if (access?.picked) this.store.set(key, { state: access.state, sent: true });
+    if (access?.picked) {
+      // A pick made after this send started has not run yet and must survive it.
+      const stored = this.store.get(key);
+      if (!stored || stored.sent || sameAccess(stored.state, access.state)) this.store.set(key, { state: access.state, sent: true });
+    }
     this.readBacks.delete(key);
     this.sendCounts.set(key, (this.sendCounts.get(key) ?? 0) + 1);
   }
