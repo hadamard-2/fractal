@@ -28,6 +28,9 @@ const DANGER: Record<ProviderId, string> = {
 
 export function AccessPicker({ provider, levels, access, observed, allowDangerous, onChoose, onOpen }: Props) {
   const [pending, setPending] = useState<AccessLevel | null>(null);
+  // The dialog animates out after `pending` clears, so it keeps naming the last level meanwhile.
+  const [shownLevel, setShownLevel] = useState<AccessLevel | null>(null);
+  if (pending && pending !== shownLevel) setShownLevel(pending);
   const currentId = access?.state.kind === 'level' ? access.state.level : undefined;
   const dangerousNow = levels.some((level) => level.dangerous && level.id === currentId);
   const observedText = observed ? `Last turn ran in ${accessStateLabel(observed, levels)}, not ${accessTriggerLabel(provider, access, levels)}` : undefined;
@@ -76,12 +79,12 @@ export function AccessPicker({ provider, levels, access, observed, allowDangerou
       <Dialog onOpenChange={(open) => { if (!open) setPending(null); }} open={pending !== null}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Allow {pending?.label}?</DialogTitle>
+            <DialogTitle>Allow {shownLevel?.label}?</DialogTitle>
             <DialogDescription>{DANGER[provider]}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button onClick={() => setPending(null)} variant="outline">Cancel</Button>
-            <Button onClick={() => { if (pending) onChoose(pending.id); setPending(null); }} variant="destructive">Use {pending?.label}</Button>
+            <Button onClick={() => { if (pending) onChoose(pending.id); setPending(null); }} variant="destructive">Use {shownLevel?.label}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

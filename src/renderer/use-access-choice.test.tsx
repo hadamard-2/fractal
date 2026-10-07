@@ -33,6 +33,14 @@ test('a pick applies at once and is saved', async () => {
   await waitFor(() => expect(choose).toHaveBeenCalledWith(refA, 'plan'));
 });
 
+test('a new pick clears the last-turn mismatch', async () => {
+  install({ list: vi.fn(async () => listing('auto', { observed: { kind: 'level', level: 'default' } })), choose: vi.fn(async () => undefined) });
+  const { result } = renderHook(() => useAccessChoice(refA, 'idle'));
+  await waitFor(() => expect(result.current.observed).toEqual({ kind: 'level', level: 'default' }));
+  act(() => result.current.choose('plan'));
+  expect(result.current.observed).toBeUndefined();
+});
+
 test('a pick made while the first list is in flight wins', async () => {
   let resolve: (value: AccessListing) => void = () => undefined;
   const choose = vi.fn(async () => undefined);

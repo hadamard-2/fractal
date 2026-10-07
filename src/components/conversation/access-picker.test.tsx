@@ -73,6 +73,25 @@ test('cancelling the confirmation chooses nothing', async () => {
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
+test('the confirmation keeps naming the level while it closes', async () => {
+  const { user } = setup('codex', { access: level('auto') });
+  await user.click(screen.getByRole('button', { name: 'Access' }));
+  // A running exit animation keeps the dialog mounted after it closes, as in the app.
+  const real = window.getComputedStyle.bind(window);
+  let closing = false;
+  const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+    const style = real(element, pseudo);
+    return new Proxy(style, { get: (target, prop) => prop === 'animationName' ? (closing ? 'exit' : 'none') : Reflect.get(target, prop) as unknown });
+  });
+  await user.click(screen.getByRole('menuitem', { name: /Full access/ }));
+  closing = true;
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  const text = document.body.textContent ?? '';
+  spy.mockRestore();
+  expect(text).toContain('Allow Full access?');
+  expect(text).not.toContain('Allow ?');
+});
+
 test('a dangerous level that is already current is shown without asking again', async () => {
   const { user, onChoose } = setup('claude', { allowDangerous: false, access: level('bypassPermissions') });
   await user.click(screen.getByRole('button', { name: 'Access' }));

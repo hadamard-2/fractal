@@ -47,7 +47,7 @@ export function useAccessChoice(ref: ConversationRef, runtime: ConversationRunti
 
   const choose = useCallback((level: string) => {
     const access: TurnAccess = { state: { kind: 'level', level }, picked: true };
-    setState((prior) => prior.key === key ? { ...prior, access, picked: true, loaded: true } : { key, ...NONE, access, picked: true, loaded: true });
+    setState((prior) => prior.key === key ? { ...prior, access, observed: undefined, picked: true, loaded: true } : { key, ...NONE, access, picked: true, loaded: true });
     void Promise.resolve().then(() => window.fractal.access.choose(latest.current, level)).catch((): void => undefined);
   }, [key]);
 
