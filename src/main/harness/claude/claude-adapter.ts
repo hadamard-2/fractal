@@ -2,13 +2,14 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastRun, watchClaudeConversation } from './claude-history';
+import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from './claude-history';
+import { claudeAccessState, claudePermissionMode } from './claude-access';
 import { listClaudeModels } from './claude-models';
 import { ClaudePermissionBridge } from './claude-permission-bridge';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
-import type { AgentModel, BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
+import type { AccessState, AgentModel, BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
@@ -106,9 +107,10 @@ export class ClaudeAdapter implements HarnessAdapter {
     let bridgeDisposal: Promise<void> | undefined;
     const disposeBridge = (): Promise<void> => bridgeDisposal ??= bridge?.dispose() ?? Promise.resolve();
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
+    const permissionMode = claudePermissionMode(prompt.access);
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;
@@ -161,6 +163,11 @@ export class ClaudeAdapter implements HarnessAdapter {
 
   async readLastRun(ref: ConversationRef): Promise<ModelChoice | undefined> {
     return readClaudeLastRun((await this.find(ref)).filePath);
+  }
+
+  async readAccess(ref: ConversationRef): Promise<AccessState | undefined> {
+    const mode = await readClaudeLastPermissionMode((await this.find(ref)).filePath);
+    return mode ? claudeAccessState(mode) : undefined;
   }
 
   private async rereadExact(ref: ConversationRef): Promise<NativeEvent[]> {

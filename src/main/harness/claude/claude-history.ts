@@ -310,6 +310,23 @@ export async function readClaudeLastRun(filePath: string): Promise<ModelChoice |
   return last;
 }
 
+export async function readClaudeLastPermissionMode(filePath: string): Promise<string | undefined> {
+  const decoder = new NdjsonDecoder<unknown>();
+  let last: string | undefined;
+  const take = (value: unknown): void => {
+    const mode = objectValue(value)?.permissionMode;
+    if (typeof mode === 'string' && mode) last = mode;
+  };
+  for await (const chunk of createReadStream(filePath)) {
+    for (const line of decoder.push(chunk as Buffer)) if (line.ok) take(line.value);
+  }
+  const tail = decoder.finish();
+  if (tail.kind === 'incomplete') {
+    try { take(JSON.parse(tail.raw)); } catch { /* A half-written final record carries no mode yet. */ }
+  }
+  return last;
+}
+
 function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {
   for (const record of records) {
     const message = objectValue(record.message);

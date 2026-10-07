@@ -38,6 +38,8 @@ export interface RunClaudeTurnOptions {
   model?: string;
   /** Passed as --effort; only meaningful with a model that takes effort. */
   effort?: string;
+  /** Passed as --permission-mode; absent leaves Claude on its configured default. */
+  permissionMode?: string;
   rereadNative(): Promise<NativeEvent[] | AsyncIterable<NativeEvent>>;
 }
 
@@ -51,6 +53,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const choiceArguments = [
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
+    ...(options.permissionMode ? ['--permission-mode', options.permissionMode] : []),
   ];
   const args = [
     ...sessionArguments, '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',

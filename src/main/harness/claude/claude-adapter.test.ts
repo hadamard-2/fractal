@@ -33,6 +33,27 @@ describe('Claude adapter', () => {
     await run.dispose();
   });
 
+  test('hands the prompt access to the runner as a permission mode', async () => {
+    const runTurn = vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn });
+    const run = await adapter.continueConversation(ref, { text: 'Go', access: { state: { kind: 'level', level: 'auto' }, picked: false } });
+    expect(runTurn.mock.calls[0][0]).toMatchObject({ permissionMode: 'auto' });
+    await run.dispose();
+  });
+
+  test('reads the recorded access back from the transcript', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-access-'));
+    const source = await readFile(path.join(root, 'claude-session-1.jsonl'), 'utf8');
+    const file = path.join(directory, 'claude-session-1.jsonl');
+    const adapter = new ClaudeAdapter(directory, { realpath });
+    await writeFile(file, source);
+    await expect(adapter.readAccess(ref)).resolves.toBeUndefined();
+    const turn = { type: 'user', permissionMode: 'bypassPermissions', sessionId: 'claude-session-1', cwd: '/work/fractal', uuid: 'user-last', parentUuid: null as string | null, timestamp: '2026-09-30T00:00:00.000Z', message: { role: 'user', content: 'Go' } };
+    await writeFile(file, `${source.trimEnd()}\n${JSON.stringify(turn)}\n`);
+    await expect(adapter.readAccess(ref)).resolves.toEqual({ kind: 'level', level: 'bypassPermissions' });
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('lists models through its catalog dependency and reads the last run from the transcript', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-models-'));
     const source = await readFile(path.join(root, 'claude-session-1.jsonl'), 'utf8');
