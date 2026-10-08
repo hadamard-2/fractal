@@ -312,9 +312,19 @@ export default function NavMain({
                         ) : (
                         <ContextMenu onOpenChange={trackMenu(`chat:${chatId}`)}>
                         <ContextMenuTrigger asChild disabled={!onRenameChat}>
-                        <SidebarMenuSubButton asChild isActive={isSelected}>
+                        {/*
+                          The row's classes go on SidebarMenuSubButton rather than
+                          the button: Slot only concatenates the two class lists,
+                          so the button's muted text would sit beside the base
+                          sidebar colour and lose to it on stylesheet order. Here
+                          cn() replaces the base colour instead.
+                        */}
+                        <SidebarMenuSubButton
+                          asChild
+                          className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]', menuRow === `chat:${chatId}` && 'bg-sidebar-accent text-foreground')}
+                          isActive={isSelected}
+                        >
                           <button
-                            className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]', menuRow === `chat:${chatId}` && 'bg-sidebar-accent text-foreground')}
                             aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(conversation.runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
                             ref={chatHandleRef}
