@@ -1,5 +1,5 @@
-import { FileIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { FileTypeIcon } from '@/components/code/file-icons';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -58,7 +58,7 @@ function AttachmentChip({ path, sentAt }: { path: string; sentAt?: number }) {
               aria-label={`Preview ${name}`}
               className={cn('flex h-8 max-w-60 items-center gap-1.5 rounded-md border px-2 text-sm transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', missing && 'opacity-60')}
             >
-              <FileIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <FileTypeIcon className="size-3.5 shrink-0" path={name} />
               <span className="truncate">{name}</span>
               {missing && <span className="shrink-0 text-xs text-muted-foreground">missing</span>}
             </DialogTrigger>

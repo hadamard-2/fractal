@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { ListTree, Plus } from 'lucide-react';
+import { List, Plus } from 'lucide-react';
 import { FilesPane } from '@/components/right-panel/files/files-pane';
 import { PanelTabs } from '@/components/right-panel/panel-tabs';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
@@ -213,7 +213,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
             <div className={cn('flex h-12 shrink-0 items-end gap-1 px-2', tabs.length > 0 && 'border-b border-sidebar-border')}>
               {selectedFileTab && (
                 <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
-                  <ListTree aria-hidden className="size-4" />
+                  <List aria-hidden className="size-4" />
                 </Button>
               )}
               <PanelTabs

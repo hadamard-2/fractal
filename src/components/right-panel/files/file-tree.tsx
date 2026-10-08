@@ -1,5 +1,6 @@
-import { ChevronRight, File, Folder, FolderOpen } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
+import { FileTypeIcon, FolderTypeIcon } from '@/components/code/file-icons';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -63,7 +64,6 @@ function FolderNode({ path, depth, ...props }: TreeProps & { path: string; depth
           );
         }
         const open = props.expanded.has(childPath);
-        const Icon = open ? FolderOpen : Folder;
         return (
           <li key={entry.name}>
             <button
@@ -76,7 +76,9 @@ function FolderNode({ path, depth, ...props }: TreeProps & { path: string; depth
               type="button"
             >
               <ChevronRight aria-hidden className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
-              <Icon aria-hidden className="size-4 shrink-0" />
+              {/* One icon open or closed: the chevron shows the state, and the
+                  named folder icons have no open variant. */}
+              <FolderTypeIcon className="size-4 shrink-0" name={entry.name} />
               <span className="truncate">{entry.name}</span>
             </button>
             {open && <FolderNode {...props} depth={depth + 1} path={childPath} />}
@@ -109,7 +111,7 @@ function FileRow({ root, path, label, depth, ignored = false, outside = false, s
       type="button"
     >
       <span aria-hidden className="size-3.5 shrink-0" />
-      <File aria-hidden className="size-4 shrink-0" />
+      <FileTypeIcon className="size-4 shrink-0" path={path} />
       <span className="truncate">{label}</span>
     </button>
   );

@@ -1,4 +1,5 @@
-import { FileText, SquareTerminal, X } from 'lucide-react';
+import { SquareTerminal, X } from 'lucide-react';
+import { FileTypeIcon, FolderTypeIcon } from '@/components/code/file-icons';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { absoluteProjectPath, basename } from '@/renderer/file-display';
@@ -31,10 +32,9 @@ export function PanelTabs({ tabs, selectedId, onSelect, onClose, onPin }: {
         const label = panelTabLabel(tab, terminalCount);
         const selected = selectedId === tab.id;
         const preview = tab.kind === 'file' && tab.preview;
-        const Icon = tab.kind === 'terminal' ? SquareTerminal : FileText;
         return (
           <div
-            className="group flex h-9 shrink-0 items-center border-b-2 border-transparent pb-1 text-xs text-muted-foreground hover:text-foreground data-[selected=true]:border-primary data-[selected=true]:text-foreground"
+            className="group relative flex h-8 shrink-0 items-center text-xs text-muted-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 hover:text-foreground data-[selected=true]:text-foreground data-[selected=true]:after:bg-primary"
             data-selected={selected}
             key={tab.id}
             onAuxClick={(event) => {
@@ -55,7 +55,10 @@ export function PanelTabs({ tabs, selectedId, onSelect, onClose, onPin }: {
                   role="tab"
                   type="button"
                 >
-                  <Icon aria-hidden className="size-3.5 shrink-0" />
+                  {tab.kind === 'terminal' && <SquareTerminal aria-hidden className="size-3.5 shrink-0" />}
+                  {tab.kind === 'file' && (tab.path === null
+                    ? <FolderTypeIcon className="size-3.5 shrink-0" name={basename(tab.projectPath)} />
+                    : <FileTypeIcon className="size-3.5 shrink-0" path={tab.path} />)}
                   <span className={cn('truncate', preview && 'italic')}>{label}</span>
                   {preview && <span className="sr-only"> (preview)</span>}
                   {tab.kind === 'terminal' && tab.exited && (
