@@ -58,6 +58,10 @@ type ModeToggleProps = {
 export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
   const activeIndex = MODES.findIndex((m) => m.value === value);
 
+  // Dark mode lifts the track, divider and idle icons a few steps above the
+  // theme's surfaces, so the toggle reads as a control floating over the
+  // transcript rather than sinking into the page. The pill stays white in
+  // both themes.
   return (
     <ToggleGroup
       type="single"
@@ -67,7 +71,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       onValueChange={(next) => next && onValueChange(next as Mode)}
       aria-label="Mode"
       size="sm"
-      className="relative w-fit gap-0 rounded-lg bg-secondary p-1"
+      className="relative w-fit gap-0 rounded-lg bg-secondary p-1 dark:bg-[oklch(0.245_0_0)]"
     >
       {/*
         The selected pill is one element that slides, rather than a background on
@@ -77,7 +81,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       */}
       <span
         aria-hidden
-        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform dark:bg-selected dark:shadow-none duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
+        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform dark:shadow-none duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
         style={{ transform: `translateX(${itemOffsets[activeIndex]}px)` }}
       />
 
@@ -85,7 +89,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
         <span
           key={center}
           aria-hidden
-          className="absolute inset-y-2 w-px bg-border"
+          className="absolute inset-y-2 w-px bg-border dark:bg-[oklch(0.29_0_0)]"
           style={{ left: `calc(0.25rem + ${center}px)` }}
         />
       ))}
@@ -98,7 +102,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
           value={mode}
           aria-label={label}
           style={{ marginRight: trailingGaps[i] }}
-          className="relative z-10 h-8 w-[34px] shrink-0 rounded-md! bg-transparent! px-0! text-muted-foreground transition-colors hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900 dark:data-[state=on]:text-foreground dark:data-[state=on]:hover:text-foreground"
+          className="relative z-10 h-8 w-[34px] shrink-0 rounded-md! bg-transparent! px-0! text-muted-foreground transition-colors dark:text-[oklch(0.85_0_0)] hover:text-foreground dark:hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900 dark:data-[state=on]:text-neutral-900 dark:data-[state=on]:hover:text-neutral-900"
         >
           <Icon />
         </ToggleGroupItem>
