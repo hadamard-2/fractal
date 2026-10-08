@@ -59,9 +59,10 @@ const agentEnvironment = async (): Promise<AgentEnvironment> => {
 // devtools) — `bindWindowShortcuts` below hands the devtools one back.
 Menu.setApplicationMenu(null);
 
-// Matches --background in src/index.css (neutral-950) so the OS-drawn window
-// buttons sit on the same colour as the title bar we render underneath them.
-const TITLE_BAR_BACKGROUND = '#0a0a0a';
+// Matches the dark theme's --background in src/index.css (oklch 0.16) so the
+// OS-drawn window buttons sit on the same colour as the title bar we render
+// underneath them.
+const TITLE_BAR_BACKGROUND = '#0d0d0d';
 const TITLE_BAR_SYMBOL = '#fafafa';
 
 /**

@@ -34,7 +34,7 @@ export function PanelTabs({ tabs, selectedId, onSelect, onClose, onPin }: {
         const Icon = tab.kind === 'terminal' ? SquareTerminal : FileText;
         return (
           <div
-            className="group flex h-8 shrink-0 items-center rounded-md border border-transparent text-xs text-muted-foreground hover:text-foreground data-[selected=true]:border-sidebar-border data-[selected=true]:bg-background data-[selected=true]:text-foreground"
+            className="group flex h-9 shrink-0 items-center border-b-2 border-transparent pb-1 text-xs text-muted-foreground hover:text-foreground data-[selected=true]:border-primary data-[selected=true]:text-foreground"
             data-selected={selected}
             key={tab.id}
             onAuxClick={(event) => {

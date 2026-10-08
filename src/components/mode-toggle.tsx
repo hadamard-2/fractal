@@ -70,14 +70,14 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
       className="relative w-fit gap-0 rounded-lg bg-secondary p-1"
     >
       {/*
-        The white pill is one element that slides, rather than a background on
+        The selected pill is one element that slides, rather than a background on
         each item, so the change animates. Its offset comes from the same
         `itemOffsets` array used for the items' own spacing, so the grouped
         (tight) and separated (wide) gaps stay in sync automatically.
       */}
       <span
         aria-hidden
-        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
+        className="absolute inset-y-1 left-1 h-8 w-[34px] rounded-md bg-white shadow-sm transition-transform dark:bg-selected dark:shadow-none duration-300 [transition-timing-function:cubic-bezier(0.34,1.4,0.64,1)]"
         style={{ transform: `translateX(${itemOffsets[activeIndex]}px)` }}
       />
 
@@ -98,7 +98,7 @@ export function ModeToggle({ value, onValueChange }: ModeToggleProps) {
           value={mode}
           aria-label={label}
           style={{ marginRight: trailingGaps[i] }}
-          className="relative z-10 h-8 w-[34px] shrink-0 rounded-md! bg-transparent! px-0! text-muted-foreground transition-colors hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900"
+          className="relative z-10 h-8 w-[34px] shrink-0 rounded-md! bg-transparent! px-0! text-muted-foreground transition-colors hover:text-foreground data-[state=on]:text-neutral-900 data-[state=on]:hover:text-neutral-900 dark:data-[state=on]:text-foreground dark:data-[state=on]:hover:text-foreground"
         >
           <Icon />
         </ToggleGroupItem>

@@ -29,7 +29,7 @@ function stateOf(id: ToolId, { onTerminal, onFiles, projectOpen }: Handlers): St
 function Hint({ text, shortcut }: { text?: string; shortcut: boolean }) {
   if (!text) return null;
   return (
-    <span aria-hidden className={cn('ml-auto rounded border border-sidebar-border px-1.5 text-[11px] leading-4 text-muted-foreground', shortcut ? 'font-mono' : 'font-sans')}>
+    <span aria-hidden className={cn('ml-auto rounded border border-sidebar-border px-1.5 text-[11px] leading-4 text-subtle-foreground', shortcut ? 'font-mono' : 'font-sans')}>
       {text}
     </span>
   );
@@ -37,14 +37,14 @@ function Hint({ text, shortcut }: { text?: string; shortcut: boolean }) {
 
 export function ToolList(handlers: Handlers) {
   return (
-    <div aria-label="Add a tool" className="w-full max-w-sm space-y-2" role="menu">
+    <div aria-label="Add a tool" className="w-full max-w-sm divide-y divide-sidebar-border overflow-hidden rounded-lg border border-sidebar-border" role="menu">
       {TOOL_ENTRIES.map(({ id, label, Icon }) => {
         const { onSelect, hint, shortcut } = stateOf(id, handlers);
         return (
           <button
             aria-keyshortcuts={shortcut}
             className={cn(
-              'flex h-10 w-full items-center gap-3 rounded-lg bg-sidebar-accent/60 px-3 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring',
+              'flex h-10 w-full items-center gap-3 px-3 text-left text-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
               onSelect ? 'hover:bg-sidebar-accent' : 'cursor-default text-muted-foreground',
             )}
             disabled={!onSelect}
