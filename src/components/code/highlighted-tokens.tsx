@@ -1,9 +1,10 @@
-import { code, type HighlightResult } from '@streamdown/code';
+import type { HighlightResult } from '@streamdown/code';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { HighlightLanguage } from '@/renderer/file-display';
+import { codePlugin } from './fractal-theme';
 
 // The same highlighter and themes Streamdown uses for code blocks in messages.
-const themes = code.getThemes();
+const themes = codePlugin.getThemes();
 
 type Token = HighlightResult['tokens'][number][number];
 
@@ -13,7 +14,7 @@ export function useHighlightedTokens(source: string, language: HighlightLanguage
   useEffect(() => {
     if (!language) { setResult(null); return; }
     let current = true;
-    const ready = code.highlight({ code: source, language, themes }, (highlighted) => {
+    const ready = codePlugin.highlight({ code: source, language, themes }, (highlighted) => {
       if (current) setResult(highlighted);
     });
     setResult(ready);
