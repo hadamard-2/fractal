@@ -80,6 +80,30 @@ describe('AccessChoices', () => {
     expect(readAccess).toHaveBeenCalledTimes(2);
   });
 
+  test('forgetting drops the cached read-back without touching the saved pick', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => level('default'));
+    const { choices, store } = setup(readAccess);
+    store.set('claude:a', { state: level('auto'), sent: true });
+    await choices.resolve(claudeRef);
+    choices.forget(claudeRef);
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledTimes(2);
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
+  });
+
+  test('does not cache a read that a forget overtook', async () => {
+    let release!: (state: AccessState) => void;
+    const readAccess = vi.fn<() => Promise<AccessState | undefined>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue(level('plan'));
+    const { choices } = setup(readAccess);
+    const inFlight = choices.resolve(claudeRef);
+    choices.forget(claudeRef);
+    release(level('default'));
+    await expect(inFlight).resolves.toEqual({ access: { state: level('default'), picked: false } });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: false } });
+  });
+
   test('a new pick over a sent one is unsent again and reports no observed state', async () => {
     const { choices, store } = setup(async () => level('default'));
     store.set('claude:a', { state: level('auto'), sent: true });

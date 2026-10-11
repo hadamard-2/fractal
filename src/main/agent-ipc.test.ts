@@ -46,7 +46,7 @@ class Sender extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   destroy() { this.destroyed = true; this.emit('destroyed'); }
 }
-function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend'>) {
+function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget'>) {
   const service = {
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
@@ -338,7 +338,7 @@ describe('conversation IPC', () => {
     const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
     test('validates before sending and records after', async () => {
       const order: string[] = [];
-      const accessChoices = { validateSend: vi.fn(() => { order.push('validate'); }), recordSend: vi.fn(() => { order.push('record'); }) };
+      const accessChoices = { validateSend: vi.fn(() => { order.push('validate'); }), recordSend: vi.fn(() => { order.push('record'); }), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       f.service.continue.mockImplementation(async () => { order.push('continue'); });
       await f.invoke('open', ref, loadId);
@@ -351,7 +351,7 @@ describe('conversation IPC', () => {
     });
 
     test('a rejected access reaches the renderer verbatim and nothing is sent', async () => {
-      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn() };
+      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       await f.invoke('open', ref, loadId);
       await expect(f.invoke('continue', ref, { text: 'Go', access })).rejects.toThrow('Bypass is turned off in Settings');
@@ -360,11 +360,33 @@ describe('conversation IPC', () => {
     });
 
     test('a failing record does not fail the send', async () => {
-      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(() => { throw new Error('disk full'); }) };
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(() => { throw new Error('disk full'); }), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       await f.invoke('open', ref, loadId);
       await expect(f.invoke('continue', ref, { text: 'Go', access })).resolves.toBeUndefined();
       expect(f.service.continue).toHaveBeenCalled();
+    });
+
+    test('drops the read-back before passing on history that loaded or gained a turn', async () => {
+      const order: string[] = [];
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), forget: vi.fn(() => { order.push('forget'); }) };
+      const f = fixture(undefined, accessChoices);
+      f.sender.send.mockImplementation((_channel: string, event: { type: string }) => { order.push(event.type); });
+      await f.invoke('open', ref, loadId);
+      const turn = { id: 't1', nativeId: 'n1', userMessage: { id: 'u1', text: 'Go' }, blocks: [] as unknown[], status: 'active', captureCompleteness: 'complete' };
+      f.registration.emit(complete);
+      f.registration.emit({ type: 'turn.upserted', ref, loadId, seq: 1, turn });
+      f.registration.emit({ type: 'runtime.changed', ref, loadId, seq: 2, runtime: 'idle' });
+      expect(order).toEqual(['forget', 'history.complete', 'forget', 'turn.upserted', 'runtime.changed']);
+      expect(accessChoices.forget).toHaveBeenCalledWith(ref);
+    });
+
+    test('a failing forget still passes the event on', async () => {
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), forget: vi.fn(() => { throw new Error('boom'); }) };
+      const f = fixture(undefined, accessChoices);
+      await f.invoke('open', ref, loadId);
+      f.registration.emit(complete);
+      expect(f.sender.send).toHaveBeenCalledWith('fractal:conversations:event', complete);
     });
   });
 });

@@ -16,7 +16,7 @@ type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
 type Registration = { emit: (payload: unknown) => void; dispose: () => Promise<void> };
 let activeRegistration: { service: ConversationService; registration: Registration } | undefined;
 
-export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>; accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend'> }): Registration {
+export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>; accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget'> }): Registration {
   if (activeRegistration) {
     if (activeRegistration.service !== service) throw new Error('Conversation IPC is already registered');
     return activeRegistration.registration;
@@ -112,6 +112,11 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       const load = loadIds.get(event.loadId);
       if (!load || conversationKey(event.ref) !== conversationKey(load.ref) || event.ref.projectPath !== load.ref.projectPath || load.owner.closed) return;
       if (load.owner.sender.isDestroyed()) { releaseOwner(load.owner); return; }
+      // History that loaded or gained a turn, here or run elsewhere, may record a new access state; drop the
+      // cached one before the renderer hears of it and asks again.
+      if (event.type === 'history.complete' || event.type === 'turn.upserted') {
+        try { options.accessChoices?.forget(event.ref); } catch { /* A stale read-back must not stop the event. */ }
+      }
       if (event.type === 'request.opened') {
         const previous = requests.get(event.request.id);
         if (previous && previous !== load) return;

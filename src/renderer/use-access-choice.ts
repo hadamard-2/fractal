@@ -11,8 +11,11 @@ function listAccess(ref: ConversationRef): Promise<AccessListing | null> {
   return Promise.resolve().then(() => window.fractal.access.list(ref)).catch((): null => null);
 }
 
-/** The conversation's access choice and its agent's levels. Picks save immediately and apply to the next turn. */
-export function useAccessChoice(ref: ConversationRef, runtime: ConversationRuntime) {
+/**
+ * The conversation's access choice and its agent's levels. Picks save immediately and apply to the next turn.
+ * `historyMark` identifies the loaded history's latest turn (undefined while it loads), so a turn run anywhere, Fractal or not, lists again.
+ */
+export function useAccessChoice(ref: ConversationRef, runtime: ConversationRuntime, historyMark?: string) {
   const key = conversationKey(ref);
   const latest = useRef(ref);
   latest.current = ref;
@@ -37,6 +40,13 @@ export function useAccessChoice(ref: ConversationRef, runtime: ConversationRunti
       setState((prior) => prior.key === key ? { ...prior, levels: result.levels, observed: result.observed, allowDangerous: result.allowDangerous, access: prior.picked ? prior.access : result.access } : prior);
     });
   }, [key]);
+
+  // Loaded or new history may record a different access state, including one set by a turn run outside Fractal.
+  const seenMark = useRef(historyMark);
+  useEffect(() => {
+    if (historyMark !== undefined && historyMark !== seenMark.current) refresh();
+    seenMark.current = historyMark;
+  }, [historyMark, refresh]);
 
   // A turn that just ended may have changed what the agent reports.
   const previous = useRef(runtime);

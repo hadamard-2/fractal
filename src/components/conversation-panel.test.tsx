@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
 import { accessLevels } from '@/shared/access-levels';
-import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
+import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'panel-test', projectPath: '/work/fractal' };
 let emit: (event: ConversationStreamEvent) => void;
@@ -420,16 +420,31 @@ test('Enter still sends from the message box', async () => {
 test('submit waits for the access listing', async () => {
   const send = vi.fn<ConversationApi['continue']>(async () => undefined);
   install('idle', send);
-  let resolve: (value: AccessListing) => void = () => undefined;
+  // Listed on mount and again once the history loads; both stay pending until released.
+  const pending: Array<(value: AccessListing) => void> = [];
   const access = installAccess({ levels: [], access: null, allowDangerous: false });
-  vi.mocked(access.list).mockImplementation(() => new Promise<AccessListing>((r) => { resolve = r; }));
+  vi.mocked(access.list).mockImplementation(() => new Promise<AccessListing>((r) => { pending.push(r); }));
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
   const user = userEvent.setup();
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
   expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(true);
-  await act(async () => resolve({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false }));
+  await act(async () => { for (const resolve of pending) resolve({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false }); });
   await waitFor(() => expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false));
+});
+
+test('a turn that arrives from outside Fractal lists the access again', async () => {
+  install('idle');
+  const access = installAccess({ levels: accessLevels('claude'), access: level('auto'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Auto'));
+  const listed = vi.mocked(access.list).mock.calls.length;
+  vi.mocked(access.list).mockResolvedValue({ levels: accessLevels('claude'), access: level('plan'), allowDangerous: false });
+  const turn: ConversationTurn = { id: 'external', nativeId: 'external', userMessage: { id: 'u', text: 'From the terminal' }, blocks: [], status: 'completed', captureCompleteness: 'complete' };
+  act(() => emit({ ref: claudeRef, loadId, seq: seq++, type: 'turn.upserted', turn }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Plan'));
+  expect(vi.mocked(access.list).mock.calls.length).toBe(listed + 1);
 });
 
 test('a send refused for its access shows the reason and keeps the draft', async () => {

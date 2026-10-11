@@ -90,6 +90,22 @@ test('does not list again for other runtime changes', async () => {
   expect(list).toHaveBeenCalledTimes(1);
 });
 
+test('lists again once the history has loaded and whenever it gains a turn, wherever that turn ran', async () => {
+  const list = vi.fn(async () => listing('auto'));
+  install({ list, choose: vi.fn(async () => undefined) });
+  const { result, rerender } = renderHook(({ mark }: { mark?: string }) => useAccessChoice(refA, 'idle', mark), { initialProps: { mark: undefined as string | undefined } });
+  await waitFor(() => expect(result.current.loaded).toBe(true));
+  expect(list).toHaveBeenCalledTimes(1);
+  rerender({ mark: 't1' });
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  list.mockResolvedValue(listing('plan'));
+  rerender({ mark: 't2' });
+  await waitFor(() => expect(result.current.access?.state).toEqual({ kind: 'level', level: 'plan' }));
+  rerender({ mark: 't2' });
+  rerender({ mark: undefined });
+  expect(list).toHaveBeenCalledTimes(3);
+});
+
 test('a refresh keeps a pick the user made', async () => {
   install({ list: vi.fn(async () => listing('auto')), choose: vi.fn(async () => undefined) });
   const { result } = renderHook(() => useAccessChoice(refA, 'idle'));

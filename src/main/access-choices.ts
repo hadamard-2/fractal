@@ -10,12 +10,14 @@ type ChoiceStore = Pick<AccessChoiceStore, 'get' | 'set'>;
  * What access each conversation's next turn runs with: the level the user
  * picked, else what its own history last ran with (adopted, so a resumed
  * conversation keeps its mode), else the agent's default (null). A picked
- * level can only be one Settings currently allows.
+ * level can only be one Settings currently allows. The read-back is cached
+ * until the history may have changed (see `forget`).
  */
 export class AccessChoices {
   private readonly sources = new Map<ProviderId, AccessSource>();
   private readonly readBacks = new Map<string, AccessState | undefined>();
-  private readonly sendCounts = new Map<string, number>();
+  /** Bumped whenever the history may have changed, so a read that spans the change is not cached. */
+  private readonly generations = new Map<string, number>();
 
   constructor(
     sources: AccessSource[],
@@ -68,18 +70,24 @@ export class AccessChoices {
       const stored = this.store.get(key);
       if (!stored || stored.sent || sameAccess(stored.state, access.state)) this.store.set(key, { state: access.state, sent: true });
     }
+    this.forget(ref);
+  }
+
+  /** Drops the cached read-back, for when the history may have changed: a turn sent here, or one seen arriving from anywhere. */
+  forget(ref: ConversationRef): void {
+    const key = conversationKey(ref);
     this.readBacks.delete(key);
-    this.sendCounts.set(key, (this.sendCounts.get(key) ?? 0) + 1);
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
   }
 
   private async readBack(ref: ConversationRef): Promise<AccessState | undefined> {
     const key = conversationKey(ref);
     if (this.readBacks.has(key)) return this.readBacks.get(key);
-    const sendsBefore = this.sendCounts.get(key) ?? 0;
+    const generation = this.generations.get(key) ?? 0;
     try {
       const result = await this.sources.get(ref.provider)?.readAccess?.(ref);
-      // A send that landed while reading makes this result pre-send; the caller may use it, the cache may not.
-      if ((this.sendCounts.get(key) ?? 0) === sendsBefore) this.readBacks.set(key, result);
+      // A send or history change that landed while reading may make this result stale; the caller may use it, the cache may not.
+      if ((this.generations.get(key) ?? 0) === generation) this.readBacks.set(key, result);
       return result;
     } catch { return undefined; }
   }

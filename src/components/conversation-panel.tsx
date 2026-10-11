@@ -41,7 +41,7 @@ function ComposerSubmit({ blocked, hasText, sending }: { blocked: boolean; hasTe
 function NativeConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
   const modelChoice = useModelChoice(conversationRef);
-  const accessChoice = useAccessChoice(conversationRef, state.runtime);
+  const accessChoice = useAccessChoice(conversationRef, state.runtime, state.history === 'complete' ? state.turns.at(-1)?.id ?? '' : undefined);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
