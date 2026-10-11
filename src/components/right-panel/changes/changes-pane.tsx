@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -19,6 +19,11 @@ export function ChangesPane({ root, active, onOpenFile }: { root: string; active
   const { snapshot, failed, refresh } = useChanges(root, active);
   const [listOpen, setListOpen] = useState(true);
   const [jumpTo, setJumpTo] = useState<{ path: string; token: number } | null>(null);
+  const streaming = snapshot?.kind === 'changes' && snapshot.files.length > 0;
+
+  // A jump is answered by the stream that was mounted for it; drop it when that stream goes away or the root changes, so a later remount doesn't replay it.
+  useEffect(() => { if (!streaming) setJumpTo(null); }, [streaming]);
+  useEffect(() => { setJumpTo(null); }, [root]);
 
   if (!snapshot) {
     return failed

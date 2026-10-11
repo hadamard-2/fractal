@@ -76,6 +76,21 @@ test('summarises and lists files, and jumps to one', async () => {
   expect(screen.getByTestId('stream').textContent).toBe('2 files, jump new.ts#2');
 });
 
+test('does not replay a handled jump when the stream remounts', async () => {
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]) }));
+  const { rerender } = renderPane();
+  await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole('button', { name: /a\.ts/ }));
+  expect(screen.getByTestId('stream').textContent).toBe('1 files, jump a.ts#1');
+  const show = (snapshot: ChangesView['snapshot']) => {
+    useChanges.mockReturnValue(view({ snapshot }));
+    rerender(<TooltipProvider><ChangesPane active onOpenFile={vi.fn()} root="/repo" /></TooltipProvider>);
+  };
+  show(changes([]));
+  expect(screen.queryByTestId('stream')).toBeNull();
+  show(changes([file('a.ts')]));
+  expect(screen.getByTestId('stream').textContent).toBe('1 files, jump none');
+});
+
 test('shows a detached head by its short commit, and a singular file count', () => {
   useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')], { commit: '0123456789abcdef' } as never) }));
   renderPane();
