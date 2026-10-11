@@ -6,11 +6,10 @@ export type ChangesSnapshot = Extract<ChangesResult, { kind: 'changes' | 'not-a-
 export interface ChangesView {
   snapshot: ChangesSnapshot | null;
   failed: boolean;
-  checkedAt: number | null;
   refresh(): void;
 }
 
-interface Loaded { root: string; snapshot: ChangesSnapshot | null; failed: boolean; checkedAt: number | null }
+interface Loaded { root: string; snapshot: ChangesSnapshot | null; failed: boolean }
 
 interface Reader {
   /** `queue` runs the read after the one in flight; otherwise a read in flight absorbs the request. */
@@ -26,7 +25,7 @@ interface Reader {
  * good snapshot, and nothing read for another root, or after unmount, is shown.
  */
 export function useChanges(root: string, active: boolean): ChangesView {
-  const [loaded, setLoaded] = useState<Loaded>({ root, snapshot: null, failed: false, checkedAt: null });
+  const [loaded, setLoaded] = useState<Loaded>({ root, snapshot: null, failed: false });
   const reader = useRef<Reader | null>(null);
 
   useEffect(() => {
@@ -34,18 +33,20 @@ export function useChanges(root: string, active: boolean): ChangesView {
     let inFlight = false;
     let queued = false;
     let fingerprint: string | undefined;
-    const update = (change: Partial<Loaded>) => setLoaded((previous) => ({ ...previous, ...change }));
+    // An update that changes nothing keeps the same state, so an unchanged poll does not re-render.
+    const update = (change: Partial<Loaded>) => setLoaded((previous) => (
+      (Object.keys(change) as (keyof Loaded)[]).every((key) => previous[key] === change[key]) ? previous : { ...previous, ...change }
+    ));
     setLoaded((previous) => (
-      previous.root === root && previous.snapshot === null && !previous.failed && previous.checkedAt === null
+      previous.root === root && previous.snapshot === null && !previous.failed
         ? previous
-        : { root, snapshot: null, failed: false, checkedAt: null }
+        : { root, snapshot: null, failed: false }
     ));
     const apply = (result: ChangesResult) => {
       if (result.kind === 'error') return update({ failed: true });
-      const checkedAt = Date.now();
-      if (result.kind === 'unchanged') return update({ failed: false, checkedAt });
+      if (result.kind === 'unchanged') return update({ failed: false });
       fingerprint = result.kind === 'changes' ? result.fingerprint : undefined;
-      update({ snapshot: result, failed: false, checkedAt });
+      update({ snapshot: result, failed: false });
     };
     const read = (queue: boolean) => {
       if (inFlight) {
@@ -104,6 +105,6 @@ export function useChanges(root: string, active: boolean): ChangesView {
   }, [root, active]);
 
   const refresh = useCallback(() => reader.current?.read(true), []);
-  const view: Omit<Loaded, 'root'> = loaded.root === root ? loaded : { snapshot: null, failed: false, checkedAt: null };
-  return { snapshot: view.snapshot, failed: view.failed, checkedAt: view.checkedAt, refresh };
+  const view: Omit<Loaded, 'root'> = loaded.root === root ? loaded : { snapshot: null, failed: false };
+  return { snapshot: view.snapshot, failed: view.failed, refresh };
 }

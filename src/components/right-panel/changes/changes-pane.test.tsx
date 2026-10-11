@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -25,7 +25,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const refresh = vi.fn();
-const view = (over: Partial<ChangesView> = {}): ChangesView => ({ snapshot: null, failed: false, checkedAt: null, refresh, ...over });
+const view = (over: Partial<ChangesView> = {}): ChangesView => ({ snapshot: null, failed: false, refresh, ...over });
 const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
   path, status: 'modified', added: 2, removed: 1, collapsed: false, body: { kind: 'hunks', hunks: [] }, ...over,
 });
@@ -46,7 +46,7 @@ test('shows each whole state', async () => {
   await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole('button', { name: 'Retry' }));
   expect(refresh).toHaveBeenCalledTimes(1);
   const show = (snapshot: ChangesView['snapshot']) => {
-    useChanges.mockReturnValue(view({ snapshot, checkedAt: Date.now() }));
+    useChanges.mockReturnValue(view({ snapshot }));
     rerender(<TooltipProvider><ChangesPane active onOpenFile={vi.fn()} root="/repo" /></TooltipProvider>);
   };
   show({ kind: 'not-a-repo' });
@@ -59,7 +59,7 @@ test('shows each whole state', async () => {
 });
 
 test('summarises and lists files, and jumps to one', async () => {
-  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts'), file('new.ts', { status: 'renamed', oldPath: 'old.ts', added: 0, removed: 0 })]), checkedAt: Date.now() }));
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts'), file('new.ts', { status: 'renamed', oldPath: 'old.ts', added: 0, removed: 0 })]) }));
   renderPane();
   expect(screen.getByText('2 files changed · +2 −1')).toBeTruthy();
   expect(screen.getByText('main')).toBeTruthy();
@@ -77,14 +77,14 @@ test('summarises and lists files, and jumps to one', async () => {
 });
 
 test('shows a detached head by its short commit, and a singular file count', () => {
-  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')], { commit: '0123456789abcdef' } as never), checkedAt: Date.now() }));
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')], { commit: '0123456789abcdef' } as never) }));
   renderPane();
   expect(screen.getByText('1 file changed · +2 −1')).toBeTruthy();
   expect(screen.getByText('0123456')).toBeTruthy();
 });
 
 test('collapses and expands the file list', async () => {
-  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]), checkedAt: Date.now() }));
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]) }));
   renderPane();
   const toggle = screen.getByRole('button', { name: 'Changed files' });
   expect(toggle.getAttribute('aria-expanded')).toBe('true');
@@ -96,18 +96,16 @@ test('collapses and expands the file list', async () => {
   expect(screen.getByRole('list', { name: 'Changed files' })).toBeTruthy();
 });
 
-test('counts the seconds since the last check, and refreshes on request', async () => {
-  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]), checkedAt: Date.now() - 400 }));
+test('refreshes on request', async () => {
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]) }));
   renderPane();
-  expect(screen.getByText('Checked just now')).toBeTruthy();
-  act(() => { vi.advanceTimersByTime(3_000); });
-  expect(screen.getByText('Checked 3s ago')).toBeTruthy();
+  expect(screen.queryByText(/Checked/)).toBeNull();
   await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole('button', { name: 'Refresh changes' }));
   expect(refresh).toHaveBeenCalled();
 });
 
 test('shows a failed refresh in the header while keeping the last result', () => {
-  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]), failed: true, checkedAt: Date.now() }));
+  useChanges.mockReturnValue(view({ snapshot: changes([file('a.ts')]), failed: true }));
   renderPane();
   expect(screen.getByText('Changes couldn\'t be read')).toBeTruthy();
   expect(screen.queryByText(/Checked/)).toBeNull();

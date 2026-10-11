@@ -1,7 +1,8 @@
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { countsText, statusLetter, summaryText } from '@/renderer/changes-rows';
 import { useChanges } from '@/renderer/use-changes';
 import type { ChangedFile, ChangesHead } from '@/shared/changes-contract';
@@ -15,7 +16,7 @@ function Message({ children }: { children: ReactNode }) {
 const branchLabel = (head: ChangesHead) => head.branch ?? head.commit?.slice(0, 7);
 
 export function ChangesPane({ root, active, onOpenFile }: { root: string; active: boolean; onOpenFile: (path: string) => void }) {
-  const { snapshot, failed, checkedAt, refresh } = useChanges(root, active);
+  const { snapshot, failed, refresh } = useChanges(root, active);
   const [listOpen, setListOpen] = useState(true);
   const [jumpTo, setJumpTo] = useState<{ path: string; token: number } | null>(null);
 
@@ -35,10 +36,10 @@ export function ChangesPane({ root, active, onOpenFile }: { root: string; active
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-xs">
         <span className="shrink-0">{summaryText(files)}</span>
         {branch && <span className="min-w-0 truncate text-muted-foreground">{branch}</span>}
-        <span className="ml-auto shrink-0 text-muted-foreground">{failed ? 'Changes couldn\'t be read' : <Checked checkedAt={checkedAt} />}</span>
+        {failed && <span className="ml-auto shrink-0 text-muted-foreground">Changes couldn&apos;t be read</span>}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button aria-label="Refresh changes" className="size-7 shrink-0" onClick={refresh} size="icon" type="button" variant="ghost">
+            <Button aria-label="Refresh changes" className={cn('size-7 shrink-0', !failed && 'ml-auto')} onClick={refresh} size="icon" type="button" variant="ghost">
               <RefreshCw aria-hidden className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -84,15 +85,3 @@ function FileList({ files, onJump }: { files: ChangedFile[]; onJump: (path: stri
   );
 }
 
-/** "Checked Ns ago", counted from the last read that finished, redrawn each second. */
-function Checked({ checkedAt }: { checkedAt: number | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [checkedAt]);
-  if (checkedAt === null) return null;
-  const seconds = Math.max(0, Math.floor((now - checkedAt) / 1000));
-  return <>{seconds < 1 ? 'Checked just now' : `Checked ${seconds}s ago`}</>;
-}

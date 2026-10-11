@@ -73,13 +73,13 @@ describe('useChanges', () => {
     const { result } = renderHook(() => useChanges('/a', true));
     await tick(0);
     expect(read).toHaveBeenLastCalledWith('/a', undefined);
-    const checkedAt = result.current.checkedAt ?? 0;
     expect(result.current.snapshot).toBe(first);
+    const view = result.current;
 
     await tick(CHANGES_POLL_MS);
     expect(read).toHaveBeenLastCalledWith('/a', 'fp1');
-    expect(result.current.snapshot).toBe(first);
-    expect(result.current.checkedAt).toBe(checkedAt + CHANGES_POLL_MS);
+    // Nothing changed, so the hook hands back the same view rather than re-rendering with an equal one.
+    expect(result.current).toBe(view);
   });
 
   test('never overlaps reads, and runs a refresh requested mid-read afterwards', async () => {
@@ -181,7 +181,7 @@ describe('useChanges', () => {
 
     rerender({ root: '/b' });
     rerender({ root: '/a' });
-    expect(result.current).toMatchObject({ snapshot: null, failed: false, checkedAt: null });
+    expect(result.current).toMatchObject({ snapshot: null, failed: false });
     expect(read).toHaveBeenCalledTimes(3);
     await act(async () => { settlers[2](changed('y')); });
     expect(result.current.snapshot).toMatchObject({ fingerprint: 'y' });
@@ -193,7 +193,7 @@ describe('useChanges', () => {
     await tick(0);
     expect(result.current.failed).toBe(true);
     rerender({ root: '/b' });
-    expect(result.current).toMatchObject({ snapshot: null, failed: false, checkedAt: null });
+    expect(result.current).toMatchObject({ snapshot: null, failed: false });
   });
 
   test('still applies a response that arrives after the tool was deselected', async () => {
