@@ -16,7 +16,7 @@ Main already runs git for Files: `files/git.ts` has `runGit`, which spawns `git 
 
 ## Entry and tab
 
-The Review entry is renamed **Changes** and keeps the `FileDiff` icon. It is enabled while a project is selected, with the hint and shortcut **Ctrl+Shift+G**, and otherwise disabled with the hint "Open a project first", as Terminal and Files are. The shortcut is handled in `right-workspace.tsx` beside the existing two.
+The Review entry is renamed **Changes** and keeps the `FileDiff` icon. It is enabled while a project is selected, with the hint and shortcut **Ctrl+Shift+D**, and otherwise disabled with the hint "Open a project first", as Terminal and Files are. The shortcut is handled in `right-workspace.tsx` beside the existing two.
 
 `PanelTab` gains a third kind, `{ kind: 'changes'; id; projectPath }`. A Changes tab belongs to one project, fixed when it is created; selecting a conversation in another project does not change it. Each project has at most one Changes tab. Choosing Changes, from the empty state, the `+` menu, or the shortcut, selects the current project's Changes tab if it has one and otherwise creates it. The tab is labelled "Changes" and its tooltip shows the project path. Closing it follows the existing tab rules.
 
@@ -24,7 +24,7 @@ The Review entry is renamed **Changes** and keeps the `FileDiff` icon. It is ena
 
 From top to bottom, inside the tab:
 
-1. **Summary header.** "N files changed · +X −Y", the branch name (or the short commit when `HEAD` is detached), a "Checked Ns ago" indicator, and a refresh button. While a read has failed, the header says so in place of "Checked Ns ago" and keeps showing the last good result below.
+1. **Summary header.** "N files changed · +X −Y", the branch name (or the short commit when `HEAD` is detached), and a refresh button. While a read has failed, the header says so beside the refresh button and keeps showing the last good result below.
 2. **File list.** One compact row per changed file: a status letter (M, A, D, R, U, T for type change), the path (`old → new` for a rename), and its +/− counts. Clicking a row scrolls the stream to that file and expands it if it was collapsed. The list can be collapsed to give the diff more room; its collapsed state is remembered per tab.
 3. **Diff stream.** For each file, a header that sticks to the top of the stream while its diff is on screen, holding the status, path, +/−, a collapse chevron, and the file's actions; then the file's diff. Rows are virtualised across the whole stream with `@tanstack/react-virtual`, so a long stream renders only what is visible.
 
@@ -37,13 +37,13 @@ Files appear in the order git reports them (path order). Whole states that repla
 
 ## Diff content
 
-**What is compared.** The working tree against `HEAD`, as one diff, so whether a change is staged makes no difference to what is shown. Untracked files that are not gitignored appear as added files, their whole content shown as additions. In a repository with no commits, everything is compared against the empty tree. Gitignored files never appear.
+**What is compared.** The working tree against `HEAD`, as one diff, so whether a change is staged makes no difference to what is shown. Untracked files that are not gitignored appear as added files, their whole content shown as additions. In a repository with no commits, everything is compared against the empty tree. Gitignored files never appear. When the project is a folder inside a larger repository, only changes inside that folder are shown, with paths relative to the project.
 
 **Rendering.**
 
 - A unified diff, with old and new line-number gutters. Added and removed lines are tinted using theme tokens; context lines are not.
 - Three lines of context, as git's default. Each hunk is preceded by a separator row showing git's function context from the `@@` line. Hidden lines between hunks cannot be expanded in this version.
-- Lines are syntax-highlighted with the same highlighter, themes, and `languageFor` as the Files viewer, line by line, so a construct that spans lines, such as a block comment, may colour imperfectly. A file whose diff text is over `FILE_HIGHLIGHT_MAX_BYTES` is shown unhighlighted. Lines are plain text until the highlighter loads.
+- Lines are syntax-highlighted with the same highlighter, themes, and `languageFor` as the Files viewer. Each file is highlighted as two texts, its old side (context and removed lines) and its new side (context and added lines), so a construct that spans the gap between hunks, such as a block comment, may colour imperfectly. A file whose diff text is over `FILE_HIGHLIGHT_MAX_BYTES` is shown unhighlighted. Lines are plain text until the highlighter loads.
 - "No newline at end of file" is shown as a muted row after the line it applies to.
 - Long lines scroll horizontally; there is no wrap toggle.
 
@@ -59,6 +59,7 @@ Files appear in the order git reports them (path order). Whole states that repla
 | Mode change only | "File mode changed 644 → 755" |
 | Type change (file ↔ symlink) | "Changed from a file to a symlink" or the reverse |
 | Submodule | "Submodule moved to `abc1234`", or "Submodule has uncommitted changes" |
+| Untracked folder (a nested repository git does not descend into) | "Untracked folder · contents not shown" |
 | Conflicted | A "Conflicted" badge, and the working file diffed against `HEAD`, so its conflict markers show as additions |
 
 **Bounds.** These are Fractal's own limits on renderer work and IPC size, and are starting values:
@@ -68,7 +69,7 @@ Files appear in the order git reports them (path order). Whole states that repla
 - Once the diffs sent in one read reach `CHANGES_TOTAL_MAX_BYTES` (8 MiB), the remaining files are still listed with their status and +/−, but show "Not loaded: too many changes" in place of a diff, and the result is marked `truncated`. The file list never silently drops a file.
 - A file with more than `CHANGES_COLLAPSE_LINES` (500) changed lines, such as a lockfile, starts collapsed.
 
-**Actions on a file.** Each file header has the Files tool's Open menu (the remembered editor, every detected editor, System default, Show in folder) and an "Open in Files" item that opens the file in a Files tab under the Files tool's tab rules. Clicking a diff line marks it as the current line, which is highlighted and is the line the Open menu passes to editors that accept one: the line's new-side number, or for a removed line the nearest new-side line before it. Deleted files have only "Show in folder" for their parent and no "Open in Files".
+**Actions on a file.** Each file header has an "Open file" icon button that opens the file in a Files tab under the Files tool's tab rules, and to its right a three-dot "Open with" menu holding the Files tool's Open menu choices (every detected editor, System default, Show in folder). Clicking a diff line marks it as the current line, which is highlighted and is the line the "Open with" menu passes to editors that accept one: the line's new-side number, or for a removed line the nearest new-side line before it. Deleted files and untracked folders have no actions, since there is no file to open.
 
 **Across refreshes.** Collapse state is kept per file path. The scroll position is kept by anchoring to the topmost visible file and line, as the conversation timeline anchors its reading position. A file that is no longer changed drops out; a new one appears in path order. Nothing announces either.
 
@@ -85,13 +86,13 @@ A read that fails keeps the last good result on screen and shows the failure in 
 
 ## Process boundary
 
-The preload exposes a typed `changes` API on `window.fractal`. The contract lives in `src/shared/changes-contract.ts`, follows the files contract's shape, and validates payloads on both sides with zod. It has one invoke channel and no event channel. Main accepts calls only from the app window's main frame, as the files and terminal IPC do.
+The preload exposes a typed `changes` API on `window.fractal`. The contract lives in `src/shared/changes-contract.ts`, and follows the files contract's shape: main validates every request with a hand-written guard before acting on it. It has one invoke channel and no event channel. Main accepts calls only from the app window's main frame, as the files and terminal IPC do.
 
 | Method | Result |
 |---|---|
 | `read(root, fingerprint?)` | `{ kind: 'unchanged', fingerprint }` when the tree matches `fingerprint`; `{ kind: 'changes', fingerprint, head, files, truncated }`; `{ kind: 'not-a-repo' }`; `{ kind: 'git-unavailable' }`; or `{ kind: 'error', message }` |
 
-`head` is `{ branch?: string; commit?: string }` (`commit` absent before the first commit). Each entry of `files` is `{ path, oldPath?, status, added, removed, collapsed, body }`, with `path` relative to `root` and `/`-separated, and `body` one of `{ kind: 'hunks', hunks }`, `binary`, `too-large`, `mode`, `type-change`, `submodule`, or `not-loaded`. A hunk is `{ header, oldStart, newStart, lines }`, and a line is `{ kind: 'context' | 'added' | 'removed' | 'no-newline', text, oldNumber?, newNumber? }`.
+`head` is `{ branch?: string; commit?: string }` (`commit` absent before the first commit). Each entry of `files` is `{ path, oldPath?, status, added, removed, collapsed, body }`, with `path` relative to `root` and `/`-separated, `added` and `removed` null where git cannot count lines (binary files, and untracked files too large to read), and `body` one of `{ kind: 'hunks', hunks }`, `binary`, `too-large`, `mode`, `type-change`, `submodule`, `folder`, or `not-loaded`. A hunk is `{ header, oldStart, newStart, lines }`, and a line is `{ kind: 'context' | 'added' | 'removed' | 'no-newline', text, oldNumber?, newNumber? }`.
 
 `root` is checked exactly as Files checks it: it must be the project path of a conversation main already knows through the conversation service. The `knowsProject` check moves out of `files-ipc.ts` into a helper both IPC modules call. `runGit` moves from `files/git.ts` to `src/main/git.ts`, since it is no longer Files' alone.
 
@@ -99,10 +100,10 @@ The preload exposes a typed `changes` API on `window.fractal`. The contract live
 
 `src/main/changes/changes-service.ts` does the work, in this order:
 
-1. **Status.** `git status --porcelain=v2 -z --branch --untracked-files=all` gives the branch, the `HEAD` commit, every changed and untracked path, rename sources, submodule state, and conflicts. Exit 128 is `not-a-repo`; a git that cannot start is `git-unavailable`.
+1. **Status.** `git status --porcelain=v2 -z --branch --untracked-files=all -- .` gives the branch, the `HEAD` commit, every changed and untracked path in the project folder, rename sources, submodule state, and conflicts. Its paths are relative to the repository's top level even with the pathspec, so the folder's prefix (`git rev-parse --show-prefix`) is stripped from them. Exit 128 is `not-a-repo`; a git that cannot start is `git-unavailable`.
 2. **Fingerprint.** A hash of the status output plus the `lstat` size and modification time of every listed path, with a path that no longer exists recorded as missing. Status alone is not enough, because a file that is already modified stays `M` when it changes again. If it equals the fingerprint passed in, return `unchanged`.
-3. **Counts.** `git diff HEAD --numstat -z --find-renames` gives the +/− per file and marks binary files. With no commits, the empty tree's id stands in for `HEAD`.
-4. **Patch.** `git diff HEAD --no-color --no-ext-diff --no-textconv --find-renames --unified=3` gives the hunks, read through a stream that stops at `CHANGES_TOTAL_MAX_BYTES`. The patch is parsed in main into the structure above. File paths always come from the `-z` outputs of steps 1 and 3, never from patch headers, so names with spaces, quotes, non-ASCII characters, or newlines survive. Patch sections are matched to files in order.
+3. **Counts.** `git diff HEAD --raw --numstat -z --no-abbrev --find-renames --relative` gives each file's status letter, old and new modes, and +/−, and marks binary files. `--relative` limits it to the project folder and makes paths relative to it. With no commits, the empty tree stands in for `HEAD`; its id comes from `git hash-object -t tree --stdin` with empty input, which writes nothing and matches the repository's hash format. `git diff HEAD` reports a conflicted file as modified, so conflicts come from status's unmerged entries.
+4. **Patch.** `git diff HEAD --no-color --no-ext-diff --no-textconv --find-renames --relative --unified=3` gives the hunks, read line by line. The patch is parsed in main into the structure above. File paths always come from the `-z` outputs of steps 1 and 3, never from patch headers, so names with spaces, quotes, non-ASCII characters, or newlines survive. Patch sections are matched to files in order; a type change occupies two sections (the old file deleted, then the new one added). A section over the per-file cap is read and dropped. Once the sections kept reach `CHANGES_TOTAL_MAX_BYTES`, git is stopped and the remaining files are `not-loaded`.
 5. **Untracked files.** Read directly and classified with `decodeText`, and turned into one all-added hunk. Fractal does not use `git add -N` to include them in the diff, because that writes to the index.
 
 Every command runs with `shell: false` and `GIT_OPTIONAL_LOCKS=0`, so polling never takes `index.lock` and cannot collide with an agent running git in the same repository. `--no-ext-diff` and `--no-textconv` keep the output parseable and stop a configured diff program from being started every two seconds. `runGit` buffers all of stdout, so the patch step uses a bounded reader instead, as `listGitFiles` already does for its path cap. No command Fractal runs here writes to the repository.
@@ -121,7 +122,7 @@ Main-process unit tests run against real temporary repositories made with `git i
 
 Contract tests check that invalid payloads are refused on both sides, in the style of `files-contract.test.ts`. Renderer unit tests cover the tab rules (one Changes tab per project, reselecting the existing one, the disabled entry with no project), polling only while the tab is selected and the document visible, no overlapping reads, the last good result surviving a failed read, and collapse state and scroll anchor surviving a refresh.
 
-Drive the running app to check the flows: open Changes with Ctrl+Shift+G, have an agent edit files and watch them appear within a couple of seconds, edit a file from a Fractal terminal, create an untracked file, then `git commit` and watch the list empty. Jump to a file from the list, collapse and expand files, use the Open menu at a clicked line and "Open in Files". Check a large lockfile change starts collapsed, and that a non-git project shows "Not a git repository". Whether the header, file list, and stream proportions feel right at 320px and 720px is left to human review.
+Drive the running app to check the flows: open Changes with Ctrl+Shift+D, have an agent edit files and watch them appear within a couple of seconds, edit a file from a Fractal terminal, create an untracked file, then `git commit` and watch the list empty. Jump to a file from the list, collapse and expand files, use the "Open with" menu at a clicked line and "Open file". Check a large lockfile change starts collapsed, and that a non-git project shows "Not a git repository". Whether the header, file list, and stream proportions feel right at 320px and 720px is left to human review.
 
 Run the tests, `pnpm lint`, and `pnpm exec tsc --noEmit`.
 
