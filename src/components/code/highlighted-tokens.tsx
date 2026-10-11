@@ -6,7 +6,7 @@ import { codePlugin } from './fractal-theme';
 // The same highlighter and themes Streamdown uses for code blocks in messages.
 const themes = codePlugin.getThemes();
 
-type Token = HighlightResult['tokens'][number][number];
+export type Token = HighlightResult['tokens'][number][number];
 
 /** `source` as highlighted lines of tokens; null until the highlighter has loaded, or with no language. */
 export function useHighlightedTokens(source: string, language: HighlightLanguage | undefined): HighlightResult['tokens'] | null {
