@@ -42,5 +42,6 @@ test('compares states by level id, or by custom label and mode', () => {
   expect(sameAccess({ kind: 'level', level: 'auto' }, { kind: 'level', level: 'plan' })).toBe(false);
   expect(sameAccess({ kind: 'level', level: 'auto' }, { kind: 'custom', label: 'auto' })).toBe(false);
   expect(sameAccess({ kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' })).toBe(true);
+  expect(sameAccess({ kind: 'custom', label: 'x', dangerous: true }, { kind: 'custom', label: 'x' })).toBe(false);
   expect(sameAccess({ kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, { kind: 'custom', label: 'dontAsk' })).toBe(false);
 });

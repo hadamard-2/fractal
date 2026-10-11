@@ -27,5 +27,5 @@ export function findAccessLevel(provider: ProviderId, id: string): AccessLevel |
 
 export function sameAccess(a: AccessState, b: AccessState): boolean {
   if (a.kind === 'level') return b.kind === 'level' && a.level === b.level;
-  return b.kind === 'custom' && a.label === b.label && a.mode === b.mode;
+  return b.kind === 'custom' && a.label === b.label && a.mode === b.mode && Boolean(a.dangerous) === Boolean(b.dangerous);
 }

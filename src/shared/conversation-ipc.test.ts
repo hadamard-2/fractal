@@ -188,6 +188,8 @@ test('parses turn access and rejects malformed states', () => {
 test('parses an access state and drops unknown keys', () => {
   expect(parseAccessState({ kind: 'custom', label: 'Locked down' })).toEqual({ kind: 'custom', label: 'Locked down' });
   expect(parseAccessState({ kind: 'level', level: 'plan', extra: 1 })).toEqual({ kind: 'level', level: 'plan' });
+  expect(parseAccessState({ kind: 'custom', label: 'full access', dangerous: true })).toEqual({ kind: 'custom', label: 'full access', dangerous: true });
+  expect(parseAccessState({ kind: 'custom', label: 'x', dangerous: false })).toEqual({ kind: 'custom', label: 'x' });
   const bad = [
     { kind: 'level', level: 'x'.repeat(65) },
     { kind: 'level' },
@@ -196,6 +198,7 @@ test('parses an access state and drops unknown keys', () => {
     { kind: 'custom', label: 'x', mode: '' },
     { kind: 'custom', label: 'x', mode: 'a'.repeat(33) },
     { kind: 'custom', label: 'x', mode: 'dont-ask' },
+    { kind: 'custom', label: 'x', dangerous: 'yes' },
     { kind: 'other' },
   ];
   for (const state of bad) expect(() => parseAccessState(state)).toThrow('Invalid access');

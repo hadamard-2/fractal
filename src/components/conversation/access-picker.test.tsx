@@ -105,6 +105,13 @@ test('a dangerous current level colours the trigger', () => {
   expect(screen.getByRole('button', { name: 'Access' }).className).toContain('text-destructive');
 });
 
+test('a read-back marked dangerous colours the trigger too', () => {
+  setup('codex', { allowDangerous: false, access: { state: { kind: 'custom', label: 'full access · ask on request', dangerous: true }, picked: false } });
+  const trigger = screen.getByRole('button', { name: 'Access' });
+  expect(trigger.textContent).toBe('Custom: full access · ask on request');
+  expect(trigger.className).toContain('text-destructive');
+});
+
 test('states what the last turn ran in when it differs', async () => {
   const { user } = setup('claude', { access: level('auto'), observed: { kind: 'level', level: 'default' } });
   await user.click(screen.getByRole('button', { name: 'Access' }));

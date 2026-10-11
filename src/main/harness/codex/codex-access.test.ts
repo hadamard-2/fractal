@@ -41,7 +41,13 @@ describe('codexAccessState', () => {
   test('labels every sandbox, approval policy and reviewer', () => {
     const granular = { granular: { sandbox_approval: true, rules: true, skill_approval: true, request_permissions: true, mcp_elicitations: true } } as const;
     expect(codexAccessState({ approvalPolicy: granular, approvalsReviewer: 'auto_review', sandbox: { type: 'externalSandbox', networkAccess: 'enabled' } })).toEqual({ kind: 'custom', label: 'external sandbox · granular · auto-review' });
-    expect(codexAccessState({ approvalPolicy: 'untrusted', approvalsReviewer: 'user', sandbox: { type: 'dangerFullAccess' } })).toEqual({ kind: 'custom', label: 'full access · untrusted' });
+    expect(codexAccessState({ approvalPolicy: 'untrusted', approvalsReviewer: 'user', sandbox: { type: 'dangerFullAccess' } })).toEqual({ kind: 'custom', label: 'full access · untrusted', dangerous: true });
+  });
+
+  test('marks any combination without a sandbox as dangerous, and nothing else', () => {
+    expect(codexAccessState({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'dangerFullAccess' } })).toEqual({ kind: 'custom', label: 'full access · ask on request', dangerous: true });
+    expect(codexAccessState({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: ws })).not.toHaveProperty('dangerous');
+    expect(codexAccessState({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: { type: 'externalSandbox', networkAccess: 'enabled' } })).not.toHaveProperty('dangerous');
   });
 
   test('produces states the IPC contract accepts, without a mode', () => {

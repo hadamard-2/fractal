@@ -121,8 +121,11 @@ export interface ModelsApi {
   choose(ref: ConversationRef, choice: ModelChoice): Promise<void>;
 }
 
-/** What a conversation's agent may do without asking: one of the agent's catalog levels, or a setting set outside Fractal that no level matches. */
-export type AccessState = { kind: 'level'; level: string } | { kind: 'custom'; label: string; mode?: string };
+/**
+ * What a conversation's agent may do without asking: one of the agent's catalog levels, or a setting set outside Fractal that no level matches.
+ * A custom state is `dangerous` when it removes the agent's safety checks as fully as the agent's dangerous level does, and is gated with it.
+ */
+export type AccessState = { kind: 'level'; level: string } | { kind: 'custom'; label: string; mode?: string; dangerous?: boolean };
 
 export interface AccessLevel {
   id: string;

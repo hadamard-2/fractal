@@ -61,5 +61,6 @@ export function codexAccessState(thread: ThreadAccess): AccessState {
   }
   const reviewer = REVIEWER_LABELS[thread.approvalsReviewer];
   const label = [SANDBOX_LABELS[thread.sandbox.type], approvalLabel(thread.approvalPolicy), ...(reviewer ? [reviewer] : [])].join(' · ');
-  return { kind: 'custom', label };
+  // Without a sandbox, any command Codex runs unasked can do anything; asking for some of them does not make up for it.
+  return thread.sandbox.type === 'dangerFullAccess' ? { kind: 'custom', label, dangerous: true } : { kind: 'custom', label };
 }

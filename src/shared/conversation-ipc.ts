@@ -191,9 +191,10 @@ export function parseAccessState(value: unknown): AccessState {
   }
   if (value.kind === 'custom') {
     if (!nonblankText(value.label, MAX_ACCESS_LABEL_LENGTH)) invalidAccess();
-    if (value.mode === undefined) return { kind: 'custom', label: value.label };
-    if (!isSendableAccessMode(value.mode)) invalidAccess();
-    return { kind: 'custom', label: value.label, mode: value.mode };
+    const { mode, dangerous } = value;
+    if (mode !== undefined && !isSendableAccessMode(mode)) invalidAccess();
+    if (dangerous !== undefined && typeof dangerous !== 'boolean') invalidAccess();
+    return { kind: 'custom', label: value.label, ...(isSendableAccessMode(mode) ? { mode } : {}), ...(dangerous ? { dangerous: true } : {}) };
   }
   return invalidAccess();
 }

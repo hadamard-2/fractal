@@ -58,7 +58,9 @@ export class AccessChoices {
     if (access.picked) return this.validatePicked(ref.provider, access.state);
     const { state } = access;
     if (state.kind === 'level' && !findAccessLevel(ref.provider, state.level)) throw new Error('Unknown access level');
-    const effective = findAccessLevel(ref.provider, state.kind === 'level' ? state.level : state.mode ?? '');
+    const effective = state.kind === 'custom' && state.dangerous
+      ? accessLevels(ref.provider).find((level) => level.dangerous)
+      : findAccessLevel(ref.provider, state.kind === 'level' ? state.level : state.mode ?? '');
     if (effective?.dangerous && !this.allowDangerous(ref.provider)) throw new Error(`${effective.label} is turned off in Settings`);
   }
 

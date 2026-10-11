@@ -176,6 +176,13 @@ describe('AccessChoices', () => {
     expect(() => on.choices.validateSend(claudeRef, { state: level('nope'), picked: false })).toThrow('Unknown access level');
   });
 
+  test('gates a read-back marked dangerous as the agent\'s dangerous level', () => {
+    const noSandbox: AccessState = { kind: 'custom', label: 'full access · ask on request', dangerous: true };
+    expect(() => setup().choices.validateSend(codexRef, { state: noSandbox, picked: false })).toThrow('Full access is turned off in Settings');
+    expect(() => setup(undefined, () => true).choices.validateSend(codexRef, { state: noSandbox, picked: false })).not.toThrow();
+    expect(() => setup(undefined, () => true).choices.validateSend(codexRef, { state: noSandbox, picked: true })).toThrow('Unknown access level');
+  });
+
   test('counts a throwing allowDangerous as not allowed', () => {
     const { choices } = setup(undefined, () => { throw new Error('settings corrupt'); });
     expect(choices.allowDangerous('claude')).toBe(false);

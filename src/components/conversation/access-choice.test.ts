@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { accessLevels } from '@/shared/access-levels';
-import { accessStateLabel, accessTriggerLabel, nextAccessLevel, visibleAccessLevels } from './access-choice';
+import { accessStateLabel, accessTriggerLabel, isDangerousAccess, nextAccessLevel, visibleAccessLevels } from './access-choice';
 
 const claudeLevels = accessLevels('claude');
 const codexLevels = accessLevels('codex');
@@ -28,4 +28,12 @@ test('cycles forward through safe levels, wrapping, starting from the first', ()
   expect(nextAccessLevel(claudeLevels, { state: { kind: 'level', level: 'auto' }, picked: true })).toBe('plan');
   expect(nextAccessLevel(claudeLevels, { state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false })).toBe('plan');
   expect(nextAccessLevel([], null)).toBeUndefined();
+});
+
+test('counts the dangerous level and a custom state marked dangerous as dangerous', () => {
+  expect(isDangerousAccess(null, codexLevels)).toBe(false);
+  expect(isDangerousAccess({ state: { kind: 'level', level: 'full-access' }, picked: true }, codexLevels)).toBe(true);
+  expect(isDangerousAccess({ state: { kind: 'level', level: 'auto' }, picked: true }, codexLevels)).toBe(false);
+  expect(isDangerousAccess({ state: { kind: 'custom', label: 'full access · untrusted', dangerous: true }, picked: false }, codexLevels)).toBe(true);
+  expect(isDangerousAccess({ state: { kind: 'custom', label: 'read-only · never ask' }, picked: false }, codexLevels)).toBe(false);
 });

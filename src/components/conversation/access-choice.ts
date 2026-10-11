@@ -12,6 +12,13 @@ export function accessTriggerLabel(provider: ProviderId, access: TurnAccess | nu
   return access ? accessStateLabel(access.state, levels) : `${PROVIDER_NAME[provider]}'s default`;
 }
 
+/** Whether the state removes the agent's safety checks: its dangerous level, or a custom setting just as open. */
+export function isDangerousAccess(access: TurnAccess | null, levels: AccessLevel[]): boolean {
+  if (!access) return false;
+  const { state } = access;
+  return state.kind === 'custom' ? state.dangerous === true : levels.some((level) => level.dangerous && level.id === state.level);
+}
+
 function currentLevelId(access: TurnAccess | null): string | undefined {
   return access?.state.kind === 'level' ? access.state.level : undefined;
 }
