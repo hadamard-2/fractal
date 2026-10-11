@@ -20,24 +20,29 @@ export function useAccessChoice(ref: ConversationRef, runtime: ConversationRunti
   const latest = useRef(ref);
   latest.current = ref;
   const [state, setState] = useState<State>({ key, ...NONE, picked: false });
+  // Counts picks, so a listing asked for before the latest one is known to predate it.
+  const picks = useRef(0);
 
   useEffect(() => {
     let live = true;
+    const picksBefore = picks.current;
     void listAccess(latest.current).then((result) => {
       if (!live) return;
-      // A pick made while the lookup was in flight wins over the stored answer.
+      // A pick made while the lookup was in flight wins over the stored answer, and its mismatch is about an older pick.
       setState((prior) => {
         const kept = prior.key === key && prior.picked;
-        return { key, levels: result?.levels ?? [], access: kept ? prior.access : result?.access ?? null, observed: result?.observed, allowDangerous: result?.allowDangerous ?? false, loaded: true, picked: kept };
+        const observed = kept && picks.current !== picksBefore ? prior.observed : result?.observed;
+        return { key, levels: result?.levels ?? [], access: kept ? prior.access : result?.access ?? null, observed, allowDangerous: result?.allowDangerous ?? false, loaded: true, picked: kept };
       });
     });
     return () => { live = false; };
   }, [key]);
 
   const refresh = useCallback(() => {
+    const picksBefore = picks.current;
     void listAccess(latest.current).then((result) => {
       if (!result) return;
-      setState((prior) => prior.key === key ? { ...prior, levels: result.levels, observed: result.observed, allowDangerous: result.allowDangerous, access: prior.picked ? prior.access : result.access } : prior);
+      setState((prior) => prior.key === key ? { ...prior, levels: result.levels, observed: prior.picked && picks.current !== picksBefore ? prior.observed : result.observed, allowDangerous: result.allowDangerous, access: prior.picked ? prior.access : result.access } : prior);
     });
   }, [key]);
 
@@ -56,6 +61,7 @@ export function useAccessChoice(ref: ConversationRef, runtime: ConversationRunti
   }, [runtime, refresh]);
 
   const choose = useCallback((level: string) => {
+    picks.current += 1;
     const access: TurnAccess = { state: { kind: 'level', level }, picked: true };
     setState((prior) => prior.key === key ? { ...prior, access, observed: undefined, picked: true, loaded: true } : { key, ...NONE, access, picked: true, loaded: true });
     void Promise.resolve().then(() => window.fractal.access.choose(latest.current, level)).catch((): void => undefined);

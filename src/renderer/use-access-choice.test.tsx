@@ -41,6 +41,32 @@ test('a new pick clears the last-turn mismatch', async () => {
   expect(result.current.observed).toBeUndefined();
 });
 
+test('a listing asked for before a pick does not bring back the mismatch it cleared', async () => {
+  let release: ((value: AccessListing) => void) | undefined;
+  const sent = listing('auto', { observed: { kind: 'level', level: 'default' } });
+  const list = vi.fn<() => Promise<AccessListing>>().mockResolvedValueOnce(sent).mockImplementationOnce(() => new Promise((r) => { release = r; }));
+  install({ list, choose: vi.fn(async () => undefined) });
+  const { result } = renderHook(() => useAccessChoice(refA, 'idle'));
+  await waitFor(() => expect(result.current.observed).toEqual({ kind: 'level', level: 'default' }));
+  act(() => result.current.refresh());
+  await waitFor(() => expect(release).toBeDefined());
+  act(() => result.current.choose('plan'));
+  await act(async () => release?.(sent));
+  expect(result.current.access).toEqual({ state: { kind: 'level', level: 'plan' }, picked: true });
+  expect(result.current.observed).toBeUndefined();
+});
+
+test('a listing asked for after a pick still reports a mismatch', async () => {
+  const list = vi.fn(async () => listing('auto'));
+  install({ list, choose: vi.fn(async () => undefined) });
+  const { result } = renderHook(() => useAccessChoice(refA, 'idle'));
+  await waitFor(() => expect(result.current.loaded).toBe(true));
+  act(() => result.current.choose('auto'));
+  list.mockResolvedValue(listing('auto', { observed: { kind: 'level', level: 'default' } }));
+  await act(async () => result.current.refresh());
+  expect(result.current.observed).toEqual({ kind: 'level', level: 'default' });
+});
+
 test('a pick made while the first list is in flight wins', async () => {
   let resolve: (value: AccessListing) => void = () => undefined;
   const choose = vi.fn(async () => undefined);
