@@ -17,6 +17,9 @@ import { registerChangesIpc } from '@/main/changes/changes-ipc';
 import { detectEditors, openWith, type DetectedEditor } from '@/main/files/editors';
 import { FileWatchService } from '@/main/files/file-watch-service';
 import { registerFilesIpc } from '@/main/files/files-ipc';
+import { AccessChoiceStore } from '@/main/access-choice-store';
+import { AccessChoices } from '@/main/access-choices';
+import { registerAccessIpc } from '@/main/access-ipc';
 import { ModelChoiceStore } from '@/main/model-choice-store';
 import { ModelChoices } from '@/main/model-choices';
 import { registerModelIpc } from '@/main/model-ipc';
@@ -60,9 +63,10 @@ const agentEnvironment = async (): Promise<AgentEnvironment> => {
 // devtools) — `bindWindowShortcuts` below hands the devtools one back.
 Menu.setApplicationMenu(null);
 
-// Matches --background in src/index.css (neutral-950) so the OS-drawn window
-// buttons sit on the same colour as the title bar we render underneath them.
-const TITLE_BAR_BACKGROUND = '#0a0a0a';
+// Matches the dark theme's --background in src/index.css (oklch 0.16) so the
+// OS-drawn window buttons sit on the same colour as the title bar we render
+// underneath them.
+const TITLE_BAR_BACKGROUND = '#0d0d0d';
 const TITLE_BAR_SYMBOL = '#fafafa';
 
 /**
@@ -118,6 +122,7 @@ let shutdown: Promise<void> | undefined;
 let terminalService: TerminalService | undefined;
 let terminalRegistration: { dispose(): void } | undefined;
 let modelRegistration: { dispose(): void } | undefined;
+let accessRegistration: { dispose(): void } | undefined;
 let fileWatches: FileWatchService | undefined;
 let filesRegistration: { dispose(): void } | undefined;
 let changesRegistration: { dispose(): void } | undefined;
@@ -192,7 +197,7 @@ const loadWindow = (mainWindow: BrowserWindow) => {
 app.on('ready', () => {
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
-  const settingsStore = registerSettingsIpc(agentEnvironment);
+  const settingsStore = registerSettingsIpc(agentEnvironment, () => mainWindowRef);
   terminalService = new TerminalService(createNativePty);
   terminalRegistration = registerTerminalIpc(terminalService, () => mainWindowRef);
   const window = createWindow();
@@ -222,8 +227,10 @@ app.on('ready', () => {
     // Once per launch, in the background; until a list arrives the picker shows only the current choice.
     void modelChoices.fetchCatalogs();
     modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
+    const accessChoices = new AccessChoices([codexAdapter, claudeAdapter], new AccessChoiceStore(app.getPath('userData')), (provider) => settingsStore.load().allowDangerousAccess[provider] === true);
+    accessRegistration = registerAccessIpc(accessChoices, () => mainWindowRef);
     conversationService = new ConversationService(registry, (event) => registration.emit(event));
-    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices });
+    const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices, accessChoices });
     // Editors are found on first use, by which point the login shell's PATH has been merged above.
     let editors: Promise<DetectedEditor[]> | undefined;
     const detectedEditors = () => (editors ??= detectEditors(process.platform, process.env.PATH ?? ''));
@@ -255,6 +262,7 @@ app.on('before-quit', (event) => {
     changesRegistration?.dispose();
     fileWatches?.dispose();
     modelRegistration?.dispose();
+    accessRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();

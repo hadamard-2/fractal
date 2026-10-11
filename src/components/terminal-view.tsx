@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Button } from '@/components/ui/button';
+import { terminalTheme } from '@/components/code/fractal-theme';
 
 // How long a new shell gets to switch on bracketed paste before the text goes
 // to the clipboard instead. Shells do it as their line editor first starts.
@@ -48,6 +49,10 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, paste, onPasted
       cursorBlink: true,
       fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
       fontSize: 13,
+      // Bold stays in its own colour, only heavier; xterm's default swaps it
+      // for the bright variant, which shifts the hue under bold-heavy output
+      // like `ls` and prompts.
+      drawBoldTextInBrightColors: false,
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -56,10 +61,11 @@ export function TerminalView({ id, cwd, visible, focusToken = 0, paste, onPasted
 
     const applyTheme = () => {
       const style = getComputedStyle(host);
-      terminal.options.theme = {
+      terminal.options.theme = terminalTheme({
+        dark: document.documentElement.classList.contains('dark'),
         background: style.getPropertyValue('--background').trim() || '#0a0a0a',
         foreground: style.getPropertyValue('--foreground').trim() || '#fafafa',
-      };
+      });
     };
     applyTheme();
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');

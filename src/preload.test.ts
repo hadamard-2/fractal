@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import type { ConversationApi, ModelsApi } from '@/shared/conversation-contract';
+import type { AccessApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
 import type { ChangesApi } from '@/shared/changes-contract';
 import type { FilesApi } from '@/shared/files-contract';
 import type { TerminalApi } from '@/shared/terminal-contract';
@@ -12,7 +12,7 @@ async function preload() {
   const events = new EventEmitter();
   mocks.on.mockImplementation(events.on.bind(events)); mocks.removeListener.mockImplementation(events.removeListener.bind(events));
   await import('@/preload');
-  return { events, surface: mocks.expose.mock.calls[0][1] as { conversations: ConversationApi; models: ModelsApi; terminals: TerminalApi; attachments: { pathFor: (file: File) => string } } };
+  return { events, surface: mocks.expose.mock.calls[0][1] as { conversations: ConversationApi; models: ModelsApi; access: AccessApi; terminals: TerminalApi; attachments: { pathFor: (file: File) => string } } };
 }
 const ref = { provider: 'codex' as const, nativeSessionId: 'session', projectPath: '/repo' };
 const loadId = '00000000-0000-4000-8000-000000000001';
@@ -20,7 +20,7 @@ describe('preload conversation surface', () => {
   test('exposes only settings and the hand-written conversation API, with no legacy authority', async () => {
     const { surface } = await preload();
     expect(mocks.expose.mock.calls[0][0]).toBe('fractal');
-    expect(Object.keys(surface).sort()).toEqual(['attachments', 'changes', 'conversations', 'files', 'models', 'settings', 'terminals']);
+    expect(Object.keys(surface).sort()).toEqual(['access', 'attachments', 'changes', 'conversations', 'files', 'models', 'settings', 'terminals']);
     expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'previewAttachment', 'openAttachment', 'rename', 'onEvent'].sort());
     await surface.conversations.list(); await surface.conversations.open(ref, loadId); await surface.conversations.close(ref);
     await surface.conversations.create({ provider: 'claude' }); await surface.conversations.continue(ref, { text: 'hi' });
@@ -52,6 +52,13 @@ describe('preload conversation surface', () => {
     await surface.models.list(ref);
     await surface.models.choose(ref, { model: 'opus', effort: 'high' });
     expect(mocks.invoke.mock.calls).toEqual([['fractal:models:list', ref], ['fractal:models:choose', ref, { model: 'opus', effort: 'high' }]]);
+  });
+
+  test('exposes the access list and choose calls on their own channels', async () => {
+    const { surface } = await preload();
+    await surface.access.list(ref);
+    await surface.access.choose(ref, 'plan');
+    expect(mocks.invoke.mock.calls).toEqual([['fractal:access:list', ref], ['fractal:access:choose', ref, 'plan']]);
   });
 });
 

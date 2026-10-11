@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 test('loads the coding agent and saves a choice from its selector', async () => {
   let stored: FractalSettings = {
-    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null,
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {},
   };
   const set = vi.fn(async (patch: Partial<FractalSettings>) => {
     stored = { ...stored, ...patch };
@@ -49,7 +49,7 @@ test('shows Claude Code when settings came from an older payload without an agen
 
 test('turns agent color tags off, reporting the change and reverting it if the save fails', async () => {
   const stored: FractalSettings = {
-    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null,
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {},
   };
   const set = vi.fn(async () => { throw new Error('disk full'); });
   Object.defineProperty(window, 'fractal', { configurable: true, value: {
@@ -67,9 +67,47 @@ test('turns agent color tags off, reporting the change and reverting it if the s
   expect(toggle.getAttribute('aria-checked')).toBe('true');
 });
 
+test('offers the dangerous levels per agent and flips a switch before its save returns', async () => {
+  const stored: FractalSettings = {
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: { codex: true },
+  };
+  let finish: (value: FractalSettings) => void = () => undefined;
+  const set = vi.fn(() => new Promise<FractalSettings>((resolve) => { finish = resolve; }));
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { settings: { get: async () => stored, set } } });
+
+  render(<SettingsDialog open onOpenChange={vi.fn()} />);
+  expect(await screen.findByText('Dangerous access levels')).toBeTruthy();
+  expect(screen.getByText("Offer the levels that remove an agent's safety checks.")).toBeTruthy();
+  const claude = screen.getByRole('switch', { name: 'Claude Code: Bypass' });
+  const codex = screen.getByRole('switch', { name: 'Codex: Full access' });
+  await waitFor(() => expect(codex.getAttribute('aria-checked')).toBe('true'));
+  expect(claude.getAttribute('aria-checked')).toBe('false');
+
+  await userEvent.setup().click(claude);
+  expect(set).toHaveBeenCalledWith({ allowDangerousAccess: { codex: true, claude: true } });
+  expect(claude.getAttribute('aria-checked')).toBe('true');
+  finish({ ...stored, allowDangerousAccess: { codex: true, claude: true } });
+  await waitFor(() => expect(claude.getAttribute('aria-checked')).toBe('true'));
+});
+
+test('reverts a dangerous-level switch when its save fails', async () => {
+  const stored: FractalSettings = {
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {},
+  };
+  const set = vi.fn(async () => { throw new Error('disk full'); });
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { settings: { get: async () => stored, set } } });
+
+  render(<SettingsDialog open onOpenChange={vi.fn()} />);
+  const claude = await screen.findByRole('switch', { name: 'Claude Code: Bypass' });
+  await waitFor(() => expect((claude as HTMLButtonElement).disabled).toBe(false));
+  await userEvent.setup().click(claude);
+  expect(set).toHaveBeenCalledWith({ allowDangerousAccess: { claude: true } });
+  await waitFor(() => expect(claude.getAttribute('aria-checked')).toBe('false'));
+});
+
 function mountWithSettings(agentExecutables: FractalSettings['agentExecutables'], agentEnvironment: () => Promise<AgentEnvironment>) {
   let stored: FractalSettings = {
-    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables, fileOpener: null,
+    theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables, fileOpener: null, allowDangerousAccess: {},
   };
   const set = vi.fn(async (patch: Partial<FractalSettings>) => {
     stored = { ...stored, ...patch };

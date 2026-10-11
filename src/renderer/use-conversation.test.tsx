@@ -111,6 +111,23 @@ describe('useConversation', () => {
     unmount();
   });
 
+  test('sends the access with the prompt only when there is one', async () => {
+    let listener: ((event: ConversationStreamEvent) => void) | undefined;
+    const continueConversation = vi.fn<ConversationApi['continue']>().mockResolvedValue();
+    install({ onEvent: vi.fn((next) => { listener = next; return vi.fn(); }), open: vi.fn().mockResolvedValue({ summary, capabilities }), close: vi.fn(), continue: continueConversation });
+    const { result, unmount } = renderHook(() => useConversation(ref));
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
+    const activeLoadId = result.current.state.loadId;
+    if (!activeLoadId) throw new Error('Conversation did not open');
+    act(() => listener?.(stream(activeLoadId, 0, { type: 'history.complete' })));
+    const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
+    await act(async () => { await result.current.send('hi', [], null, access); });
+    await act(async () => { await result.current.send('again', [], null, null); });
+    expect(continueConversation).toHaveBeenNthCalledWith(1, ref, { text: 'hi', access });
+    expect(continueConversation).toHaveBeenNthCalledWith(2, ref, { text: 'again' });
+    unmount();
+  });
+
   test('preserves stream metadata that arrives before a deferred open resolves', async () => {
     let listener: ((event: ConversationStreamEvent) => void) | undefined;
     let resolveOpen: ((value: Awaited<ReturnType<ConversationApi['open']>>) => void) | undefined;

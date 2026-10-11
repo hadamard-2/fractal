@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { ListTree, Plus } from 'lucide-react';
+import { List, Plus } from 'lucide-react';
 import { FilesPane } from '@/components/right-panel/files/files-pane';
 import { PanelTabs } from '@/components/right-panel/panel-tabs';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
 import { TerminalLauncherContext, type OpenTerminalWith } from '@/components/right-panel/terminal-launcher';
 import { TerminalView } from '@/components/terminal-view';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -206,12 +207,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
               panels hang straight from the app bar behind a 1px border, and
               the sidebar's header (14px of top padding, then a 36px row)
               centres 32px below that border — where this 48px bottom-aligned
-              row centres its 32px controls.
+              row centres its 32px controls. Once there are tabs, its bottom
+              border is the rule the selected tab's underline sits on.
             */}
-            <div className="flex h-12 shrink-0 items-end gap-1 px-2">
+            <div className={cn('flex h-12 shrink-0 items-end gap-1 px-2', tabs.length > 0 && 'border-b border-sidebar-border')}>
               {selectedFileTab && (
                 <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
-                  <ListTree aria-hidden className="size-4" />
+                  <List aria-hidden className="size-4" />
                 </Button>
               )}
               <PanelTabs
@@ -235,7 +237,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                 <ToolList onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} />
               </div>
             ) : (
-              <div className="mx-2 mt-1 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
+              <div className="mx-2 mt-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
                 {terminalTabs.map((tab) => (
                   <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel">
                     <TerminalView

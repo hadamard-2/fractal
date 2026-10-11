@@ -286,6 +286,16 @@ describe('NavMain', () => {
     expect(screen.getByRole('button', { name: 'Fractal' }).getAttribute('data-active')).toBe('false');
   });
 
+  test('draws unselected chat titles muted, without the sidebar text colour competing', () => {
+    renderNav([fractalGroup], { ...fractalGroup.conversations[0].ref });
+    // Both colour utilities on one element leave the winner to stylesheet
+    // order, so the muted one has to be the only base text colour.
+    const unselected = screen.getByRole('button', { name: /Review IPC/ });
+    expect(unselected.classList.contains('text-muted-foreground')).toBe(true);
+    expect(unselected.classList.contains('text-sidebar-foreground')).toBe(false);
+    expect(screen.getByRole('button', { name: /Fix parser/ }).classList.contains('data-[active=true]:text-sidebar-accent-foreground')).toBe(true);
+  });
+
   test('keeps inactive projects closed when one is selected', () => {
     renderNav([atlasGroup, fractalGroup], fractalGroup.conversations[0].ref);
     expect(screen.getByText('Fix parser')).toBeTruthy();
@@ -296,7 +306,7 @@ describe('NavMain', () => {
     const user = userEvent.setup();
     const create = vi.fn(async () => fractalGroup.conversations[0].ref);
     const onCreated = vi.fn();
-    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null }) } } });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {} }) } } });
     renderNav([fractalGroup], null, vi.fn(), onCreated);
 
     const project = screen.getByRole('button', { name: 'Fractal' });

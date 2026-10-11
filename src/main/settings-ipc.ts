@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeTheme, shell } from 'electron';
+import { app, ipcMain, nativeTheme, shell, type BrowserWindow } from 'electron';
 import { SettingsStore } from '@/main/settings-store';
 import type { AgentEnvironment, FractalSettings, SettingsInvokeRequest } from '@/shared/settings-contract';
 import { SETTINGS_INVOKE_CHANNEL } from '@/shared/settings-contract';
@@ -15,6 +15,7 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
     ...(patch.showAgentColorTags !== undefined ? { showAgentColorTags: patch.showAgentColorTags } : {}),
     ...(patch.agentExecutables !== undefined ? { agentExecutables: patch.agentExecutables } : {}),
     ...(patch.fileOpener !== undefined ? { fileOpener: patch.fileOpener } : {}),
+    ...(patch.allowDangerousAccess !== undefined ? { allowDangerousAccess: patch.allowDangerousAccess } : {}),
   };
 }
 
@@ -32,11 +33,13 @@ function sanitizePatch(patch: Partial<FractalSettings>): Partial<FractalSettings
  * Returns the store so startup can read settings the main process acts on
  * (agent executables) from the same instance.
  */
-export function registerSettingsIpc(agentEnvironment: () => Promise<AgentEnvironment>): SettingsStore {
+export function registerSettingsIpc(agentEnvironment: () => Promise<AgentEnvironment>, getWindow: () => BrowserWindow | null): SettingsStore {
   const store = new SettingsStore(app.getPath('userData'));
   nativeTheme.themeSource = store.load().theme;
 
-  ipcMain.handle(SETTINGS_INVOKE_CHANNEL, async (_e, req: SettingsInvokeRequest) => {
+  ipcMain.handle(SETTINGS_INVOKE_CHANNEL, async (event, req: SettingsInvokeRequest) => {
+    const window = getWindow();
+    if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('Unauthorized settings sender');
     switch (req.method) {
       case 'get':
         return store.load();

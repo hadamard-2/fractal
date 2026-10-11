@@ -234,7 +234,7 @@ export function AppShell({
                     {currentSummary?.title ?? selectedItem.title}
                   </BreadcrumbPage>
                   {selectedRuntime && (
-                    <span className="shrink-0 text-xs text-muted-foreground">
+                    <span className="shrink-0 text-xs text-subtle-foreground">
                       ({providerName(selectedItem.ref.provider)} · {runtimeLabel(selectedRuntime)})
                     </span>
                   )}

@@ -46,6 +46,17 @@ describe('runClaudeTurn', () => {
     expect(args.slice(-4)).toEqual(['--model', 'opus', '--effort', 'high']);
   });
 
+  test('passes the permission mode only when one is given', async () => {
+    const argsFor = async (permissionMode?: string): Promise<string[]> => {
+      const child = fakeProcess(); const spawnProcess = vi.fn(() => child);
+      const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess, ...(permissionMode ? { permissionMode } : {}), rereadNative: async () => [] });
+      child.finish(); await collect(run.events);
+      return (spawnProcess.mock.calls[0] as unknown as [string, string[]])[1];
+    };
+    expect((await argsFor('plan')).slice(-2)).toEqual(['--permission-mode', 'plan']);
+    expect(await argsFor()).not.toContain('--permission-mode');
+  });
+
   test('puts image blocks after the text and drops an empty text block', async () => {
     const image = { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' };
     const withText = fakeProcess();

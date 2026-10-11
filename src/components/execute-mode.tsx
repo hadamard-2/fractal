@@ -21,7 +21,7 @@ const LOGIN_COMMAND: Record<ProviderId, string> = {
 
 
 function Kbd({ children }: { children: string }) {
-  return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">{children}</kbd>;
+  return <kbd className="rounded border border-border px-1.5 py-px font-mono text-[11px] font-medium text-subtle-foreground">{children}</kbd>;
 }
 
 const NOTICE_CLASS = 'flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground';

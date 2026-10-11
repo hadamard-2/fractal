@@ -49,7 +49,7 @@ export function SearchDialog({
           <input
             aria-label="Search conversations"
             autoFocus
-            className="h-14 min-w-0 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-14 min-w-0 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-subtle-foreground"
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search…"
             ref={inputRef}

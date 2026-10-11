@@ -29,7 +29,7 @@
    */
   --window-controls-left: env(titlebar-area-x, 0px);
   --window-controls-inset: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -50,8 +50,13 @@
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
+  /* A third, quieter text level for placeholders and metadata. Light mode
+     keeps it at the muted level, which is already as faint as it can go. */
+  --subtle-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
+  /* Fill for the selected item in a list or toggle: a step past hover. */
+  --selected: oklch(0.97 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -72,38 +77,46 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  /*
+   * Neutral near-black, layered in small steps: the page at the bottom, then
+   * raised surfaces (sidebar, cards, panels), then hover, then selected.
+   * Borders do most of the separating, so the steps between fills stay
+   * small. Teal is the only hue on screen.
+   */
+  --background: oklch(0.16 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.178 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.65 0.112 171.06);
   --primary-foreground: oklch(0.145 0 0);
   --primary-text: oklch(0.65 0.112 171.06);
-  --secondary: oklch(0.269 0 0);
+  --secondary: oklch(0.205 0 0);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --muted: oklch(0.205 0 0);
+  --muted-foreground: oklch(0.694 0 0);
+  --subtle-foreground: oklch(0.539 0 0);
+  --accent: oklch(0.205 0 0);
   --accent-foreground: oklch(0.985 0 0);
+  --selected: oklch(0.265 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --border: oklch(0.23 0 0);
+  --input: oklch(0.265 0 0);
+  --ring: oklch(0.65 0.112 171.06);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.178 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-primary: oklch(0.65 0.112 171.06);
+  --sidebar-primary-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.205 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-border: oklch(0.23 0 0);
+  --sidebar-ring: oklch(0.65 0.112 171.06);
 }
 
 @theme inline {
@@ -135,6 +148,8 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-selected: var(--selected);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -198,7 +213,7 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: var(--border);
+  background-color: var(--input);
   border-radius: 9999px;
   /* A transparent border clipped to the content box insets the thumb, so a
      10px-wide track paints a ~4px thumb with breathing room either side. */

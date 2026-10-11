@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { describe, expect, test } from 'vitest';
-import { discoverClaudeConversations, readClaudeConversation, readClaudeLastRun, watchClaudeConversation } from '@/main/harness/claude/claude-history';
+import { discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from '@/main/harness/claude/claude-history';
 import type { NativeEvent } from '@/main/harness/reconciler';
 
 const fixtureRoot = path.join(import.meta.dirname, '__fixtures__');
@@ -33,6 +33,23 @@ describe('Claude native history', () => {
     await expect(readClaudeLastRun(file)).resolves.toEqual({ model: 'claude-haiku-4-5-20251001' });
     await writeFile(file, `${JSON.stringify({ type: 'user', message: { content: 'only' } })}\n`);
     await expect(readClaudeLastRun(file)).resolves.toBeUndefined();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('reads the permission mode recorded on the last turn that carries one', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-last-mode-'));
+    const file = path.join(directory, 'session.jsonl');
+    const user = (permissionMode: string | undefined) => JSON.stringify({ type: 'user', ...(permissionMode ? { permissionMode } : {}), sessionId: 'claude-session-1', message: { role: 'user', content: 'hi' } });
+    await writeFile(file, `${[user('plan'), JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [] } }), user('auto'), user(undefined)].join('\n')}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBe('auto');
+    await writeFile(file, `${user(undefined)}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBeUndefined();
+    await writeFile(file, `${user('plan')}\n${user('bypassPermissions')}`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBe('bypassPermissions');
+    await writeFile(file, `${user('plan')}\n${user('   ')}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBe('plan');
+    await writeFile(file, `${user('  ')}\n`);
+    await expect(readClaudeLastPermissionMode(file)).resolves.toBeUndefined();
     await rm(directory, { recursive: true, force: true });
   });
 

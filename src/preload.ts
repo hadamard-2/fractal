@@ -2,11 +2,11 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
+import type { AccessApi, AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
 import { CHANGES_CHANNELS, type ChangesApi } from '@/shared/changes-contract';
 import { FILES_CHANNELS, parseFilesEvent, type FilesApi } from '@/shared/files-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
-import { CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
 import {
   SETTINGS_INVOKE_CHANNEL,
   type FractalSettingsApi,
@@ -35,6 +35,11 @@ const conversations: ConversationApi = {
     ipcRenderer.on(CHANNELS.event, handler);
     return () => { ipcRenderer.removeListener(CHANNELS.event, handler); };
   },
+};
+
+const access: AccessApi = {
+  list: (ref) => ipcRenderer.invoke(ACCESS_CHANNELS.list, ref),
+  choose: (ref, level) => ipcRenderer.invoke(ACCESS_CHANNELS.choose, ref, level),
 };
 
 const models: ModelsApi = {
@@ -90,4 +95,4 @@ const changes: ChangesApi = {
   read: (root, fingerprint) => ipcRenderer.invoke(CHANGES_CHANNELS.invoke, { method: 'read', root, ...(fingerprint === undefined ? {} : { fingerprint }) }),
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, models, settings, terminals, attachments, files, changes });
+contextBridge.exposeInMainWorld('fractal', { conversations, models, access, settings, terminals, attachments, files, changes });
