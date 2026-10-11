@@ -1,8 +1,9 @@
-import { ChevronDown, ExternalLink } from 'lucide-react';
+import { ChevronDown, Ellipsis, ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { EditorInfo, FileOpenerId, OpenAction, OpenResult } from '@/shared/files-contract';
 
 const SYSTEM_LABEL = 'System default';
@@ -24,7 +25,8 @@ export function defaultOpener(remembered: FileOpenerId | null, editors: EditorIn
   return editors[0]?.id ?? 'system';
 }
 
-export function OpenMenu({ root, path, line }: { root: string; path: string; line?: number }) {
+/** The editors to offer, the button's default opener, and a runner that opens `path` with one, remembering any choice that opens the file. */
+function useFileOpener(root: string, path: string, line: number | undefined) {
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [remembered, setRemembered] = useState<FileOpenerId | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -41,8 +43,6 @@ export function OpenMenu({ root, path, line }: { root: string; path: string; lin
   // A failure belongs to the file it happened on.
   useEffect(() => { setMessage(null); }, [root, path]);
 
-  const opener = defaultOpener(remembered, editors);
-  const labelFor = (id: FileOpenerId) => (id === 'system' ? SYSTEM_LABEL : editors.find((editor) => editor.id === id)?.label ?? id);
   const run = async (action: OpenAction) => {
     setMessage(null);
     const result = await window.fractal.files.open(action, root, path, line).catch((): OpenResult => ({ ok: false, message: 'Couldn\'t open this file' }));
@@ -53,10 +53,31 @@ export function OpenMenu({ root, path, line }: { root: string; path: string; lin
       window.fractal.settings.set({ fileOpener: action }).catch((): void => undefined);
     }
   };
+  return { editors, opener: defaultOpener(remembered, editors), message, run };
+}
 
+function OpenMenuItems({ editors, run }: { editors: EditorInfo[]; run: (action: OpenAction) => Promise<void> }) {
+  return (
+    <DropdownMenuContent align="end">
+      {editors.map((editor) => (
+        <DropdownMenuItem key={editor.id} onSelect={() => { void run(editor.id); }}>{editor.label}</DropdownMenuItem>
+      ))}
+      {editors.length > 0 && <DropdownMenuSeparator />}
+      <DropdownMenuItem onSelect={() => { void run('system'); }}>{SYSTEM_LABEL}</DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => { void run('reveal'); }}>Show in folder</DropdownMenuItem>
+    </DropdownMenuContent>
+  );
+}
+
+const Failure = ({ message }: { message: string | null }) => (message ? <span className="text-xs text-destructive" role="status">{message}</span> : null);
+
+/** An Open button that runs the default opener, with the other ways to open beside it. */
+export function OpenMenu({ root, path, line }: { root: string; path: string; line?: number }) {
+  const { editors, opener, message, run } = useFileOpener(root, path, line);
+  const labelFor = (id: FileOpenerId) => (id === 'system' ? SYSTEM_LABEL : editors.find((editor) => editor.id === id)?.label ?? id);
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {message && <span className="text-xs text-destructive" role="status">{message}</span>}
+      <Failure message={message} />
       <ButtonGroup>
         <Button aria-label={`Open in ${labelFor(opener)}`} className="h-7 gap-1.5 px-2 text-xs" onClick={() => { void run(opener); }} size="sm" type="button" variant="outline">
           <ExternalLink aria-hidden className="size-3.5" />
@@ -68,16 +89,32 @@ export function OpenMenu({ root, path, line }: { root: string; path: string; lin
               <ChevronDown aria-hidden className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {editors.map((editor) => (
-              <DropdownMenuItem key={editor.id} onSelect={() => { void run(editor.id); }}>{editor.label}</DropdownMenuItem>
-            ))}
-            {editors.length > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuItem onSelect={() => { void run('system'); }}>{SYSTEM_LABEL}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => { void run('reveal'); }}>Show in folder</DropdownMenuItem>
-          </DropdownMenuContent>
+          <OpenMenuItems editors={editors} run={run} />
         </DropdownMenu>
       </ButtonGroup>
+    </div>
+  );
+}
+
+/** The same ways to open as OpenMenu, behind a single three-dot icon button. */
+export function OpenWithMenu({ root, path, line }: { root: string; path: string; line?: number }) {
+  const { editors, message, run } = useFileOpener(root, path, line);
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <Failure message={message} />
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button aria-label="Open with" className="size-7 shrink-0" size="icon" type="button" variant="ghost">
+                <Ellipsis aria-hidden className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Open with</TooltipContent>
+        </Tooltip>
+        <OpenMenuItems editors={editors} run={run} />
+      </DropdownMenu>
     </div>
   );
 }

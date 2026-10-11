@@ -3,7 +3,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi, type Mock } from 'vitest';
 import type { EditorInfo } from '@/shared/files-contract';
-import { defaultOpener, OpenMenu } from './open-menu';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { defaultOpener, OpenMenu, OpenWithMenu } from './open-menu';
 
 const editors: EditorInfo[] = [{ id: 'vscode', label: 'VS Code' }, { id: 'zed', label: 'Zed' }];
 let open: Mock;
@@ -69,4 +70,23 @@ test('retries the editor list after a failed call instead of keeping the failure
   render(<Fresh path="a.ts" root="/repo" />);
   await screen.findByRole('button', { name: 'Open in Zed' });
   expect(list).toHaveBeenCalledTimes(2);
+});
+
+test('offers the same ways to open behind a three-dot button, at the current line', async () => {
+  const user = userEvent.setup();
+  render(<TooltipProvider><OpenWithMenu line={7} path="src/a.ts" root="/repo" /></TooltipProvider>);
+  expect(screen.queryByRole('button', { name: /^Open in / })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Open with' }));
+  expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['VS Code', 'Zed', 'System default', 'Show in folder']);
+  await user.click(screen.getByRole('menuitem', { name: 'Zed' }));
+  expect(open).toHaveBeenCalledWith('zed', '/repo', 'src/a.ts', 7);
+});
+
+test('shows why the three-dot menu could not open a file', async () => {
+  open.mockResolvedValue({ ok: false, message: 'Couldn\'t start Zed' });
+  const user = userEvent.setup();
+  render(<TooltipProvider><OpenWithMenu path="src/a.ts" root="/repo" /></TooltipProvider>);
+  await user.click(screen.getByRole('button', { name: 'Open with' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Zed' }));
+  expect((await screen.findByRole('status')).textContent).toBe('Couldn\'t start Zed');
 });

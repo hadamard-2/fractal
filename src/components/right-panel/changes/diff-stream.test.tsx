@@ -7,7 +7,7 @@ import type { ChangedFile, DiffHunk, DiffLine } from '@/shared/changes-contract'
 import { DiffStream } from './diff-stream';
 
 vi.mock('../files/open-menu', () => ({
-  OpenMenu: ({ path, line }: { path: string; line?: number }) => <div data-open-line={line ?? ''} data-open-path={path} data-testid="open-menu" />,
+  OpenWithMenu: ({ path, line }: { path: string; line?: number }) => <div data-open-line={line ?? ''} data-open-path={path} data-testid="open-menu" />,
 }));
 
 // The real virtualizer, with scrollToIndex recorded rather than performed (jsdom cannot scroll).
@@ -101,16 +101,16 @@ test('passes the clicked line to the Open menu and highlights it', () => {
   expect(rowOf('l:a.unknownext:r:2').innerHTML).not.toContain('aria-current');
 });
 
-test('offers no actions on deleted files and folders, and Open in Files elsewhere', async () => {
+test('offers no actions on deleted files and folders, and Open file elsewhere', async () => {
   const onOpenFile = vi.fn();
   renderStream([
     file('gone.ts', { status: 'deleted', body: { kind: 'hunks', hunks: [] } }),
     file('nested', { status: 'added', body: { kind: 'folder' } }),
     file('src/a.ts', { status: 'added', body: { kind: 'hunks', hunks: [] } }),
   ], { onOpenFile });
-  expect(screen.getAllByRole('button', { name: 'Open in Files' })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Open file' })).toHaveLength(1);
   expect(screen.getAllByTestId('open-menu').map((menu) => menu.getAttribute('data-open-path'))).toEqual(['src/a.ts']);
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Open in Files' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Open file' }));
   expect(onOpenFile).toHaveBeenCalledWith('src/a.ts');
 });
 

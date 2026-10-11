@@ -264,7 +264,7 @@ test('Ctrl+Shift+D does nothing without a project', () => {
   expect(screen.queryByRole('tab')).toBeNull();
 });
 
-test('Open in Files from Changes opens a Files preview tab for that file', async () => {
+test('Open file from Changes opens a Files preview tab for that file', async () => {
   const user = userEvent.setup();
   render(<Harness />);
   pressChanges(document.body);

@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { countsText, statusLetter, type ChangeRow } from '@/renderer/changes-rows';
 import type { ChangedFile } from '@/shared/changes-contract';
-import { OpenMenu } from '../files/open-menu';
+import { OpenWithMenu } from '../files/open-menu';
 
 // Row content that must stay in view while the stream scrolls sideways is as wide as the scroller.
 const PINNED = 'sticky left-0 w-[100cqw]';
@@ -39,15 +39,15 @@ export function FileHeader({ file, root, collapsed, line, onToggle, onOpenFile }
       <span className="shrink-0 text-muted-foreground">{countsText(file.added, file.removed)}</span>
       {actionable && (
         <>
-          <OpenMenu line={line} path={file.path} root={root} />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button aria-label="Open in Files" className="size-7 shrink-0" onClick={() => onOpenFile(file.path)} size="icon" type="button" variant="ghost">
+              <Button aria-label="Open file" className="size-7 shrink-0" onClick={() => onOpenFile(file.path)} size="icon" type="button" variant="ghost">
                 <FolderOpen aria-hidden className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Open in Files</TooltipContent>
+            <TooltipContent side="bottom">Open file</TooltipContent>
           </Tooltip>
+          <OpenWithMenu line={line} path={file.path} root={root} />
         </>
       )}
     </div>
