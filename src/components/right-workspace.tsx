@@ -158,7 +158,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     if (!open) onOpenChange(true);
     openFiles();
   };
-  // Ctrl+Shift+G — the same for the project's Changes tool.
+  // Ctrl+Shift+D — the same for the project's Changes tool.
   const showChanges = useRef<() => void>(() => undefined);
   showChanges.current = () => {
     if (projectPath === null) return;
@@ -176,7 +176,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         event.preventDefault();
         event.stopPropagation();
         showFiles.current();
-      } else if (event.code === 'KeyG' && event.shiftKey) {
+      } else if (event.code === 'KeyD' && event.shiftKey) {
         event.preventDefault();
         event.stopPropagation();
         showChanges.current();

@@ -245,10 +245,10 @@ test('another project starts with its own tree state', async () => {
   expect(screen.getByRole('button', { name: 'Show file tree' })).toBeTruthy();
 });
 
-const pressChanges = (target: Element) => fireEvent.keyDown(target, { key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true });
+const pressChanges = (target: Element) => fireEvent.keyDown(target, { key: 'D', code: 'KeyD', ctrlKey: true, shiftKey: true });
 const lastActive = () => changesPaneProps[changesPaneProps.length - 1]?.active;
 
-test('Ctrl+Shift+G opens the panel on Changes and reuses the tab', () => {
+test('Ctrl+Shift+D opens the panel on Changes and reuses the tab', () => {
   render(<Harness />);
   pressChanges(document.body);
   expect(panel().getAttribute('aria-hidden')).toBe('false');
@@ -257,7 +257,7 @@ test('Ctrl+Shift+G opens the panel on Changes and reuses the tab', () => {
   expect(screen.getAllByRole('tab')).toHaveLength(1);
 });
 
-test('Ctrl+Shift+G does nothing without a project', () => {
+test('Ctrl+Shift+D does nothing without a project', () => {
   render(<Harness projectPath={null} />);
   pressChanges(document.body);
   expect(panel().getAttribute('aria-hidden')).toBe('true');

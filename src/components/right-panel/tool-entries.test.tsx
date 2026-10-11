@@ -11,7 +11,7 @@ test('lists every tool in order, with Terminal and Files available', async () =>
   const onFiles = vi.fn();
   render(<ToolList onChanges={vi.fn()} onFiles={onFiles} onTerminal={onTerminal} projectOpen />);
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-    'ChangesCtrl+Shift+G', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
+    'ChangesCtrl+Shift+D', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
   ]);
   for (const name of ['Browser', 'Side chat']) {
     expect(screen.getByRole('menuitem', { name }).hasAttribute('disabled')).toBe(true);
@@ -40,7 +40,7 @@ test('Changes is enabled with a project and shows its shortcut', async () => {
   const onChanges = vi.fn();
   render(<ToolList onChanges={onChanges} onFiles={vi.fn()} onTerminal={vi.fn()} projectOpen />);
   const item = screen.getByRole('menuitem', { name: 'Changes' });
-  expect(item.getAttribute('aria-keyshortcuts')).toBe('Control+Shift+G');
+  expect(item.getAttribute('aria-keyshortcuts')).toBe('Control+Shift+D');
   expect(item.hasAttribute('disabled')).toBe(false);
   await userEvent.setup().click(item);
   expect(onChanges).toHaveBeenCalledTimes(1);
