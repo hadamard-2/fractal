@@ -85,7 +85,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
     base = empty.stdout.trim();
   }
 
-  const diff = await runGit(root, ['diff', base, '--raw', '--numstat', '-z', '--no-abbrev', '--find-renames', '--relative']);
+  const diff = await runGit(root, ['diff', base, '--raw', '--numstat', '-z', '--no-abbrev', '--no-color', '--no-ext-diff', '--submodule=short', '--find-renames', '--relative']);
   if (diff.code !== 0) return READ_ERROR;
   const records = parseDiffRecords(diff.stdout);
   await deps.betweenDiffs();
@@ -97,7 +97,7 @@ async function read(root: string, previous: string | undefined, limits: PatchLim
     const reader = createPatchReader(records, limits);
     const streamed = await streamGitLines(
       root,
-      ['diff', base, '--no-color', '--no-ext-diff', '--no-textconv', '--find-renames', '--relative', '--unified=3'],
+      ['diff', base, '--no-color', '--no-ext-diff', '--submodule=short', '--no-textconv', '--find-renames', '--relative', '--unified=3'],
       reader.onLine,
     );
     if (streamed.code !== 0 && !streamed.stopped) return READ_ERROR;

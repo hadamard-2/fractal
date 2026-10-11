@@ -162,6 +162,33 @@ test('reports a submodule move', async () => {
   expect(byPath(files, 'sub')).toMatchObject({ status: 'modified', body: { kind: 'submodule', commit } });
 });
 
+test('keeps hunks aligned when the user config reshapes submodule output', async () => {
+  const origin = await makeRepo();
+  await writeFile(join(origin, 'f.txt'), 'f\n');
+  git(origin, 'add', '-A');
+  git(origin, 'commit', '-q', '-m', 'init');
+  await write('a.txt', 'a\n');
+  await write('z.txt', 'z\n');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', origin, 'sub');
+  commitAll('add submodule');
+  git(root, 'config', 'diff.submodule', 'log');
+
+  const sub = join(root, 'sub');
+  git(sub, 'config', 'user.name', 'Test');
+  git(sub, 'config', 'user.email', 'test@example.com');
+  await writeFile(join(sub, 'g.txt'), 'g\n');
+  git(sub, 'add', '-A');
+  git(sub, 'commit', '-q', '-m', 'move');
+  const commit = git(sub, 'rev-parse', 'HEAD').trim();
+  await write('a.txt', 'a\nA-new\n');
+  await write('z.txt', 'z\nZ-new\n');
+
+  const { files } = await changes();
+  expect(byPath(files, 'sub').body).toEqual({ kind: 'submodule', commit });
+  expect(addedTexts(byPath(files, 'a.txt'))).toEqual(['A-new']);
+  expect(addedTexts(byPath(files, 'z.txt'))).toEqual(['Z-new']);
+});
+
 test('diffs against the empty tree before the first commit', async () => {
   await write('first.txt', 'hello\n');
   git(root, 'add', 'first.txt');
