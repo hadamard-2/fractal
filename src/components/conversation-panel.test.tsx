@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
-import type { AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
+import { accessLevels } from '@/shared/access-levels';
+import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'panel-test', projectPath: '/work/fractal' };
 let emit: (event: ConversationStreamEvent) => void;
@@ -24,15 +25,22 @@ function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['c
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
   return api;
 }
-async function ready() {
+async function ready(target: ConversationRef = ref) {
   await waitFor(() => expect(loadId).not.toBe(''));
-  act(() => emit({ ref, loadId, seq: seq++, type: 'history.complete' }));
+  act(() => emit({ ref: target, loadId, seq: seq++, type: 'history.complete' }));
 }
 function installModels(result: { models: AgentModel[]; choice: ModelChoice | null }) {
   const models: ModelsApi = { list: vi.fn(async () => result), choose: vi.fn(async () => undefined) };
   Object.assign(window.fractal, { models });
   return models;
 }
+function installAccess(listing: AccessListing) {
+  const access: AccessApi = { list: vi.fn(async () => listing), choose: vi.fn(async () => undefined) };
+  Object.assign(window.fractal, { access });
+  return access;
+}
+const claudeRef: ConversationRef = { ...ref, provider: 'claude' };
+const level = (id: string, picked = false) => ({ state: { kind: 'level' as const, level: id }, picked });
 // jsdom has no layout; Radix scrolls the selected option into view.
 beforeAll(() => { Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: (): void => undefined }); });
 const opus: AgentModel = { id: 'opus', label: 'Opus', description: 'Everyday work', efforts: ['low', 'high'] };
@@ -320,4 +328,135 @@ test('falls back to the agent default when the model list is unavailable', async
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
   await user.click(screen.getByRole('button', { name: 'Submit' }));
   await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go' }));
+});
+
+test('the footer reads Access, Attach files, Model, Effort, then Send', async () => {
+  install();
+  installAccess({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false });
+  installModels({ models: [opus], choice: { model: 'opus', effort: 'high' } });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await screen.findByRole('button', { name: 'Effort' });
+  const names = Array.from(screen.getByRole('textbox', { name: 'Message' }).closest('form')?.querySelectorAll('button') ?? []).map((button) => button.getAttribute('aria-label'));
+  expect(names).toEqual(['Access', 'Attach files', 'Model', 'Effort', 'Submit']);
+});
+
+test('sends the access it shows, and none when nothing is known', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  installAccess({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false });
+  const { unmount } = render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Auto'));
+  const user = userEvent.setup();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', access: level('auto') }));
+  unmount();
+
+  const second = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', second);
+  installAccess({ levels: accessLevels('codex'), access: null, allowDangerous: false });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe("Codex's default"));
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(second).toHaveBeenCalledWith(ref, { text: 'Go' }));
+});
+
+test('a pick made just before sending is sent as picked', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  const access = installAccess({ levels: accessLevels('claude'), access: level('default'), allowDangerous: false });
+  vi.mocked(access.choose).mockImplementation(() => new Promise<void>(() => undefined));
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Ask'));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Access' }));
+  await user.click(await screen.findByRole('menuitem', { name: /Plan/ }));
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(claudeRef, { text: 'Go', access: level('plan', true) }));
+});
+
+test('Shift+Tab in the message box cycles the access while idle and keeps focus', async () => {
+  install('idle');
+  const access = installAccess({ levels: accessLevels('claude'), access: level('default'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Ask'));
+  const user = userEvent.setup();
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await user.click(input);
+  await user.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(access.choose).toHaveBeenCalledWith(claudeRef, 'acceptEdits');
+  expect(document.activeElement).toBe(input);
+  expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Accept edits');
+});
+
+test('Shift+Tab does nothing while the agent is working', async () => {
+  install('active-in-fractal');
+  const access = installAccess({ levels: accessLevels('claude'), access: level('default'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Ask'));
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Tab', shiftKey: true });
+  expect(access.choose).not.toHaveBeenCalled();
+});
+
+test('Enter still sends from the message box', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  installAccess({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Auto'));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'Go{Enter}');
+  await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go', access: level('auto') }));
+});
+
+test('submit waits for the access listing', async () => {
+  const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+  install('idle', send);
+  // Listed on mount and again once the history loads; both stay pending until released.
+  const pending: Array<(value: AccessListing) => void> = [];
+  const access = installAccess({ levels: [], access: null, allowDangerous: false });
+  vi.mocked(access.list).mockImplementation(() => new Promise<AccessListing>((r) => { pending.push(r); }));
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const user = userEvent.setup();
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Go');
+  expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => { for (const resolve of pending) resolve({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false }); });
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false));
+});
+
+test('a turn that arrives from outside Fractal lists the access again', async () => {
+  install('idle');
+  const access = installAccess({ levels: accessLevels('claude'), access: level('auto'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Auto'));
+  const listed = vi.mocked(access.list).mock.calls.length;
+  vi.mocked(access.list).mockResolvedValue({ levels: accessLevels('claude'), access: level('plan'), allowDangerous: false });
+  const turn: ConversationTurn = { id: 'external', nativeId: 'external', userMessage: { id: 'u', text: 'From the terminal' }, blocks: [], status: 'completed', captureCompleteness: 'complete' };
+  act(() => emit({ ref: claudeRef, loadId, seq: seq++, type: 'turn.upserted', turn }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Plan'));
+  expect(vi.mocked(access.list).mock.calls.length).toBe(listed + 1);
+});
+
+test('a send refused for its access shows the reason and keeps the draft', async () => {
+  install('idle', async () => { throw new Error('Bypass is turned off in Settings'); });
+  installAccess({ levels: accessLevels('claude'), access: level('bypassPermissions'), allowDangerous: false });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Access' }).textContent).toBe('Bypass'));
+  const user = userEvent.setup();
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(input, 'Go');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Bypass is turned off in Settings');
+  expect((input as HTMLTextAreaElement).value).toBe('Go');
 });

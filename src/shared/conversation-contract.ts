@@ -92,6 +92,8 @@ export interface PromptInput {
   model?: string;
   /** Only sent together with `model`. */
   effort?: string;
+  /** Absent means the conversation sends no access setting. */
+  access?: TurnAccess;
 }
 
 /** A model an agent offers, as its own picker lists it. `id` is what goes back to the agent. */
@@ -117,6 +119,41 @@ export interface ModelsApi {
   list(ref: ConversationRef): Promise<{ models: AgentModel[]; choice: ModelChoice | null }>;
   /** Saves the conversation's choice for its next turns. */
   choose(ref: ConversationRef, choice: ModelChoice): Promise<void>;
+}
+
+/**
+ * What a conversation's agent may do without asking: one of the agent's catalog levels, or a setting set outside Fractal that no level matches.
+ * A custom state is `dangerous` when it removes the agent's safety checks as fully as the agent's dangerous level does, and is gated with it.
+ */
+export type AccessState = { kind: 'level'; level: string } | { kind: 'custom'; label: string; mode?: string; dangerous?: boolean };
+
+export interface AccessLevel {
+  id: string;
+  label: string;
+  description: string;
+  dangerous: boolean;
+}
+
+/** The access a turn runs with; `picked` is true when the user chose it rather than it being read back from the agent. */
+export interface TurnAccess {
+  state: AccessState;
+  picked: boolean;
+}
+
+export interface AccessListing {
+  levels: AccessLevel[];
+  /** The conversation's saved or resolved access; null when nothing is known yet. */
+  access: TurnAccess | null;
+  /** What the agent's own history says the conversation last ran with. */
+  observed?: AccessState;
+  /** Whether Settings currently allows choosing a dangerous level. */
+  allowDangerous: boolean;
+}
+
+export interface AccessApi {
+  list(ref: ConversationRef): Promise<AccessListing>;
+  /** Saves the conversation's level for its next turns. */
+  choose(ref: ConversationRef, level: string): Promise<void>;
 }
 
 /** An attachment recorded on a sent user message, by path; contents are fetched through previewAttachment. */

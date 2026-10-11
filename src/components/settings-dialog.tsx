@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import type { ProviderId } from '@/shared/conversation-contract';
 import {
   DEFAULT_CODING_AGENT,
   type AgentEnvironment,
@@ -46,6 +47,11 @@ const AGENT_LOCATION_FIELDS = [
   { agent: 'claude', label: 'Claude Code', bareName: 'claude' },
   { agent: 'codex', label: 'Codex', bareName: 'codex' },
 ] as const satisfies readonly { agent: keyof AgentExecutables; label: string; bareName: string }[];
+
+const DANGEROUS_LEVEL_SWITCHES = [
+  { provider: 'claude', label: 'Claude Code: Bypass' },
+  { provider: 'codex', label: 'Codex: Full access' },
+] as const satisfies readonly { provider: ProviderId; label: string }[];
 
 const NO_AGENT_EXECUTABLES: AgentExecutables = { claude: '', codex: '' };
 
@@ -233,6 +239,17 @@ export function SettingsDialog({
       });
   };
 
+  const setAllowDangerousAccess = (provider: ProviderId, allowed: boolean) => {
+    if (!settings) return;
+    const previous = settings;
+    const allowDangerousAccess = { ...previous.allowDangerousAccess, [provider]: allowed };
+    setSettings({ ...previous, allowDangerousAccess });
+    window.fractal.settings
+      .set({ allowDangerousAccess })
+      .then(setSettings)
+      .catch(() => setSettings(previous));
+  };
+
   const setAgentExecutable = (agent: keyof AgentExecutables, location: string) => {
     if (!settings) return;
     const previous = settings;
@@ -312,6 +329,26 @@ export function SettingsDialog({
                   disabled={!settings}
                   onCheckedChange={setShowAgentColorTags}
                 />
+              </div>
+
+              <div className="mt-6 flex flex-col gap-1">
+                <h3 className="text-sm font-medium">Dangerous access levels</h3>
+                <p className="text-sm text-muted-foreground">
+                  Offer the levels that remove an agent's safety checks.
+                </p>
+              </div>
+              <div className="mt-4 flex flex-col gap-3">
+                {DANGEROUS_LEVEL_SWITCHES.map(({ provider, label }) => (
+                  <div className="flex items-center justify-between gap-6" key={provider}>
+                    <span id={`dangerous-${provider}-label`} className="text-sm">{label}</span>
+                    <Switch
+                      aria-labelledby={`dangerous-${provider}-label`}
+                      checked={settings?.allowDangerousAccess?.[provider] === true}
+                      disabled={!settings}
+                      onCheckedChange={(allowed) => setAllowDangerousAccess(provider, allowed)}
+                    />
+                  </div>
+                ))}
               </div>
 
               <div className="mt-6 flex flex-col gap-1">

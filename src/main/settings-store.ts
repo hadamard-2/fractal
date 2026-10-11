@@ -7,7 +7,7 @@ import { DEFAULT_CODING_AGENT, type AgentExecutables, type DefaultCodingAgent, t
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
 const emptyAgentExecutables = (): AgentExecutables => ({ claude: '', codex: '' });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: emptyAgentExecutables(), fileOpener: null });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: emptyAgentExecutables(), fileOpener: null, allowDangerousAccess: {} });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
@@ -75,6 +75,11 @@ function coerceAgentExecutables(value: unknown): AgentExecutables {
   return { claude: coerce(executables.claude), codex: coerce(executables.codex) };
 }
 
+function coerceAllowDangerousAccess(value: unknown): Partial<Record<ProviderId, boolean>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([provider, allowed]) => PROVIDER_VALUES.includes(provider) && typeof allowed === 'boolean'));
+}
+
 const FILE_OPENER_VALUES: readonly string[] = [...EDITOR_IDS, 'system'];
 
 function coerceFileOpener(value: unknown): FileOpenerId | null {
@@ -92,6 +97,7 @@ function coerceSettings(record: Record<string, unknown>): FractalSettings {
     showAgentColorTags: coerceBoolean(record.showAgentColorTags, true),
     agentExecutables: coerceAgentExecutables(record.agentExecutables),
     fileOpener: coerceFileOpener(record.fileOpener),
+    allowDangerousAccess: coerceAllowDangerousAccess(record.allowDangerousAccess),
   };
 }
 

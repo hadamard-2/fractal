@@ -75,6 +75,8 @@ export interface FractalSettings {
   agentExecutables: AgentExecutables;
   /** What the Files viewer's Open button runs; null until the user has opened a file with something. */
   fileOpener: FileOpenerId | null;
+  /** Agents that may offer their level with no safety checks (Claude's Bypass, Codex's Full access). An absent agent is off. */
+  allowDangerousAccess: Partial<Record<ProviderId, boolean>>;
 }
 
 export const SETTINGS_INVOKE_CHANNEL = 'fractal:settings:invoke';

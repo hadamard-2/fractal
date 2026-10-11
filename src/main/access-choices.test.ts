@@ -1,0 +1,218 @@
+import { describe, expect, test, vi } from 'vitest';
+import { AccessChoices } from './access-choices';
+import type { AccessState, ConversationRef } from '@/shared/conversation-contract';
+import type { StoredAccess } from './access-choice-store';
+
+const claudeRef: ConversationRef = { provider: 'claude', nativeSessionId: 'a', projectPath: '/work' };
+const codexRef: ConversationRef = { provider: 'codex', nativeSessionId: 'b', projectPath: '/work' };
+const level = (id: string): AccessState => ({ kind: 'level', level: id });
+
+function memoryStore() {
+  const entries = new Map<string, StoredAccess>();
+  return { entries, get: (key: string) => entries.get(key), set: (key: string, value: StoredAccess) => { entries.set(key, value); } };
+}
+
+function setup(readAccess?: (ref: ConversationRef) => Promise<AccessState | undefined>, allowed: (provider: string) => boolean = () => false) {
+  const store = memoryStore();
+  const choices = new AccessChoices([{ provider: 'claude', readAccess }, { provider: 'codex' }], store, allowed);
+  return { store, choices };
+}
+
+describe('AccessChoices', () => {
+  test('lists the levels for an agent', () => {
+    const { choices } = setup();
+    expect(choices.levels('claude').map((entry) => entry.id)).toEqual(['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions']);
+    expect(choices.levels('codex').map((entry) => entry.id)).toEqual(['read-only', 'auto', 'auto-review', 'full-access']);
+  });
+
+  test('resolves a saved pick, else the read-back adopted, else the agent default', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => ({ kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }));
+    const { choices } = setup(readAccess);
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false } });
+    choices.choose(claudeRef, 'plan');
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: true } });
+    await expect(choices.resolve(codexRef)).resolves.toEqual({ access: null });
+    readAccess.mockResolvedValueOnce(undefined);
+    await expect(setup(readAccess).choices.resolve(claudeRef)).resolves.toEqual({ access: null });
+  });
+
+  test('treats a read-back failure as the default and does not cache it', async () => {
+    const readAccess = vi.fn<() => Promise<AccessState | undefined>>().mockRejectedValueOnce(new Error('gone')).mockResolvedValue(level('plan'));
+    const { choices } = setup(readAccess);
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: null });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: false } });
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('reads back once until a turn is sent, then reads again', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => level('default'));
+    const { choices } = setup(readAccess);
+    await choices.resolve(claudeRef);
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledOnce();
+    choices.recordSend(claudeRef, undefined);
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('drops the cached read-back when a picked state is sent', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => level('default'));
+    const { choices } = setup(readAccess);
+    await choices.resolve(claudeRef);
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not cache a read that a send overtook', async () => {
+    let release!: (state: AccessState) => void;
+    const readAccess = vi.fn<() => Promise<AccessState | undefined>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue(level('auto'));
+    const { choices } = setup(readAccess);
+    choices.choose(claudeRef, 'auto');
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    const inFlight = choices.resolve(claudeRef);
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    release(level('default'));
+    await expect(inFlight).resolves.toEqual({ access: { state: level('auto'), picked: true }, observed: level('default') });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+    expect(readAccess).toHaveBeenCalledTimes(2);
+  });
+
+  test('forgetting drops the cached read-back without touching the saved pick', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => level('default'));
+    const { choices, store } = setup(readAccess);
+    store.set('claude:a', { state: level('auto'), sent: true });
+    await choices.resolve(claudeRef);
+    choices.forget(claudeRef);
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledTimes(2);
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
+  });
+
+  test('does not cache a read that a forget overtook', async () => {
+    let release!: (state: AccessState) => void;
+    const readAccess = vi.fn<() => Promise<AccessState | undefined>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue(level('plan'));
+    const { choices } = setup(readAccess);
+    const inFlight = choices.resolve(claudeRef);
+    choices.forget(claudeRef);
+    release(level('default'));
+    await expect(inFlight).resolves.toEqual({ access: { state: level('default'), picked: false } });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: false } });
+  });
+
+  test('a new pick over a sent one is unsent again and reports no observed state', async () => {
+    const { choices, store } = setup(async () => level('default'));
+    store.set('claude:a', { state: level('auto'), sent: true });
+    await expect(choices.resolve(claudeRef)).resolves.toMatchObject({ observed: level('default') });
+    choices.choose(claudeRef, 'plan');
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: false });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('plan'), picked: true } });
+  });
+
+  test('caches an absent read-back too', async () => {
+    const readAccess = vi.fn(async (): Promise<AccessState | undefined> => undefined);
+    const { choices } = setup(readAccess);
+    await choices.resolve(claudeRef);
+    await choices.resolve(claudeRef);
+    expect(readAccess).toHaveBeenCalledOnce();
+  });
+
+  test('reports observed only for a sent pick that differs from the read-back', async () => {
+    let readBack: AccessState = level('default');
+    const { choices } = setup(async () => readBack);
+    choices.choose(claudeRef, 'auto');
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true }, observed: level('default') });
+    readBack = level('auto');
+    choices.recordSend(claudeRef, undefined);
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+  });
+
+  test('reports no observed state for a sent pick when nothing can be read back', async () => {
+    const { choices, store } = setup(async () => { throw new Error('gone'); });
+    store.set('claude:a', { state: level('auto'), sent: true });
+    store.set('codex:b', { state: level('auto'), sent: true });
+    await expect(choices.resolve(claudeRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+    await expect(choices.resolve(codexRef)).resolves.toEqual({ access: { state: level('auto'), picked: true } });
+  });
+
+  test('rejects unknown levels and dangerous levels that Settings has not allowed', () => {
+    const { choices, store } = setup();
+    expect(() => choices.choose(claudeRef, 'nope')).toThrow('Unknown access level');
+    expect(() => choices.choose(claudeRef, 'bypassPermissions')).toThrow('Bypass is turned off in Settings');
+    expect(store.entries.size).toBe(0);
+    expect(() => choices.validateSend(codexRef, { state: level('full-access'), picked: true })).toThrow('Full access is turned off in Settings');
+    expect(() => choices.validateSend(codexRef, { state: level('nope'), picked: true })).toThrow('Unknown access level');
+    expect(() => choices.validateSend(claudeRef, { state: { kind: 'custom', label: 'x', mode: 'plan' }, picked: true })).toThrow('Unknown access level');
+    expect(() => choices.validateSend(claudeRef, { state: { kind: 'custom', label: 'dontAsk', mode: 'dontAsk' }, picked: false })).not.toThrow();
+    expect(() => choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: false })).toThrow('Bypass is turned off in Settings');
+    expect(() => choices.validateSend(claudeRef, undefined)).not.toThrow();
+    expect(() => choices.validateSend(claudeRef, { state: level('auto'), picked: true })).not.toThrow();
+  });
+
+  test('allows a dangerous level once Settings allows it for that agent', () => {
+    const { choices, store } = setup(undefined, (provider) => provider === 'claude');
+    choices.choose(claudeRef, 'bypassPermissions');
+    expect(store.get('claude:a')).toEqual({ state: level('bypassPermissions'), sent: false });
+    expect(() => choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: true })).not.toThrow();
+    expect(() => choices.choose(codexRef, 'full-access')).toThrow('Full access is turned off in Settings');
+  });
+
+  test('gates read-back states by their effective level, picked or not', () => {
+    const off = setup();
+    const custom = (mode: string): AccessState => ({ kind: 'custom', label: mode, mode });
+    expect(() => off.choices.validateSend(claudeRef, { state: level('nope'), picked: false })).toThrow('Unknown access level');
+    expect(() => off.choices.validateSend(claudeRef, { state: custom('bypassPermissions'), picked: false })).toThrow('Bypass is turned off in Settings');
+    expect(() => off.choices.validateSend(codexRef, { state: level('full-access'), picked: false })).toThrow('Full access is turned off in Settings');
+    expect(() => off.choices.validateSend(claudeRef, { state: level('auto'), picked: false })).not.toThrow();
+    const on = setup(undefined, () => true);
+    expect(() => on.choices.validateSend(claudeRef, { state: custom('bypassPermissions'), picked: false })).not.toThrow();
+    expect(() => on.choices.validateSend(claudeRef, { state: level('bypassPermissions'), picked: false })).not.toThrow();
+    expect(() => on.choices.validateSend(claudeRef, { state: level('nope'), picked: false })).toThrow('Unknown access level');
+  });
+
+  test('gates a read-back marked dangerous as the agent\'s dangerous level', () => {
+    const noSandbox: AccessState = { kind: 'custom', label: 'full access · ask on request', dangerous: true };
+    expect(() => setup().choices.validateSend(codexRef, { state: noSandbox, picked: false })).toThrow('Full access is turned off in Settings');
+    expect(() => setup(undefined, () => true).choices.validateSend(codexRef, { state: noSandbox, picked: false })).not.toThrow();
+    expect(() => setup(undefined, () => true).choices.validateSend(codexRef, { state: noSandbox, picked: true })).toThrow('Unknown access level');
+  });
+
+  test('counts a throwing allowDangerous as not allowed', () => {
+    const { choices } = setup(undefined, () => { throw new Error('settings corrupt'); });
+    expect(choices.allowDangerous('claude')).toBe(false);
+    expect(() => choices.choose(claudeRef, 'bypassPermissions')).toThrow('Bypass is turned off in Settings');
+  });
+
+  test('saves only picked states on send', () => {
+    const { choices, store } = setup();
+    choices.recordSend(claudeRef, { state: level('plan'), picked: false });
+    choices.recordSend(claudeRef, undefined);
+    expect(store.entries.size).toBe(0);
+    choices.recordSend(claudeRef, { state: level('plan'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: true });
+  });
+
+  test('a send does not overwrite a newer unsent pick', () => {
+    const { choices, store } = setup();
+    choices.choose(claudeRef, 'plan');
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: false });
+  });
+
+  test('a send of the stored pick, or with nothing stored or already sent, saves it as sent', () => {
+    const { choices, store } = setup();
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
+    choices.choose(claudeRef, 'plan');
+    choices.recordSend(claudeRef, { state: level('plan'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('plan'), sent: true });
+    choices.recordSend(claudeRef, { state: level('auto'), picked: true });
+    expect(store.get('claude:a')).toEqual({ state: level('auto'), sent: true });
+  });
+});

@@ -21,6 +21,14 @@ describe('resolveAttachments', () => {
     await expect(resolveAttachments({ text: 'Hi', model: 'opus', effort: 'high' }, { root, ref })).resolves.toEqual({ text: 'Hi', model: 'opus', effort: 'high' });
   });
 
+  test('carries access through, with and without attachments', async () => {
+    const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
+    await expect(resolveAttachments({ text: 'Hi', access }, { root, ref })).resolves.toEqual({ text: 'Hi', access });
+    const result = await resolveAttachments({ text: '', access, attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/png', data: PNG.toString('base64') }] }, { root, ref });
+    expect(result.access).toEqual(access);
+    expect(result.attachments).toHaveLength(1);
+  });
+
   test('writes pasted bytes under the conversation folder and marks them by sniffed type', async () => {
     const result = await resolveAttachments({ text: '', attachments: [{ kind: 'bytes', name: 'shot.png', mediaType: 'image/jpeg', data: PNG.toString('base64') }] }, { root, ref });
     const [attachment] = result.attachments ?? [];
