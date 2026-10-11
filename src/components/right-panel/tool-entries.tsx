@@ -2,25 +2,26 @@ import { FileDiff, Folder, Globe, MessageCirclePlus, SquareTerminal, type Lucide
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
-type ToolId = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat';
+type ToolId = 'changes' | 'terminal' | 'browser' | 'files' | 'side-chat';
 type ToolEntry = { id: ToolId; label: string; Icon: LucideIcon };
 
-// Terminal and Files exist; the others are listed so the panel shows its intended shape before they land.
+// Terminal, Files, and Changes exist; the others are listed so the panel shows its intended shape before they land.
 const TOOL_ENTRIES: readonly ToolEntry[] = [
-  { id: 'review', label: 'Review', Icon: FileDiff },
+  { id: 'changes', label: 'Changes', Icon: FileDiff },
   { id: 'terminal', label: 'Terminal', Icon: SquareTerminal },
   { id: 'browser', label: 'Browser', Icon: Globe },
   { id: 'files', label: 'Files', Icon: Folder },
   { id: 'side-chat', label: 'Side chat', Icon: MessageCirclePlus },
 ];
 
-type Handlers = { onTerminal: () => void; onFiles: () => void; projectOpen: boolean };
+type Handlers = { onTerminal: () => void; onFiles: () => void; onChanges: () => void; projectOpen: boolean };
 type State = { onSelect?: () => void; hint?: string; shortcut?: string };
 
-// Terminal and Files both work inside the project, so neither has anywhere to start without one.
-function stateOf(id: ToolId, { onTerminal, onFiles, projectOpen }: Handlers): State {
+// Terminal, Files and Changes all work inside the project, so none has anywhere to start without one.
+function stateOf(id: ToolId, { onTerminal, onFiles, onChanges, projectOpen }: Handlers): State {
   if (id === 'terminal') return projectOpen ? { onSelect: onTerminal, hint: 'Ctrl+`', shortcut: 'Control+`' } : { hint: 'Open a project first' };
   if (id === 'files') return projectOpen ? { onSelect: onFiles, hint: 'Ctrl+Shift+F', shortcut: 'Control+Shift+F' } : { hint: 'Open a project first' };
+  if (id === 'changes') return projectOpen ? { onSelect: onChanges, hint: 'Ctrl+Shift+G', shortcut: 'Control+Shift+G' } : { hint: 'Open a project first' };
   return { hint: 'Soon' };
 }
 

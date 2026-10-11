@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type FilePanelTab, type PanelTabsState } from './panel-tabs';
+import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type FilePanelTab, type PanelTabsState } from './panel-tabs';
 
 const fileTabs = (state: PanelTabsState) => state.tabs.filter((tab): tab is FilePanelTab => tab.kind === 'file');
 const selected = (state: PanelTabsState) => state.tabs.find((tab) => tab.id === state.selectedId);
@@ -85,5 +85,22 @@ describe('file tabs', () => {
     let state = openFile(emptyPanelTabs, '/a', 'x.ts', false, 'f1');
     state = openFile(state, '/b', 'y.ts', false, 'f2');
     expect(fileTabs(state)).toMatchObject([{ projectPath: '/a', path: 'x.ts', preview: true }, { projectPath: '/b', path: 'y.ts', preview: true }]);
+  });
+});
+
+describe('changes tabs', () => {
+  test('opens one Changes tab per project and reselects it', () => {
+    let state = openChangesTool(emptyPanelTabs, '/a', 'c1');
+    expect(selected(state)).toEqual({ kind: 'changes', id: 'c1', projectPath: '/a' });
+    state = addTerminalTab(state, 't1', '/a');
+    state = openChangesTool(state, '/a', 'unused');
+    expect(state.tabs.filter((tab) => tab.kind === 'changes')).toHaveLength(1);
+    expect(state.selectedId).toBe('c1');
+    state = openChangesTool(state, '/b', 'c2');
+    expect(state.tabs.filter((tab) => tab.kind === 'changes')).toHaveLength(2);
+    expect(state.selectedId).toBe('c2');
+    state = closeTab(state, 'c2');
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['c1', 't1']);
+    expect(state.selectedId).toBe('t1');
   });
 });

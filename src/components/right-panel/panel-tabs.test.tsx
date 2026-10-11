@@ -46,3 +46,20 @@ test('selects, closes, pins file tabs on double-click, and marks previews and ex
   fireEvent(screen.getByRole('tab', { name: 'README.md' }), new MouseEvent('auxclick', { bubbles: true, button: 1 }));
   expect(onClose).toHaveBeenCalledWith('h');
 });
+
+test('labels a Changes tab and shows its project as the tooltip', async () => {
+  const changes: PanelTab = { kind: 'changes', id: 'c', projectPath: '/repo/app' };
+  expect(panelTabLabel(changes, 0)).toBe('Changes');
+  expect(tabPanelId(changes)).toBe('panel-c');
+  const onPin = vi.fn();
+  render(<TooltipProvider><PanelTabs onClose={vi.fn()} onPin={onPin} onSelect={vi.fn()} selectedId="c" tabs={[changes]} /></TooltipProvider>);
+  const tab = screen.getByRole('tab', { name: 'Changes' });
+  expect(tab.getAttribute('aria-controls')).toBe('panel-c');
+  const user = userEvent.setup();
+  await user.dblClick(tab);
+  expect(onPin).not.toHaveBeenCalled();
+  cleanup();
+  render(<TooltipProvider><PanelTabs onClose={vi.fn()} onPin={onPin} onSelect={vi.fn()} selectedId="c" tabs={[changes]} /></TooltipProvider>);
+  await user.tab();
+  expect(await screen.findByRole('tooltip')).toHaveProperty('textContent', '/repo/app');
+});

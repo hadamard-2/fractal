@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { List, Plus } from 'lucide-react';
+import { ChangesPane } from '@/components/right-panel/changes/changes-pane';
 import { FilesPane } from '@/components/right-panel/files/files-pane';
 import { PanelTabs } from '@/components/right-panel/panel-tabs';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
@@ -9,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type FilePanelTab, type PanelTabsState, type TerminalPanelTab } from '@/renderer/panel-tabs';
+import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type ChangesPanelTab, type FilePanelTab, type PanelTabsState, type TerminalPanelTab } from '@/renderer/panel-tabs';
 import { PANEL_MIN_WIDTH, clampPanelWidth, defaultPanelWidth, filesTreeDocked, panelLayout } from '@/renderer/right-panel-layout';
 
 // An element's width and left edge, kept current. Falls back to window
@@ -82,6 +83,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const selectedTab = tabs.find((tab) => tab.id === selectedId);
   const terminalTabs = tabs.filter((tab): tab is TerminalPanelTab => tab.kind === 'terminal');
   const fileTabs = tabs.filter((tab): tab is FilePanelTab => tab.kind === 'file');
+  const changesTabs = tabs.filter((tab): tab is ChangesPanelTab => tab.kind === 'changes');
   const selectedFileTab = selectedTab?.kind === 'file' ? selectedTab : undefined;
   const docked = filesTreeDocked(width);
   const treeShown = selectedFileTab !== undefined && (docked ? dockedTreeOpen : overlayOpen || selectedFileTab.path === null);
@@ -112,6 +114,11 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     if (projectPath === null) return;
     const id = crypto.randomUUID();
     setPanelTabs((previous) => openFilesTool(previous, projectPath, id));
+  };
+  const openChanges = () => {
+    if (projectPath === null) return;
+    const id = crypto.randomUUID();
+    setPanelTabs((previous) => openChangesTool(previous, projectPath, id));
   };
   const openProjectFile = (project: string, path: string, pinned: boolean) => {
     const id = crypto.randomUUID();
@@ -151,6 +158,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     if (!open) onOpenChange(true);
     openFiles();
   };
+  // Ctrl+Shift+G — the same for the project's Changes tool.
+  const showChanges = useRef<() => void>(() => undefined);
+  showChanges.current = () => {
+    if (projectPath === null) return;
+    if (!open) onOpenChange(true);
+    openChanges();
+  };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
@@ -162,6 +176,10 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         event.preventDefault();
         event.stopPropagation();
         showFiles.current();
+      } else if (event.code === 'KeyG' && event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        showChanges.current();
       }
     };
     // Capture phase, so a focused terminal never receives the keystroke.
@@ -228,13 +246,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                   <DropdownMenuTrigger asChild>
                     <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} /></DropdownMenuContent>
+                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} /></DropdownMenuContent>
                 </DropdownMenu>
               )}
             </div>
             {tabs.length === 0 ? (
               <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} />
+                <ToolList onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} />
               </div>
             ) : (
               <div className="mx-2 mt-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
@@ -249,6 +267,15 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                       onExitedChange={(exited) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { exited }))}
                       onShellReady={({ shell, cwd }) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd }))}
                       visible={open && selectedId === tab.id}
+                    />
+                  </div>
+                ))}
+                {changesTabs.map((tab) => (
+                  <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
+                    <ChangesPane
+                      active={open && selectedId === tab.id}
+                      onOpenFile={(path) => openProjectFile(tab.projectPath, path, false)}
+                      root={tab.projectPath}
                     />
                   </div>
                 ))}

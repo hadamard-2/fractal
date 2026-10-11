@@ -27,7 +27,15 @@ vi.mock('./right-panel/files/files-pane', () => ({
   ),
 }));
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+const changesPaneProps: { root: string; active: boolean }[] = [];
+vi.mock('./right-panel/changes/changes-pane', () => ({
+  ChangesPane: ({ root, active, onOpenFile }: { root: string; active: boolean; onOpenFile: (path: string) => void }) => {
+    changesPaneProps.push({ root, active });
+    return <button onClick={() => onOpenFile('src/a.ts')} type="button">Open {root} change</button>;
+  },
+}));
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); changesPaneProps.length = 0; });
 
 const box = (left: number, width: number) => ({ left, width, x: left, y: 0, top: 0, right: left + width, bottom: 800, height: 800, toJSON: (): void => undefined });
 
@@ -235,4 +243,46 @@ test('another project starts with its own tree state', async () => {
   await user.click(screen.getByRole('menuitem', { name: 'Files' }));
   await user.click(screen.getByRole('button', { name: 'Click a.ts' }));
   expect(screen.getByRole('button', { name: 'Show file tree' })).toBeTruthy();
+});
+
+const pressChanges = (target: Element) => fireEvent.keyDown(target, { key: 'G', code: 'KeyG', ctrlKey: true, shiftKey: true });
+const lastActive = () => changesPaneProps[changesPaneProps.length - 1]?.active;
+
+test('Ctrl+Shift+G opens the panel on Changes and reuses the tab', () => {
+  render(<Harness />);
+  pressChanges(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('false');
+  expect(screen.getByRole('tab', { name: 'Changes' }).getAttribute('aria-selected')).toBe('true');
+  expect(pressChanges(document.body)).toBe(false);
+  expect(screen.getAllByRole('tab')).toHaveLength(1);
+});
+
+test('Ctrl+Shift+G does nothing without a project', () => {
+  render(<Harness projectPath={null} />);
+  pressChanges(document.body);
+  expect(panel().getAttribute('aria-hidden')).toBe('true');
+  expect(screen.queryByRole('tab')).toBeNull();
+});
+
+test('Open in Files from Changes opens a Files preview tab for that file', async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  pressChanges(document.body);
+  await user.click(screen.getByRole('button', { name: 'Open /repo change' }));
+  expect(screen.getByRole('tab', { name: 'a.ts (preview)' }).getAttribute('aria-selected')).toBe('true');
+});
+
+test('only the selected Changes tab is active', async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole('button', { name: 'Open panel' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Changes' }));
+  expect(lastActive()).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Add tool' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+  expect(lastActive()).toBe(false);
+  await user.click(screen.getByRole('tab', { name: 'Changes' }));
+  expect(lastActive()).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Close panel' }));
+  expect(lastActive()).toBe(false);
 });

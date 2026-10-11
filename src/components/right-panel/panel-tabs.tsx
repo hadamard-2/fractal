@@ -1,4 +1,4 @@
-import { SquareTerminal, X } from 'lucide-react';
+import { FileDiff, SquareTerminal, X } from 'lucide-react';
 import { FileTypeIcon, FolderTypeIcon } from '@/components/code/file-icons';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -8,6 +8,7 @@ import { terminalTabLabel } from './terminal-tabs';
 
 export function panelTabLabel(tab: PanelTab, terminalCount: number): string {
   if (tab.kind === 'terminal') return terminalTabLabel(tab, terminalCount);
+  if (tab.kind === 'changes') return 'Changes';
   return tab.path === null ? 'Files' : basename(tab.path);
 }
 
@@ -15,6 +16,7 @@ export const tabPanelId = (tab: PanelTab): string => (tab.kind === 'terminal' ? 
 
 function tooltipFor(tab: PanelTab): string {
   if (tab.kind === 'terminal') return tab.startedIn ?? tab.cwd;
+  if (tab.kind === 'changes') return tab.projectPath;
   return tab.path === null ? tab.projectPath : absoluteProjectPath(tab.projectPath, tab.path);
 }
 
@@ -56,6 +58,7 @@ export function PanelTabs({ tabs, selectedId, onSelect, onClose, onPin }: {
                   type="button"
                 >
                   {tab.kind === 'terminal' && <SquareTerminal aria-hidden className="size-3.5 shrink-0" />}
+                  {tab.kind === 'changes' && <FileDiff aria-hidden className="size-3.5 shrink-0" />}
                   {tab.kind === 'file' && (tab.path === null
                     ? <FolderTypeIcon className="size-3.5 shrink-0" name={basename(tab.projectPath)} />
                     : <FileTypeIcon className="size-3.5 shrink-0" path={tab.path} />)}

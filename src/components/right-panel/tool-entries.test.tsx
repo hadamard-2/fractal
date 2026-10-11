@@ -9,11 +9,11 @@ afterEach(cleanup);
 test('lists every tool in order, with Terminal and Files available', async () => {
   const onTerminal = vi.fn();
   const onFiles = vi.fn();
-  render(<ToolList onFiles={onFiles} onTerminal={onTerminal} projectOpen />);
+  render(<ToolList onChanges={vi.fn()} onFiles={onFiles} onTerminal={onTerminal} projectOpen />);
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-    'ReviewSoon', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
+    'ChangesCtrl+Shift+G', 'TerminalCtrl+`', 'BrowserSoon', 'FilesCtrl+Shift+F', 'Side chatSoon',
   ]);
-  for (const name of ['Review', 'Browser', 'Side chat']) {
+  for (const name of ['Browser', 'Side chat']) {
     expect(screen.getByRole('menuitem', { name }).hasAttribute('disabled')).toBe(true);
   }
   const terminal = screen.getByRole('menuitem', { name: 'Terminal' });
@@ -26,12 +26,22 @@ test('lists every tool in order, with Terminal and Files available', async () =>
   expect(onFiles).toHaveBeenCalledTimes(1);
 });
 
-test('disables Terminal and Files until there is a project', () => {
-  render(<ToolList onFiles={vi.fn()} onTerminal={vi.fn()} projectOpen={false} />);
-  for (const name of ['Terminal', 'Files']) {
+test('disables Terminal, Files and Changes until there is a project', () => {
+  render(<ToolList onChanges={vi.fn()} onFiles={vi.fn()} onTerminal={vi.fn()} projectOpen={false} />);
+  for (const name of ['Terminal', 'Files', 'Changes']) {
     const item = screen.getByRole('menuitem', { name });
     expect(item.hasAttribute('disabled')).toBe(true);
     expect(item.hasAttribute('aria-keyshortcuts')).toBe(false);
     expect(item.textContent).toBe(`${name}Open a project first`);
   }
+});
+
+test('Changes is enabled with a project and shows its shortcut', async () => {
+  const onChanges = vi.fn();
+  render(<ToolList onChanges={onChanges} onFiles={vi.fn()} onTerminal={vi.fn()} projectOpen />);
+  const item = screen.getByRole('menuitem', { name: 'Changes' });
+  expect(item.getAttribute('aria-keyshortcuts')).toBe('Control+Shift+G');
+  expect(item.hasAttribute('disabled')).toBe(false);
+  await userEvent.setup().click(item);
+  expect(onChanges).toHaveBeenCalledTimes(1);
 });

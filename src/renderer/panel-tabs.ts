@@ -13,7 +13,9 @@ export type FilePanelTab = {
   preview: boolean;
 };
 
-export type PanelTab = TerminalPanelTab | FilePanelTab;
+export type ChangesPanelTab = { kind: 'changes'; id: string; projectPath: string };
+
+export type PanelTab = TerminalPanelTab | FilePanelTab | ChangesPanelTab;
 
 export interface PanelTabsState {
   tabs: PanelTab[];
@@ -67,6 +69,13 @@ export function openFilesTool(state: PanelTabsState, projectPath: string, newId:
   const recentId = state.recent.find((id) => ids.has(id));
   if (recentId) return selectTab(state, recentId);
   return append(state, { kind: 'file', id: newId, projectPath, path: null, preview: true });
+}
+
+/** Changes from the tool list: the project's Changes tab if it has one, otherwise a new one. */
+export function openChangesTool(state: PanelTabsState, projectPath: string, newId: string): PanelTabsState {
+  const existing = state.tabs.find((tab) => tab.kind === 'changes' && tab.projectPath === projectPath);
+  if (existing) return selectTab(state, existing.id);
+  return append(state, { kind: 'changes', id: newId, projectPath });
 }
 
 /**
