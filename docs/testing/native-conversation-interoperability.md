@@ -15,6 +15,9 @@ native session ID:
 date:
 approval exercised: yes | inconclusive | unsupported
 question exercised: yes | inconclusive | unsupported
+interrupt then continue: pass | fail
+pre-SDK conversation continued: pass | fail
+repeated prompt attributed: pass | fail
 external ownership enforced: pass | fail
 native resume after Fractal: pass | fail
 history entries present once: pass | fail
@@ -60,18 +63,22 @@ While a turn is actively running in a separately launched Codex process, open th
 ## Claude Code
 
 1. Record the installed version with `claude --version`.
-2. From the temporary repository, run `claude` and start a harmless conversation. Ask it to acknowledge the task without changing files. Note the native session ID, then wait until the run is idle before leaving the CLI.
-3. Start Fractal. Under the temporary project, open the Claude conversation with that exact native session ID. Confirm that the native user prompt and response each appear once.
-4. Check the capabilities Fractal reports in the conversation header, directly below the provider/runtime/capture line. When routing is unavailable, this visible status names approval routing, question routing, or both and states that Fractal will not bypass native permissions.
-5. Exercise the capabilities reported for this installed Claude version:
+2. Confirm that `claude --version` is at or above the Claude floor in `src/main/harness/version-floor.ts`, and that Fractal's home screen shows no version warning for Claude. Fractal runs Claude through the Agent SDK pinned in `package.json`, against this installed `claude`.
+3. From the temporary repository, run `claude` and start a harmless conversation. Ask it to acknowledge the task without changing files. Note the native session ID, then wait until the run is idle before leaving the CLI.
+4. Start Fractal. Under the temporary project, open the Claude conversation with that exact native session ID. Confirm that the native user prompt and response each appear once.
+5. Check the capabilities Fractal reports in the conversation header, directly below the provider/runtime/capture line. When routing is unavailable, this visible status names approval routing, question routing, or both and states that Fractal will not bypass native permissions.
+6. Exercise the capabilities reported for this installed Claude version:
    - If approvals are supported, first inspect the installed CLI's current help and permission settings using the commands documented by that installed version. Record the original permission configuration outside the test log, configure a temporary-repository operation to require an approval, and restore the original configuration when the test ends. Provider versions differ, so this guide intentionally does not prescribe a universal permission flag.
    - Ask Claude to perform that known approval-requiring operation: harmlessly create `claude-approval-fixture.txt` inside the temporary repository with non-sensitive disposable text. Exercise allow-once in Fractal. Do not approve deletion, network access, or any operation outside the temporary repository. If no approval is requested, record the approval check as `inconclusive`, recheck the installed CLI help/settings, safely configure the named operation to require approval, and retry; never count a no-request run as a pass.
    - If questions are supported, send a prompt that asks Claude to use `AskUserQuestion` for one harmless choice, answer it in Fractal, and confirm that the resolved question remains visible as an audit entry.
    - If either capability is unsupported, confirm that Fractal reports that exact capability gap and does not offer a bypass. Record the capability as `unsupported`; do not try to manufacture the missing interaction.
-6. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
-7. Exit Fractal so it no longer owns the run, then restore any permission configuration changed for the approval check.
-8. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
-9. Record only the safe metadata listed above.
+7. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
+8. Exit Fractal so it no longer owns the run, then restore any permission configuration changed for the approval check.
+9. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
+10. Record only the safe metadata listed above.
+11. Interrupt and continue: send a prompt that takes a while, press Stop while Claude is working, and confirm the turn ends as interrupted, not failed. Send a follow-up in the same conversation and confirm it continues the same native session.
+12. Conversation from before the SDK switch: open a Claude conversation last continued by a Fractal build before the Agent SDK change, send a turn, and confirm it continues the same native session with the history shown once.
+13. Repeated text: send the same short prompt (for example `continue`) twice in a row, and confirm each reply appears under its own turn.
 
 ### Claude external-ownership check
 
