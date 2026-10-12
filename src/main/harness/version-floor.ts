@@ -5,6 +5,11 @@ import type { ProviderId } from '@/shared/conversation-contract';
  * agent's output and protocol as they were at these versions; an older agent
  * may differ in ways nothing else detects, so it gets a warning rather than a
  * refusal. Raise a floor only after checking Fractal against the new version.
+ *
+ * Claude runs through `@anthropic-ai/claude-agent-sdk`, pinned exactly in
+ * package.json. Its `claudeCodeVersion` must not be above the Claude floor, so
+ * updating the SDK and raising this floor happen together, after re-running
+ * the checks in docs/testing/native-conversation-interoperability.md.
  */
 export const TESTED_VERSION_FLOOR: Record<ProviderId, string> = {
   claude: '2.1.296',

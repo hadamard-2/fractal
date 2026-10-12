@@ -51,6 +51,7 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@dnd-kit/dom": "0.5.0",
     "@dnd-kit/react": "0.5.0",
     "@fontsource-variable/geist": "^5.3.0",
