@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
@@ -31,6 +32,8 @@ export interface RunClaudeTurnOptions {
   ref: ConversationRef;
   /** text is the composed prompt (user text plus any attachment block); the turn anchor matches it exactly. */
   prompt: { text: string; images?: ConversationImage[] };
+  /** The prompt record's uuid, which Claude also uses as the turn's id; generated when absent. */
+  turnId?: string;
   executable: string;
   spawnProcess?: SpawnClaudeProcess;
   permissionBridge?: { configPath: string; toolName: string };
@@ -69,7 +72,8 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   if (watchedPid !== undefined) options.watchdog?.watch(watchedPid, 'SIGINT');
   // A process that exits or fails to launch before reading stdin reports through close/error, not here.
   child.stdin.on('error', () => undefined);
-  child.stdin.end(claudeStdinMessage(options.prompt));
+  const turnId = options.turnId ?? randomUUID();
+  child.stdin.end(claudeStdinMessage(options.prompt, turnId));
   type Terminal = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
   let terminalValue: Terminal | undefined;
   let resolveTerminal!: (result: Terminal) => void;
@@ -96,7 +100,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
 
   const eventBuffer = new ReplayEventBuffer();
   const diagnostic = new DiagnosticBuffer();
-  const stdoutDrain = drainStdout(child.stdout, eventBuffer, options.rereadNative, options.prompt.text, options.ref.nativeSessionId, Date.now());
+  const stdoutDrain = drainStdout(child.stdout, eventBuffer, options.rereadNative, turnId, options.ref.nativeSessionId);
   const stderrDrain = drainStderr(child.stderr, diagnostic);
   let pipeError: Error | undefined;
   let resolvePipeFailure!: (error: Error) => void;
@@ -160,19 +164,20 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
 }
 
 /** One stream-json user message: the text block (omitted when empty) followed by base64 image blocks. */
-export function claudeStdinMessage(prompt: RunClaudeTurnOptions['prompt']): string {
+/** One stream-json user message. Claude saves the prompt under `turnId` as its uuid, which is how the runner finds this turn in the transcript. */
+export function claudeStdinMessage(prompt: RunClaudeTurnOptions['prompt'], turnId: string): string {
   const content = [
     ...(prompt.text ? [{ type: 'text', text: prompt.text }] : []),
     ...(prompt.images ?? []).map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
   ];
-  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+  return `${JSON.stringify({ type: 'user', uuid: turnId, message: { role: 'user', content } })}\n`;
 }
 
 function spawnClaude(file: string, args: string[], options: ClaudeSpawnOptions): ClaudeChildProcess {
   return spawn(file, args, options) as ChildProcessWithoutNullStreams;
 }
 
-async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: ReplayEventBuffer, rereadNative: RunClaudeTurnOptions['rereadNative'], prompt: string, sessionId: string, startedAt: number): Promise<void> {
+async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: ReplayEventBuffer, rereadNative: RunClaudeTurnOptions['rereadNative'], turnId: string, sessionId: string): Promise<void> {
   const decoder = new NdjsonDecoder<unknown>();
   const context = createClaudeNormalizationContext();
   let ordinal = 0;
@@ -187,7 +192,7 @@ async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: R
         if (!anchoredTurnId) {
           try {
             for await (const event of asAsync(await rereadNative())) {
-              if (event.payload.kind === 'turn-started' && event.payload.text === prompt && event.observedAt >= startedAt - 5_000) {
+              if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) {
                 anchoredTurnId = event.payload.turnId;
                 events.publish(event);
               }
@@ -201,7 +206,7 @@ async function drainStdout(stream: AsyncIterable<Uint8Array | string>, events: R
         continue;
       }
       for (const event of normalizeClaudeRecord(line.value, ordinal++, context)) {
-        if (event.payload.kind === 'turn-started' && event.payload.text === prompt) anchoredTurnId = event.payload.turnId;
+        if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) anchoredTurnId = turnId;
         events.publish(event);
       }
     }

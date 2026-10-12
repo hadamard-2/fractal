@@ -38,8 +38,8 @@ describe('runClaudeTurn', () => {
   test('spawns resume without a shell and writes the prompt to stdin as one stream-json user message', async () => {
     const child = fakeProcess();
     const spawnProcess = vi.fn(() => child);
-    const run = runClaudeTurn({ ref, prompt: { text: 'fix; $(touch /tmp/nope)' }, executable: '/usr/bin/claude', spawnProcess, permissionBridge: bridge, rereadNative: async () => [] });
-    expect(JSON.parse(stdinText(child))).toEqual({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'fix; $(touch /tmp/nope)' }] } });
+    const run = runClaudeTurn({ ref, prompt: { text: 'fix; $(touch /tmp/nope)' }, turnId: 'turn-1', executable: '/usr/bin/claude', spawnProcess, permissionBridge: bridge, rereadNative: async () => [] });
+    expect(JSON.parse(stdinText(child))).toEqual({ type: 'user', uuid: 'turn-1', message: { role: 'user', content: [{ type: 'text', text: 'fix; $(touch /tmp/nope)' }] } });
     child.finish(); await collect(run.events);
     expect(spawnProcess).toHaveBeenCalledWith('/usr/bin/claude', [
       '--resume', 'claude-session-1', '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -188,11 +188,25 @@ describe('runClaudeTurn', () => {
     const child = fakeProcess();
     const composed = 'Compare\n\n<attachments>\n/repo/a.ts\n</attachments>';
     const anchor: NativeEvent = { provider: 'claude', nativeId: 'file-user', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'file-user', userMessageId: 'file-user', text: composed } };
-    const run = runClaudeTurn({ ref, prompt: { text: composed }, executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [anchor] });
+    const run = runClaudeTurn({ ref, prompt: { text: composed }, turnId: 'file-user', executable: 'claude', spawnProcess: () => child, permissionBridge: bridge, rereadNative: async () => [anchor] });
     child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1","role":"assistant","content":[]}}}\n');
     child.finish();
     const events = await collect(run.events);
     expect(events).toContainEqual(anchor);
+  });
+
+  test('anchors the live stream on the record carrying its own turn id, not an earlier turn with the same text', async () => {
+    const child = fakeProcess();
+    const earlier: NativeEvent = { provider: 'claude', nativeId: 'earlier', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'earlier', userMessageId: 'earlier', text: 'continue' } };
+    const mine: NativeEvent = { provider: 'claude', nativeId: 'turn-2', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-2', userMessageId: 'turn-2', text: 'continue' } };
+    const run = runClaudeTurn({ ref, prompt: { text: 'continue' }, turnId: 'turn-2', executable: 'claude', spawnProcess: () => child, rereadNative: async () => [earlier, mine] });
+    const iterator = run.events[Symbol.asyncIterator]();
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1","role":"assistant","content":[]}}}\n');
+    child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}}\n');
+    await expect(iterator.next()).resolves.toMatchObject({ value: mine });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'assistant-text', turnId: 'turn-2' } } });
+    child.finish();
+    await collect({ [Symbol.asyncIterator]: () => iterator });
   });
 
   test('waits for the persisted user anchor before streaming partials and reconciles by message id', async () => {
@@ -200,7 +214,7 @@ describe('runClaudeTurn', () => {
     const anchor: NativeEvent = { provider: 'claude', nativeId: 'file-user', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'file-user', userMessageId: 'file-user', text: 'go' } };
     const final: NativeEvent = { provider: 'claude', nativeId: 'msg-1:text:0', nativeType: 'text', observedAt: 3, payload: { kind: 'assistant-text', turnId: 'file-user', blockId: 'msg-1:text:0', text: 'Hello world', final: true } };
     let available = false;
-    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, rereadNative: async () => available ? [anchor, final] : [] });
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, turnId: 'file-user', executable: 'claude', spawnProcess: () => child, rereadNative: async () => available ? [anchor, final] : [] });
     const iterator = run.events[Symbol.asyncIterator]();
     child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1","role":"assistant","content":[]}}}\n');
     child.stdout.write('{"type":"stream_event","session_id":"claude-session-1","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}}\n');
