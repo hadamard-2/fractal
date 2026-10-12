@@ -60,7 +60,12 @@ export function createClaudePermissions(options: {
       const decision = await Promise.race([options.onRequest(request, controller.signal), aborted(controller.signal)]);
       if (controller.signal.aborted) return denial(abortReason(controller.signal));
       if (decision.kind === 'allow-once' && request.kind === 'approval') return { behavior: 'allow', updatedInput: input };
-      if (decision.kind === 'answer' && request.kind === 'question') return { behavior: 'allow', updatedInput: { ...input, answers: decision.answers } };
+      if (decision.kind === 'answer' && request.kind === 'question') {
+        // The SDK's AskUserQuestion output keys answers by question text; fieldId (the header) is the UI's key.
+        const answer = Object.hasOwn(decision.answers, request.fieldId) ? decision.answers[request.fieldId] : undefined;
+        if (answer === undefined) return denial('Unsupported permission decision');
+        return { behavior: 'allow', updatedInput: { ...input, answers: { [request.prompt]: answer } } };
+      }
       if (decision.kind === 'deny') return denial(decision.reason ?? 'Permission denied');
       return denial('Unsupported permission decision');
     } catch {

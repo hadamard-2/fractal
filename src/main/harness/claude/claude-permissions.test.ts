@@ -65,11 +65,11 @@ describe('createClaudePermissions', () => {
     ]);
   });
 
-  test('routes AskUserQuestion as a question and returns the answers as updated input', async () => {
+  test('routes AskUserQuestion as a question and returns the answer under the question Claude asked', async () => {
     const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { deploy: 'Production' } }));
     const { canUseTool } = createClaudePermissions({ onRequest });
     await expect(canUseTool('AskUserQuestion', deployQuestion, call('question-1'))).resolves.toEqual({
-      behavior: 'allow', updatedInput: { ...deployQuestion, answers: { deploy: 'Production' } },
+      behavior: 'allow', updatedInput: { ...deployQuestion, answers: { 'Where?': 'Production' } },
     });
     expect(onRequest).toHaveBeenCalledWith({
       id: 'question-1', kind: 'question', provider: 'claude', prompt: 'Where?', fieldId: 'deploy',
@@ -85,7 +85,14 @@ describe('createClaudePermissions', () => {
       question: 'Which layout?', header: 'layout', multiSelect: false,
       options: [{ label: 'Grid', description: 'Cards', preview: '[ ][ ]' }, { label: 'List', description: 'Rows', preview: '[----]' }],
     }] };
-    await expect(canUseTool('AskUserQuestion', input, call('question-2'))).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { layout: 'Grid' } } });
+    await expect(canUseTool('AskUserQuestion', input, call('question-2'))).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which layout?': 'Grid' } } });
+    expect(onRequest).toHaveBeenCalledOnce();
+  });
+
+  test('denies an answer that does not name the question header, rather than sending an empty answer', async () => {
+    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { other: 'x' } }));
+    const { canUseTool } = createClaudePermissions({ onRequest });
+    await expect(canUseTool('AskUserQuestion', deployQuestion, call('question-3'))).resolves.toEqual({ behavior: 'deny', message: 'Unsupported permission decision' });
     expect(onRequest).toHaveBeenCalledOnce();
   });
 
