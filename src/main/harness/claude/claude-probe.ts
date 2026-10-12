@@ -12,9 +12,6 @@ export interface ClaudeCapabilityEvidence {
   sessionId: boolean;
   streamJson: boolean;
   partialMessages: boolean;
-  mcpConfig: boolean;
-  permissionPromptTool: boolean;
-  permissionPrompts: boolean;
   askUserQuestion: boolean;
   authenticated: boolean;
 }
@@ -41,9 +38,6 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     sessionId: hasFlag(helpText, '--session-id'),
     streamJson: hasFlag(helpText, '--output-format') && /stream-json/.test(helpText),
     partialMessages: hasFlag(helpText, '--include-partial-messages'),
-    mcpConfig: hasFlag(helpText, '--mcp-config'),
-    permissionPromptTool: hasFlag(helpText, '--permission-prompt-tool'),
-    permissionPrompts: hasFlag(helpText, '--permission-mode'),
     askUserQuestion: /\bAskUserQuestion\b/.test(helpText),
     authenticated,
   };
@@ -51,8 +45,9 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     ...NO_CAPABILITIES,
     create: evidence.sessionId && evidence.streamJson,
     partialStreaming: evidence.streamJson && evidence.partialMessages,
-    approvals: evidence.mcpConfig && evidence.permissionPromptTool && evidence.permissionPrompts,
-    questions: evidence.mcpConfig && evidence.permissionPromptTool && evidence.askUserQuestion,
+    // Through the Agent SDK, prompts and questions travel over the same stream-json pipe as the turn.
+    approvals: evidence.streamJson,
+    questions: evidence.streamJson && evidence.askUserQuestion,
     interrupt: evidence.streamJson,
   };
   if (version.exitCode !== 0) {

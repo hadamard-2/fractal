@@ -225,7 +225,6 @@ app.on('ready', () => {
     const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath });
     const claudeAdapter = new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
       realpath: canonicalPath,
-      tempDir: app.getPath('temp'),
       ownedProcesses: claudeOwnedProcesses,
       executable: claudeExecutable,
       ...(watchdog ? { watchdog } : {}),

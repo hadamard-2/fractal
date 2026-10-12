@@ -5,7 +5,7 @@ import { composePromptText } from '@/main/harness/attachment-block';
 import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from './claude-history';
 import { claudeAccessState, claudePermissionMode } from './claude-access';
 import { listClaudeModels } from './claude-models';
-import { ClaudePermissionBridge } from './claude-permission-bridge';
+import { createClaudePermissions, TURN_ENDED } from '@/main/harness/claude/claude-permissions';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
@@ -14,16 +14,12 @@ import { parseConversationRef } from '@/shared/conversation-ipc';
 import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
 const NO_CAPABILITIES: HarnessCapabilities = { create: false, partialStreaming: false, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
-interface BridgeHandle { configPath: string; toolName: string; dispose(): Promise<void> }
-interface BridgeStartOptions { tempDir: string; onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision>; approvals: boolean; questions: boolean }
 interface ClaudeAdapterDependencies {
   realpath?: Realpath;
   probe?: () => Promise<HarnessStatus>;
   runtime?: (ref: ConversationRef) => Promise<ConversationRuntime>;
-  startBridge?: (options: BridgeStartOptions) => Promise<BridgeHandle>;
   runTurn?: (options: RunClaudeTurnOptions) => ClaudeTurnRun;
   randomUUID?: () => string;
-  tempDir?: string;
   executable?: string;
   rereadNative?: (ref: ConversationRef) => Promise<NativeEvent[]>;
   ownedProcesses?: ClaudeOwnedProcessRegistry;
@@ -97,27 +93,21 @@ export class ClaudeAdapter implements HarnessAdapter {
         pending.set(request.id, { turnId, resolve, signalCleanup: () => signal.removeEventListener('abort', onAbort) });
       });
     };
-    let bridge: BridgeHandle | undefined;
-    if (status.capabilities.approvals || status.capabilities.questions) {
-      if (!this.dependencies.startBridge && !this.dependencies.tempDir) throw new Error('Claude permission bridge temp path is unavailable');
-      bridge = await (this.dependencies.startBridge ?? ((options) => ClaudePermissionBridge.start(options)))({
-        tempDir: this.dependencies.tempDir ?? '', onRequest,
-        approvals: status.capabilities.approvals, questions: status.capabilities.questions,
-      });
-    }
-    let bridgeDisposal: Promise<void> | undefined;
-    const disposeBridge = (): Promise<void> => bridgeDisposal ??= bridge?.dispose() ?? Promise.resolve();
+    const permissions = status.capabilities.approvals || status.capabilities.questions
+      ? createClaudePermissions({ onRequest, approvals: status.capabilities.approvals, questions: status.capabilities.questions })
+      : undefined;
+    const closePermissions = (): void => permissions?.close(TURN_ENDED);
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
     const permissionMode = claudePermissionMode(prompt.access);
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), ...(this.dependencies.watchdog ? { watchdog: this.dependencies.watchdog } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(permissions ? { canUseTool: permissions.canUseTool } : {}), ...(newSession ? { newSession: true } : {}), ...(this.dependencies.watchdog ? { watchdog: this.dependencies.watchdog } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;
       } });
     } catch (error) {
-      releaseOwned(); if (newSession && draft) this.drafts.set(ref.nativeSessionId, draft); await disposeBridge(); throw error;
+      releaseOwned(); if (newSession && draft) this.drafts.set(ref.nativeSessionId, draft); closePermissions(); throw error;
     }
     void runner.completion.catch((): void => undefined);
     let disposed = false;
@@ -130,7 +120,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       }
       catch (error) { failure = error; }
       finally {
-        await disposeBridge();
+        closePermissions();
         releaseOwned();
         if (failure) queue.fail(failure); else queue.close();
       }
@@ -144,7 +134,7 @@ export class ClaudeAdapter implements HarnessAdapter {
         if (disposed) return; disposed = true;
         for (const id of [...pending.keys()]) settle(id, { kind: 'deny', reason: 'Conversation run ended' });
         await runner.interrupt().catch((): void => undefined);
-        await disposeBridge();
+        closePermissions();
         await pump;
       },
     };

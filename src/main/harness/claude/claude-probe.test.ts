@@ -52,7 +52,7 @@ describe('probeClaude', () => {
     const status = await probeClaude(exec, '/usr/bin/claude');
     expect(status).toMatchObject({
       availability: 'available', version: '2.1.0',
-      evidence: { resume: true, sessionId: true, streamJson: true, partialMessages: false, mcpConfig: true, permissionPromptTool: false, permissionPrompts: false, askUserQuestion: true, authenticated: true },
+      evidence: { resume: true, sessionId: true, streamJson: true, partialMessages: false, askUserQuestion: true, authenticated: true },
     });
   });
 
@@ -69,16 +69,15 @@ describe('probeClaude', () => {
     await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unauthenticated', evidence: { authenticated: false } });
   });
 
-  test('does not confuse permission-tool routing with ordinary permission prompt support', async () => {
-    const exec = fakeExec({
-      '--version': { exitCode: 0, stdout: '2.1.0' },
-      '--help': { exitCode: 0, stdout: '--permission-prompt-tool <name>' },
-      'agents --json': { exitCode: 0, stdout: '[]' },
+  test('offers approvals with stream-json alone, and questions only when AskUserQuestion is listed', async () => {
+    const statusFor = (help: string) => probeClaude(fakeExec({
+      '--version': { exitCode: 0, stdout: '2.1.296' },
+      '--help': { exitCode: 0, stdout: help },
       'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
-    });
-    await expect(probeClaude(exec)).resolves.toMatchObject({
-      evidence: { permissionPromptTool: true, permissionPrompts: false },
-    });
+    }));
+    await expect(statusFor('--output-format stream-json')).resolves.toMatchObject({ capabilities: { approvals: true, questions: false } });
+    await expect(statusFor('--output-format stream-json\nAskUserQuestion')).resolves.toMatchObject({ capabilities: { approvals: true, questions: true } });
+    await expect(statusFor('--mcp-config --permission-prompt-tool <name>\nAskUserQuestion')).resolves.toMatchObject({ capabilities: { approvals: false, questions: false } });
   });
 });
 

@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, test, vi } from 'vitest';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import type { NativeEvent } from '@/main/harness/reconciler';
-import type { BlockingRequest, HarnessStatus, UserDecision } from '@/shared/conversation-contract';
+import type { HarnessStatus } from '@/shared/conversation-contract';
 import type { ClaudeTurnRun, RunClaudeTurnOptions } from './claude-runner';
 import { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
@@ -15,6 +16,21 @@ const available: HarnessStatus = {
   provider: 'claude', availability: 'available',
   capabilities: { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: false },
 };
+
+/** What the SDK passes canUseTool for one tool call. */
+function toolCall(toolUseID: string, signal: AbortSignal = new AbortController().signal): Parameters<CanUseTool>[2] {
+  return { signal, toolUseID, requestId: `request-${toolUseID}` };
+}
+
+/** A runner whose events stay open until `finish()`; it records the options each turn was given. */
+function heldRunner() {
+  let finish!: () => void;
+  const runTurn = vi.fn<(options: RunClaudeTurnOptions) => ClaudeTurnRun>(() => ({
+    events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
+    completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
+  }));
+  return { runTurn, finish: () => finish(), canUseTool: () => { const tool = runTurn.mock.calls[0][0].canUseTool; if (!tool) throw new Error('no canUseTool'); return tool; } };
+}
 
 describe('Claude adapter', () => {
   test('discovers canonical summaries without leaking native file locators', async () => {
@@ -146,30 +162,27 @@ describe('Claude adapter', () => {
     await expect(adapter.continueConversation(ref, { text: 'continue' })).rejects.toThrow('Conversation is not idle');
   });
 
-  test('routes each bridge request exactly once and keeps resolved decisions in the event stream', async () => {
-    let route!: (request: BlockingRequest, signal: AbortSignal) => Promise<UserDecision>;
-    const disposeBridge = vi.fn(async () => undefined);
-    const startBridge = vi.fn(async (options: { onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision> }) => {
-      route = options.onRequest;
-      return { configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: disposeBridge };
-    });
-    let finish!: () => void;
-    const runTurn = vi.fn((): ClaudeTurnRun => ({
-      events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
-      completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
-    }));
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', startBridge, runTurn });
+  test('routes each permission prompt exactly once and keeps resolved decisions in the event stream', async () => {
+    const held = heldRunner();
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn: held.runTurn });
     const run = await adapter.continueConversation(ref, { text: 'continue' });
     const iterator = run.events[Symbol.asyncIterator]();
     const opened = iterator.next();
-    const request: BlockingRequest = { id: 'approval-1', kind: 'approval', provider: 'claude', title: 'Run', operation: 'pnpm test', status: 'open' };
-    const decision = route(request, new AbortController().signal);
+    const decision = held.canUseTool()('Bash', { command: 'pnpm test' }, toolCall('approval-1'));
     await expect(opened).resolves.toMatchObject({ value: { payload: { kind: 'request-opened' } } });
     await run.resolveRequest('approval-1', { kind: 'allow-once' });
-    await expect(decision).resolves.toEqual({ kind: 'allow-once' });
+    await expect(decision).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'pnpm test' } });
     await expect(run.resolveRequest('approval-1', { kind: 'deny' })).rejects.toThrow('no longer available');
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-resolved' } } });
-    finish(); await run.dispose(); expect(disposeBridge).toHaveBeenCalledOnce();
+    held.finish(); await run.dispose();
+  });
+
+  test('gives the runner no canUseTool when the probe offers neither approvals nor questions', async () => {
+    const held = heldRunner();
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn: held.runTurn });
+    const run = await adapter.continueConversation(ref, { text: 'continue' });
+    expect(held.runTurn.mock.calls[0][0]).not.toHaveProperty('canUseTool');
+    held.finish(); await run.dispose();
   });
 
   test('composes the attachment block and reads images into the runner prompt', async () => {
@@ -186,26 +199,16 @@ describe('Claude adapter', () => {
     await run.dispose(); await rm(directory, { recursive: true, force: true });
   });
 
-  test('denies and audits a pending bridge request before closing a naturally ended turn', async () => {
-    let route!: (request: BlockingRequest, signal: AbortSignal) => Promise<UserDecision>;
-    const controller = new AbortController();
-    const startBridge = vi.fn(async (options: { onRequest(request: BlockingRequest, signal: AbortSignal): Promise<UserDecision> }) => {
-      route = options.onRequest;
-      return { configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: async () => controller.abort('Permission bridge closed') };
-    });
-    let finish!: () => void;
-    const runTurn = vi.fn((): ClaudeTurnRun => ({
-      events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
-      completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
-    }));
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', startBridge, runTurn });
+  test('denies and audits an open permission prompt before closing a naturally ended turn', async () => {
+    const held = heldRunner();
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn: held.runTurn });
     const run = await adapter.continueConversation(ref, { text: 'continue' });
-    const decision = route({ id: 'pending', kind: 'approval', provider: 'claude', title: 'Run', operation: 'pnpm test', status: 'open' }, controller.signal);
-    finish();
+    const decision = held.canUseTool()('Bash', { command: 'pnpm test' }, toolCall('pending'));
+    held.finish();
     const events = await collect(run.events);
-    await expect(decision).resolves.toEqual({ kind: 'deny', reason: 'Permission bridge closed' });
+    await expect(decision).resolves.toEqual({ behavior: 'deny', message: 'Claude turn ended' });
     expect(events.map((event) => event.payload.kind)).toEqual(['request-opened', 'request-resolved']);
-    expect(events[1]?.payload).toMatchObject({ decision: { kind: 'deny', reason: 'Permission bridge closed' } });
+    expect(events[1]?.payload).toMatchObject({ decision: { kind: 'deny', reason: 'Claude turn ended' } });
   });
 
   test('tracks owned processes before spawn and clears ownership on success and failure', async () => {
@@ -218,8 +221,7 @@ describe('Claude adapter', () => {
         completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined),
       };
     });
-    const startBridge = vi.fn(async () => ({ configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: vi.fn(async () => undefined) }));
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge, ownedProcesses });
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, ownedProcesses });
     const successful = await adapter.continueConversation(ref, { text: 'continue' });
     expect(ownedProcesses.has(ref)).toBe(true); finish(); await collect(successful.events);
     expect(ownedProcesses.has(ref)).toBe(false);
@@ -241,7 +243,7 @@ describe('Claude adapter', () => {
       events: (async function* () { yield { provider: 'claude', nativeId: 'native-user', nativeType: 'user', observedAt: 1, payload: { kind: 'turn-started', turnId: 'native-user', userMessageId: 'native-user', text: 'go' } } as NativeEvent; })(),
       completion, interrupt: vi.fn(async () => undefined),
     });
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge: async () => ({ configPath: '/tmp/private.json', toolName: 'permission', dispose: async () => undefined }), ownedProcesses });
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, ownedProcesses });
     const run = await adapter.continueConversation(ref, { text: 'go' });
     const observed: NativeEvent[] = [];
     const reading = (async () => { for await (const event of run.events) observed.push(event); })();
@@ -259,8 +261,7 @@ describe('Claude adapter', () => {
       events: (async function* () { await new Promise<void>((resolve) => { finish = resolve; }); yield* [] as NativeEvent[]; })(),
       completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt,
     }));
-    const startBridge = vi.fn(async () => ({ configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: vi.fn(async () => undefined) }));
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, startBridge, ownedProcesses });
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, ownedProcesses });
     const run = await adapter.continueConversation(ref, { text: 'continue' });
 
     await run.interrupt();
@@ -285,8 +286,7 @@ describe('Claude adapter', () => {
       calls.push({ newSession: options.newSession });
       return { events: (async function* () { await options.rereadNative(); yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) };
     });
-    const startBridge = vi.fn(async () => ({ configPath: '/tmp/private.json', toolName: 'mcp__fractal__permission', dispose: vi.fn(async () => undefined) }));
-    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', randomUUID: () => draftId, runTurn, startBridge, rereadNative: async () => [] });
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', randomUUID: () => draftId, runTurn, rereadNative: async () => [] });
     const draft = await adapter.createConversation('/work/fractal');
     expect(draft).toEqual({ provider: 'claude', nativeSessionId: draftId, projectPath: '/canonical/fractal' });
     const first = await adapter.continueConversation(draft, { text: 'begin' }); await collect(first.events); await first.dispose();
