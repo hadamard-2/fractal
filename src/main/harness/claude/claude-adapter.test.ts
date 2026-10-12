@@ -253,6 +253,19 @@ describe('Claude adapter', () => {
     expect(ownedProcesses.has(ref)).toBe(false);
   });
 
+  test('closes the event stream cleanly for an interrupted turn that exited nonzero, and fails the same exit when not interrupted', async () => {
+    const ownedProcesses = new ClaudeOwnedProcessRegistry();
+    const finishedWith = async (completion: Awaited<ClaudeTurnRun['completion']>) => {
+      const runTurn = (): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve(completion), interrupt: vi.fn(async () => undefined) });
+      const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, ownedProcesses });
+      return collect((await adapter.continueConversation(ref, { text: 'stop' })).events);
+    };
+    await expect(finishedWith({ exitCode: 130, signal: null, interrupted: true })).resolves.toEqual([]);
+    expect(ownedProcesses.has(ref)).toBe(false);
+    await expect(finishedWith({ exitCode: 130, signal: null })).rejects.toThrow('Claude process exited with code 130');
+    expect(ownedProcesses.has(ref)).toBe(false);
+  });
+
   test('retains ownership after interrupt and during disposal until the process stream settles', async () => {
     const ownedProcesses = new ClaudeOwnedProcessRegistry();
     let finish!: () => void;

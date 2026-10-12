@@ -116,7 +116,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       try {
         for await (const event of runner.events) { if (event.payload.kind === 'turn-started') currentTurnId = event.payload.turnId; queue.push(event); }
         const completion = await runner.completion;
-        if (completion.signal || completion.exitCode !== 0) throw new Error(`Claude process ${completion.signal ? `terminated by ${completion.signal}` : `exited with code ${completion.exitCode}`}`);
+        if (!completion.interrupted && (completion.signal || completion.exitCode !== 0)) throw new Error(`Claude process ${completion.signal ? `terminated by ${completion.signal}` : `exited with code ${completion.exitCode}`}`);
       }
       catch (error) { failure = error; }
       finally {

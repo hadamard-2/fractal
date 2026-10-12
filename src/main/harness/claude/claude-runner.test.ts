@@ -9,8 +9,8 @@ const ref = { provider: 'claude' as const, nativeSessionId: 'claude-session-1', 
 
 type FakeChild = ClaudeChildProcess & {
   stdin: PassThrough; stdout: PassThrough; stderr: PassThrough; signals: NodeJS.Signals[];
-  /** claude exits with `code`. */
-  finish(code?: number): void;
+  /** claude exits with `code`, or is ended by `signal`. */
+  finish(code?: number | null, signal?: NodeJS.Signals | null): void;
   /** The process reports an error, as a failed launch does. */
   fail(error: Error): void;
 };
@@ -23,7 +23,7 @@ function fakeChild(pid: number | null = 123): FakeChild {
   return Object.assign(emitter, {
     pid: pid ?? undefined, stdin, stdout, stderr, signals, killed: false, exitCode: null, signalCode: null,
     kill(signal: NodeJS.Signals) { signals.push(signal); return true; },
-    finish(code = 0) { stdout.end(); stderr.end(); emitter.emit('exit', code, null); },
+    finish(code: number | null = 0, signal: NodeJS.Signals | null = null) { stdout.end(); stderr.end(); emitter.emit('exit', code, signal); },
     fail(error: Error) { emitter.emit('error', error); },
   }) as unknown as FakeChild;
 }
@@ -42,14 +42,19 @@ interface FakeTurn {
   end(): void;
   /** The SDK's stream throws. */
   fail(error: Error): void;
-  /** The stream ends and claude exits with `code`. */
-  exit(code?: number): void;
+  /** The stream ends and claude exits with `code`, or is ended by `signal`; see fakeTurn for how the stream reports a nonzero exit. */
+  exit(code?: number | null, signal?: NodeJS.Signals | null): void;
   readonly interrupts: number;
 }
 
-/** Stands in for the SDK's query(): spawns through the runner's hook the way the SDK does, then yields what the test pushes. */
+/**
+ * Stands in for the SDK's query(): spawns through the runner's hook the way the SDK does, then yields what the test pushes.
+ * Like the real SDK, its stream ends cleanly when claude exits 0, and otherwise throws once claude's exit has been emitted:
+ * "returned an error result" when the last record was an error result, else "process exited with code N" or "terminated by signal".
+ */
 function fakeTurn(child: FakeChild = fakeChild()): FakeTurn {
   const records: object[] = [];
+  let last: { type?: unknown; is_error?: unknown } | undefined;
   let wake: (() => void) | undefined;
   let ended = false;
   let failure: Error | undefined;
@@ -57,6 +62,13 @@ function fakeTurn(child: FakeChild = fakeChild()): FakeTurn {
   let options!: Options;
   let prompt!: AsyncIterator<SDKUserMessage>;
   const poke = (): void => { wake?.(); wake = undefined; };
+  child.once('exit', (code, signal) => {
+    if (code === 0 && !signal) return;
+    failure ??= new Error(last?.type === 'result' && last.is_error === true
+      ? 'Claude Code returned an error result: [ede_diagnostic] result_type=user'
+      : signal ? `Claude Code process terminated by signal ${signal}` : `Claude Code process exited with code ${code}`);
+    poke();
+  });
   const spawnProcess = vi.fn(() => child);
   const query: FakeTurn['query'] = (params) => {
     options = params.options;
@@ -78,10 +90,10 @@ function fakeTurn(child: FakeChild = fakeChild()): FakeTurn {
     query, spawnProcess, child,
     options: () => options,
     nextMessage: () => prompt.next(),
-    push: (record) => { records.push(record); poke(); },
+    push: (record) => { records.push(record); last = record; poke(); },
     end: () => { ended = true; poke(); },
     fail: (error) => { failure = error; poke(); },
-    exit: (code = 0) => { ended = true; poke(); child.finish(code); },
+    exit: (code = 0, signal = null) => { ended = true; poke(); child.finish(code, signal); },
     get interrupts() { return interrupts; },
   };
 }
@@ -236,15 +248,34 @@ describe('runClaudeTurn', () => {
     }
   });
 
-  test('ends a stopped turn as interrupted, not failed, when the SDK reports an error result and throws', async () => {
+  test('ends a stopped turn as interrupted, not failed, when claude exits nonzero after an error result and the SDK throws', async () => {
     const turn = fakeTurn();
-    const run = start(turn);
+    const rereadNative = vi.fn(async () => []);
+    const run = start(turn, { rereadNative });
     const interrupted = run.interrupt();
     turn.push({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'claude-session-1' });
-    turn.fail(new Error('Claude Code returned an error result: [ede_diagnostic] result_type=user'));
-    turn.child.finish(0);
+    turn.exit(1);
     await interrupted;
-    await expect(run.completion).resolves.toMatchObject({ exitCode: 0, signal: null });
+    await expect(run.completion).resolves.toEqual({ exitCode: 1, signal: null, interrupted: true });
+    // Once to find the turn's anchor, once for the final reconcile.
+    expect(rereadNative).toHaveBeenCalledTimes(2);
+  });
+
+  test('still fails a stopped turn that claude only ends when the runner SIGTERMs it', async () => {
+    vi.useFakeTimers();
+    try {
+      const turn = fakeTurn();
+      const run = start(turn);
+      const completion = run.completion.then((): undefined => undefined, (error: unknown): unknown => error);
+      const interrupted = run.interrupt();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(turn.child.signals).toEqual(['SIGTERM']);
+      turn.exit(null, 'SIGTERM');
+      await interrupted;
+      await expect(completion).resolves.toMatchObject({ message: 'Claude process terminated by SIGTERM' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('keeps publishing records that arrive after an interrupt', async () => {
@@ -256,20 +287,19 @@ describe('runClaudeTurn', () => {
       turn.push(userRecord('after', 'kept'));
       turn.exit(130);
       await interrupted;
-      const observed: NativeEvent[] = [];
-      await expect((async () => { for await (const event of run.events) observed.push(event); })()).rejects.toThrow('Claude process exited with code 130');
-      expect(observed.map((event) => event.nativeId)).toEqual(['after']);
+      await expect(run.completion).resolves.toMatchObject({ exitCode: 130, interrupted: true });
+      expect((await collect(run.events)).map((event) => event.nativeId)).toEqual(['after']);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test('still fails a turn whose stream breaks when nobody asked it to stop', async () => {
+  test('still fails a turn whose stream breaks after claude exited cleanly, when nobody asked it to stop', async () => {
     const turn = fakeTurn();
     const run = start(turn);
     const events = collect(run.events);
     turn.fail(new Error('token=private-value stream broke'));
-    turn.child.finish(1);
+    turn.child.finish(0);
     await expect(run.completion).rejects.toThrow('token=[redacted] stream broke');
     await expect(events).rejects.toThrow('token=[redacted] stream broke');
   });

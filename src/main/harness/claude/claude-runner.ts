@@ -20,7 +20,13 @@ export type SpawnClaudeProcess = (command: string, args: string[], options: Clau
 /** The SDK's query(), narrowed to what the runner uses, so tests can stand in for it. */
 export type ClaudeQuery = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => AsyncIterable<unknown> & { interrupt(): Promise<unknown> };
 
-export interface ClaudeRunCompletion { exitCode: number | null; signal: NodeJS.Signals | null; diagnostic?: string }
+export interface ClaudeRunCompletion {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  /** Fractal asked the turn to stop and claude ended it by exiting, whatever the exit code. */
+  interrupted?: boolean;
+  diagnostic?: string;
+}
 export interface ClaudeTurnRun {
   events: AsyncIterable<NativeEvent>;
   completion: Promise<ClaudeRunCompletion>;
@@ -132,10 +138,13 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
 
   const completion = (async (): Promise<ClaudeRunCompletion> => {
     await streamed;
-    // After a stop Fractal asked for, the SDK may report the cut-off turn as an error result or throw; neither is a failure.
     if (streamError && !interruptRequested) {
       await Promise.race([terminal, delay(0)]);
-      if (!(terminalValue?.error && isLaunchError(terminalValue.error))) {
+      // The SDK reports claude's nonzero exit or signal by throwing from the stream. That is the exit path's to report,
+      // with claude's stderr and the final re-read, so only a break claude did not cause stops here.
+      const exited = terminalValue && !terminalValue.error && (terminalValue.signal !== null || terminalValue.code !== 0);
+      const launchFailed = terminalValue?.error && isLaunchError(terminalValue.error);
+      if (!exited && !launchFailed) {
         await stopOwned();
         throw streamError;
       }
@@ -145,9 +154,11 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     await stderrDrain;
     for await (const event of asAsync(await options.rereadNative())) eventBuffer.publish(event);
     const combinedDiagnostic = diagnostic.value();
-    if (result.signal || result.code !== 0) throw new Error(`Claude process ${result.signal ? `terminated by ${result.signal}` : `exited with code ${result.code}`}${combinedDiagnostic ? `: ${combinedDiagnostic}` : ''}`);
+    // A stop Fractal asked for ends with claude exiting, whatever its code, and the SDK throws for it; only a signal (the runner's own SIGTERM) is a failure.
+    const interrupted = interruptRequested && !result.signal;
+    if (result.signal || (result.code !== 0 && !interrupted)) throw new Error(`Claude process ${result.signal ? `terminated by ${result.signal}` : `exited with code ${result.code}`}${combinedDiagnostic ? `: ${combinedDiagnostic}` : ''}`);
     eventBuffer.close();
-    return { exitCode: result.code, signal: result.signal, ...(combinedDiagnostic ? { diagnostic: combinedDiagnostic } : {}) };
+    return { exitCode: result.code, signal: result.signal, ...(interrupted ? { interrupted: true } : {}), ...(combinedDiagnostic ? { diagnostic: combinedDiagnostic } : {}) };
   })().catch((error: unknown) => {
     const safeError = sanitizedError(error);
     eventBuffer.fail(safeError);
