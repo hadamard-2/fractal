@@ -4,6 +4,8 @@
 
 A desktop client for coding agents. Currently a UI wrapper around existing agents; it may grow into an agent itself.
 
+Fractal drives the user's own installed agent CLIs and relies on whatever login and billing those CLIs already have. It never handles API keys, and it doesn't bundle or replace the CLIs.
+
 The reason it exists is **cognitive debt** — when an agent writes the code, the developer stops building a mental model of their own system, and the cost surfaces later when that model is needed and missing. Fractal's job is to keep the model alive while the agent works. Judge features against that, not against "does this look like a chat app."
 
 Three modes, three separate jobs:
