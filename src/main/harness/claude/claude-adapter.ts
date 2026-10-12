@@ -5,7 +5,7 @@ import { composePromptText } from '@/main/harness/attachment-block';
 import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from './claude-history';
 import { claudeAccessState, claudePermissionMode } from './claude-access';
 import { listClaudeModels } from './claude-models';
-import { createClaudePermissions, TURN_ENDED } from '@/main/harness/claude/claude-permissions';
+import { createClaudePermissions, TURN_ENDED } from './claude-permissions';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
 import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
@@ -88,7 +88,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       if (pending.has(request.id)) return Promise.resolve({ kind: 'deny', reason: 'Duplicate permission request' });
       const turnId = currentTurnId; queue.push(requestEvent(turnId, request));
       return new Promise<UserDecision>((resolve) => {
-        const onAbort = (): void => { if (pending.has(request.id)) settle(request.id, { kind: 'deny', reason: typeof signal.reason === 'string' ? signal.reason : 'Permission bridge closed' }); };
+        const onAbort = (): void => { if (pending.has(request.id)) settle(request.id, { kind: 'deny', reason: typeof signal.reason === 'string' ? signal.reason : TURN_ENDED }); };
         signal.addEventListener('abort', onAbort, { once: true });
         pending.set(request.id, { turnId, resolve, signalCleanup: () => signal.removeEventListener('abort', onAbort) });
       });

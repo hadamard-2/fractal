@@ -7,8 +7,7 @@ export const TURN_ENDED = 'Claude turn ended';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1_000;
 
-// passthrough, not strict: Claude Code adds fields over time (options already carry `preview`),
-// and an unknown field must not turn a question into an invalid request.
+// passthrough, not strict: a question with fields this module does not read must still reach the user rather than be denied as invalid.
 const QUESTION_INPUT = z.object({
   questions: z.array(z.object({
     question: z.string().min(1),

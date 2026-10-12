@@ -128,6 +128,13 @@ describe('normalizeClaudeRecord', () => {
     });
   });
 
+  test.each(['error_during_execution', 'error_max_turns', 'error_max_budget_usd', 'error_max_structured_output_retries'])('reads the %s result as a failed turn', (subtype) => {
+    expect(normalizeClaudeRecord({ type: 'result', uuid: 'ended', parentUuid: 'turn-1', subtype }, 4)).toEqual([
+      expect.objectContaining({ nativeType: 'result', payload: { kind: 'turn-finished', turnId: 'turn-1', status: 'failed' } }),
+    ]);
+    expect(normalizeClaudeRecord({ type: 'result', uuid: 'ended', parentUuid: 'turn-1', subtype: 'success' }, 4)[0]?.payload).toMatchObject({ status: 'completed' });
+  });
+
   test('keeps assistant and tool-result block events in source order and quarantines malformed text blocks', () => {
     const context = createClaudeNormalizationContext();
     const assistant = normalizeClaudeRecord({

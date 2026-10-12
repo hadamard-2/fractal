@@ -72,13 +72,14 @@ While a turn is actively running in a separately launched Codex process, open th
    - Ask Claude to perform that known approval-requiring operation: harmlessly create `claude-approval-fixture.txt` inside the temporary repository with non-sensitive disposable text. Exercise allow-once in Fractal. Do not approve deletion, network access, or any operation outside the temporary repository. If no approval is requested, record the approval check as `inconclusive`, recheck the installed CLI help/settings, safely configure the named operation to require approval, and retry; never count a no-request run as a pass.
    - If questions are supported, send a prompt that asks Claude to use `AskUserQuestion` for one harmless choice, answer it in Fractal, and confirm that the resolved question remains visible as an audit entry.
    - If either capability is unsupported, confirm that Fractal reports that exact capability gap and does not offer a bypass. Record the capability as `unsupported`; do not try to manufacture the missing interaction.
-7. Interrupt and continue: send a prompt that takes a while, press Stop while Claude is working, and confirm the turn ends as interrupted, not failed. Send a follow-up in the same conversation and confirm it continues the same native session.
-8. Conversation from before the SDK switch: open a Claude conversation last continued by a Fractal build before the Agent SDK change, send a turn, and confirm it continues the same native session with the history shown once.
-9. Repeated text: send the same short prompt (for example `continue`) twice in a row, and confirm each reply appears under its own turn.
-10. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
-11. Exit Fractal so it no longer owns the run, then restore any permission configuration changed for the approval check.
-12. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
-13. Record only the safe metadata listed above.
+7. Default prompt: ask Claude, in Fractal, for its current working directory, platform and git branch; confirm it answers with the temporary repository's path, this machine's platform and the repository's branch without running a tool. A reply that cannot name them means Claude Code's default system prompt is missing.
+8. Interrupt and continue: send a prompt that takes a while, press Stop while Claude is working, and confirm the turn ends as interrupted, not failed. Send a follow-up in the same conversation and confirm it continues the same native session.
+9. Conversation from before the SDK switch: open a Claude conversation last continued by a Fractal build before the Agent SDK change, send a turn, and confirm it continues the same native session with the history shown once.
+10. Repeated text: send the same short prompt (for example `continue`) twice in a row, and confirm each reply appears under its own turn.
+11. Wait until Fractal reports the conversation as idle. Confirm that each prompt and response appears once.
+12. Exit Fractal so it no longer owns the run, then restore any permission configuration changed for the approval check.
+13. From the same temporary repository, run `claude --resume <native-session-id>`. Confirm that the native CLI shows the original native turn and every completed Fractal turn exactly once, then send no further work and exit.
+14. Record only the safe metadata listed above.
 
 ### Claude external-ownership check
 

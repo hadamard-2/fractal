@@ -99,9 +99,11 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const sdkOptions: Options = {
     pathToClaudeCodeExecutable: options.executable,
     cwd: options.ref.projectPath,
+    // Without this the SDK sends an empty system prompt, and the turn runs without Claude Code's own instructions and context.
+    systemPrompt: { type: 'preset', preset: 'claude_code' },
     ...(options.newSession ? { sessionId: options.ref.nativeSessionId } : { resume: options.ref.nativeSessionId }),
     ...(options.model ? { model: options.model } : {}),
-    // Passed through as claude's --effort and --permission-mode; claude validates the values.
+    // Fractal passes the user's choice through unchanged.
     ...(options.effort ? { effort: options.effort as Options['effort'] } : {}),
     ...(options.permissionMode ? { permissionMode: options.permissionMode as Options['permissionMode'] } : {}),
     includePartialMessages: true,
@@ -109,7 +111,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     spawnClaudeCodeProcess,
   };
   // The SDK spawns claude inside this call, through spawnClaudeCodeProcess.
-  const turn = (options.query ?? sdkQuery)({ prompt: input.messages(), options: sdkOptions });
+  const turn = keepingSdkVersionOut(() => (options.query ?? sdkQuery)({ prompt: input.messages(), options: sdkOptions }));
 
   /** SIGINT, then SIGTERM two seconds later if claude is still running: for a turn whose stream broke. */
   let stopping: Promise<void> | undefined;
@@ -132,7 +134,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
 
   const eventBuffer = new ReplayEventBuffer();
   let streamError: Error | undefined;
-  const streamed = drainRecords(turn, eventBuffer, options.rereadNative, turnId, options.ref.nativeSessionId, () => input.close())
+  const streamed = drainRecords(turn, eventBuffer, options.rereadNative, turnId, options.ref.nativeSessionId, () => input.close(), () => interruptRequested)
     .catch((error: unknown) => { streamError = sanitizedError(error); })
     .finally(() => input.close());
 
@@ -210,7 +212,24 @@ function spawnClaude(command: string, args: string[], options: ClaudeSpawnOption
   return spawn(command, args, options) as ChildProcessWithoutNullStreams;
 }
 
-async function drainRecords(records: AsyncIterable<unknown>, events: ReplayEventBuffer, rereadNative: RunClaudeTurnOptions['rereadNative'], turnId: string, sessionId: string, onResult: () => void): Promise<void> {
+const SDK_VERSION_VARIABLE = 'CLAUDE_AGENT_SDK_VERSION';
+
+/**
+ * query() sets CLAUDE_AGENT_SDK_VERSION on the process it runs in. The claude it
+ * spawns has its own copy of the environment by the time it returns; Fractal's
+ * other children, such as terminals, copy process.env and must not inherit it.
+ */
+function keepingSdkVersionOut<T>(run: () => T): T {
+  const before = process.env[SDK_VERSION_VARIABLE];
+  try {
+    return run();
+  } finally {
+    if (before === undefined) delete process.env[SDK_VERSION_VARIABLE];
+    else process.env[SDK_VERSION_VARIABLE] = before;
+  }
+}
+
+async function drainRecords(records: AsyncIterable<unknown>, events: ReplayEventBuffer, rereadNative: RunClaudeTurnOptions['rereadNative'], turnId: string, sessionId: string, onResult: () => void, stopRequested: () => boolean): Promise<void> {
   const context = createClaudeNormalizationContext();
   let ordinal = 0;
   let anchoredTurnId: string | undefined;
@@ -230,9 +249,12 @@ async function drainRecords(records: AsyncIterable<unknown>, events: ReplayEvent
           }
         } catch { /* The native user record may not be persisted yet. */ }
       }
+      // Claude ends a stopped turn with an error result, which says nothing of the stop; only Fractal knows it asked.
+      // A turn that finished before the stop took effect keeps its own result.
+      const stopped = record.type === 'result' && stopRequested() && record.subtype !== 'success';
       const normalized = record.type === 'stream_event'
         ? normalizeClaudeStreamRecord(record, ordinal++, context, anchoredTurnId ?? '')
-        : normalizeClaudeRecord({ ...record, parentUuid: anchoredTurnId }, ordinal++, context);
+        : normalizeClaudeRecord({ ...record, ...(stopped ? { subtype: 'interrupted' } : {}), parentUuid: anchoredTurnId }, ordinal++, context);
       if (anchoredTurnId) for (const event of normalized) events.publish(event);
       continue;
     }

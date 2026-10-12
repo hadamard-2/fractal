@@ -579,10 +579,12 @@ function textOf(part: Record<string, unknown> | undefined): string | undefined {
   return undefined;
 }
 
+const FAILED_RESULT_SUBTYPES = new Set(['error', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd', 'error_max_structured_output_retries']);
+
 function resultStatus(subtype: unknown): 'completed' | 'interrupted' | 'failed' | undefined {
   if (subtype === 'success') return 'completed';
-  if (subtype === 'error') return 'failed';
   if (subtype === 'interrupted') return 'interrupted';
+  if (typeof subtype === 'string' && FAILED_RESULT_SUBTYPES.has(subtype)) return 'failed';
   return undefined;
 }
 

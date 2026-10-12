@@ -126,6 +126,28 @@ describe('runClaudeTurn', () => {
     expect(turn.options()).not.toHaveProperty('sessionId');
   });
 
+  test('asks for Claude Code\'s own system prompt, since the SDK sends an empty one when none is given', async () => {
+    const turn = fakeTurn();
+    const run = start(turn);
+    turn.exit(); await run.completion;
+    expect(turn.options().systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  test.each([undefined, '0.0.1'])('leaves CLAUDE_AGENT_SDK_VERSION in Fractal\'s environment as it was (before: %s), though query() sets it', async (before) => {
+    const saved = process.env.CLAUDE_AGENT_SDK_VERSION;
+    const restore = (value: string | undefined): void => { if (value === undefined) delete process.env.CLAUDE_AGENT_SDK_VERSION; else process.env.CLAUDE_AGENT_SDK_VERSION = value; };
+    try {
+      restore(before);
+      const turn = fakeTurn();
+      const run = start(turn, { query: (params) => { process.env.CLAUDE_AGENT_SDK_VERSION = '9.9.9'; return turn.query(params); } });
+      expect(process.env.CLAUDE_AGENT_SDK_VERSION).toBe(before);
+      turn.exit(); await run.completion;
+      expect(process.env.CLAUDE_AGENT_SDK_VERSION).toBe(before);
+    } finally {
+      restore(saved);
+    }
+  });
+
   test('passes the bare name claude through unchanged, never the SDK\'s own binary', async () => {
     const turn = fakeTurn();
     const run = start(turn);
@@ -259,6 +281,30 @@ describe('runClaudeTurn', () => {
     await expect(run.completion).resolves.toEqual({ exitCode: 1, signal: null, interrupted: true });
     // Once to find the turn's anchor, once for the final reconcile.
     expect(rereadNative).toHaveBeenCalledTimes(2);
+  });
+
+  test('publishes the result of a stopped turn as interrupted, not as an unsupported record', async () => {
+    const turn = fakeTurn();
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'turn-1', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-1', userMessageId: 'turn-1', text: 'go' } };
+    const run = start(turn, { turnId: 'turn-1', rereadNative: async () => [anchor] });
+    const interrupted = run.interrupt();
+    turn.push({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'claude-session-1' });
+    turn.exit(1);
+    await interrupted;
+    const events = await collect(run.events);
+    expect(events.map((event) => event.payload.kind)).toEqual(['turn-started', 'turn-finished']);
+    expect(events.at(-1)?.payload).toMatchObject({ turnId: 'turn-1', status: 'interrupted' });
+  });
+
+  test('leaves a turn that finished before the stop took effect as completed', async () => {
+    const turn = fakeTurn();
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'turn-1', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-1', userMessageId: 'turn-1', text: 'go' } };
+    const run = start(turn, { turnId: 'turn-1', rereadNative: async () => [anchor] });
+    const interrupted = run.interrupt();
+    turn.push({ type: 'result', subtype: 'success', is_error: false, session_id: 'claude-session-1' });
+    turn.exit();
+    await interrupted;
+    expect((await collect(run.events)).at(-1)?.payload).toMatchObject({ kind: 'turn-finished', status: 'completed' });
   });
 
   test('still fails a stopped turn that claude only ends when the runner SIGTERMs it', async () => {
