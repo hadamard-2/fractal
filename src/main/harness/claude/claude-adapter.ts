@@ -28,6 +28,7 @@ interface ClaudeAdapterDependencies {
   rereadNative?: (ref: ConversationRef) => Promise<NativeEvent[]>;
   ownedProcesses?: ClaudeOwnedProcessRegistry;
   listModels?: () => Promise<AgentModel[]>;
+  watchdog?: RunClaudeTurnOptions['watchdog'];
 }
 
 export class ClaudeAdapter implements HarnessAdapter {
@@ -110,7 +111,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const permissionMode = claudePermissionMode(prompt.access);
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(bridge ? { permissionBridge: bridge } : {}), ...(newSession ? { newSession: true } : {}), ...(this.dependencies.watchdog ? { watchdog: this.dependencies.watchdog } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;

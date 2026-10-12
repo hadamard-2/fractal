@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { executableNotFoundMessage } from '@/main/harness/executable';
+import type { ProcessWatchdog } from '@/main/process-watchdog';
 import { app } from 'electron';
 import type { InitializeParams, InitializeResponse, ServerNotification, ServerRequest } from '@/main/harness/codex/generated';
 import type { ThreadListParams } from '@/main/harness/codex/generated/v2/ThreadListParams';
@@ -22,6 +23,21 @@ import type { TurnStartResponse } from '@/main/harness/codex/generated/v2/TurnSt
 import { JsonRpcPeer, type CodexProcess, type JsonRpcNotification, type JsonRpcServerRequest, type Unsubscribe } from '@/main/harness/codex/json-rpc-peer';
 
 export type { CodexProcess } from '@/main/harness/codex/json-rpc-peer';
+
+/**
+ * Finds and ends the commands Codex runs. Codex starts each command in its own
+ * session, and neither the server exiting nor `turn/interrupt` stops one, so
+ * the server's process tree is the only handle on them.
+ */
+export interface CodexCommandReaper {
+  /** Every process below `pid` right now. */
+  descendants(pid: number): Promise<number[]>;
+  kill(pid: number, signal: NodeJS.Signals): void;
+  /** Kept told about the server and its commands, so they end if Fractal dies. */
+  watchdog?: Pick<ProcessWatchdog, 'watch' | 'unwatch'>;
+  /** How often the commands are re-read for the watchdog; a command younger than this escapes a crash. */
+  pollMs?: number;
+}
 
 export interface CodexRequestMap {
   initialize: { params: InitializeParams; result: InitializeResponse };
@@ -54,11 +70,14 @@ export class CodexAppServer {
   private readonly statusListeners = new Set<(status: CodexAppServerStatus) => void>();
   status: CodexAppServerStatus = { availability: 'unavailable', message: 'Codex App Server has not started' };
 
-  private constructor(private readonly spawnProcess: () => CodexProcess) {}
+  private poll: ReturnType<typeof setInterval> | undefined;
+  private readonly watchedCommands = new Set<number>();
 
-  static async start(spawnProcess: () => CodexProcess = codexSpawner('codex'), signal?: AbortSignal): Promise<CodexAppServer> {
+  private constructor(private readonly spawnProcess: () => CodexProcess, private readonly reaper?: CodexCommandReaper) {}
+
+  static async start(spawnProcess: () => CodexProcess = codexSpawner('codex'), signal?: AbortSignal, reaper?: CodexCommandReaper): Promise<CodexAppServer> {
     if (signal?.aborted) throw new Error(STARTUP_CANCELLED);
-    const server = new CodexAppServer(spawnProcess);
+    const server = new CodexAppServer(spawnProcess, reaper);
     if (!signal) { await server.connect(); return server; }
     let rejectCancelled!: (error: Error) => void;
     const cancelled = new Promise<never>((_resolve, reject) => { rejectCancelled = reject; });
@@ -121,10 +140,12 @@ export class CodexAppServer {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.reaper) await this.endCommands();
     this.stop('Codex App Server has been disposed');
   }
 
   private async restartInternal(): Promise<void> {
+    if (this.reaper) await this.endCommands();
     this.stop('Codex App Server is restarting');
     await this.connect();
   }
@@ -134,6 +155,7 @@ export class CodexAppServer {
     try {
       const process = this.spawnProcess();
       this.process = process;
+      this.watchCommands(process);
       // A spawn implementation can trigger cancellation before returning.
       if (this.disposed) { this.stop(STARTUP_CANCELLED); return; }
       const peer = new JsonRpcPeer(process);
@@ -169,8 +191,62 @@ export class CodexAppServer {
     this.peer = undefined;
     this.process = undefined;
     peer?.close(new Error(message));
+    this.forgetCommands(process);
     if (process) terminateProcess(process);
     this.setStatus({ availability: 'unavailable', message });
+  }
+
+  /** Keeps the watchdog told about the server and the commands below it while it runs. */
+  private watchCommands(process: CodexProcess): void {
+    const reaper = this.reaper;
+    const pid = process.pid;
+    if (!reaper || !pid) return;
+    reaper.watchdog?.watch(pid, 'SIGTERM');
+    this.poll = setInterval(() => { void this.refreshCommands(process, pid); }, reaper.pollMs ?? 2_000);
+  }
+
+  private async refreshCommands(process: CodexProcess, pid: number): Promise<void> {
+    const reaper = this.reaper;
+    if (!reaper) return;
+    let current: number[];
+    try { current = await reaper.descendants(pid); } catch { return; }
+    if (this.process !== process) return;
+    const watchdog = reaper.watchdog;
+    const live = new Set(current);
+    for (const command of live) {
+      if (this.watchedCommands.has(command)) continue;
+      this.watchedCommands.add(command);
+      watchdog?.watch(command, 'SIGTERM');
+    }
+    for (const command of [...this.watchedCommands]) {
+      if (live.has(command)) continue;
+      this.watchedCommands.delete(command);
+      watchdog?.unwatch(command);
+    }
+  }
+
+  /** Ends whatever runs below the live server, which stopping the server alone would orphan. */
+  private async endCommands(): Promise<void> {
+    const pid = this.process?.pid;
+    if (!this.reaper || !pid) return;
+    let commands: number[];
+    try { commands = await this.reaper.descendants(pid); } catch { commands = [...this.watchedCommands]; }
+    this.killCommands(commands);
+  }
+
+  private killCommands(commands: Iterable<number>): void {
+    for (const command of commands) {
+      try { this.reaper?.kill(command, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  }
+
+  private forgetCommands(process: CodexProcess | undefined): void {
+    clearInterval(this.poll);
+    this.poll = undefined;
+    const watchdog = this.reaper?.watchdog;
+    for (const command of this.watchedCommands) watchdog?.unwatch(command);
+    this.watchedCommands.clear();
+    if (process?.pid) watchdog?.unwatch(process.pid);
   }
 
   private markClosed(peer: JsonRpcPeer, error: Error): void {
@@ -179,6 +255,9 @@ export class CodexAppServer {
     const process = this.process;
     this.process = undefined;
     const exited = error.message.startsWith('Codex App Server exited');
+    // The tree is gone with the server, so the last poll's commands are all that can still be ended.
+    this.killCommands(this.watchedCommands);
+    this.forgetCommands(process);
     if (process && !exited) terminateProcess(process);
     this.setStatus({ availability: 'unavailable', message: exited ? error.message : unavailableMessage(error) });
     // A missing executable won't appear within the retry window; retrying

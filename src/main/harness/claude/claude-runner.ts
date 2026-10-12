@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 import { createClaudeNormalizationContext, normalizeClaudeRecord, normalizeClaudeStreamRecord } from '@/main/harness/claude/claude-normalizer';
 import { nativeEventKey, type NativeEvent } from '@/main/harness/reconciler';
+import type { ProcessWatchdog } from '@/main/process-watchdog';
 import type { ConversationImage, ConversationRef } from '@/shared/conversation-contract';
 
 export interface ClaudeChildProcess {
@@ -40,6 +41,8 @@ export interface RunClaudeTurnOptions {
   effort?: string;
   /** Passed as --permission-mode; absent leaves Claude on its configured default. */
   permissionMode?: string;
+  /** Interrupts claude if Fractal dies mid-turn; claude ends the commands it started when interrupted. */
+  watchdog?: Pick<ProcessWatchdog, 'watch' | 'unwatch'>;
   rereadNative(): Promise<NativeEvent[] | AsyncIterable<NativeEvent>>;
 }
 
@@ -62,6 +65,8 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const child = (options.spawnProcess ?? spawnClaude)(options.executable, args, {
     cwd: options.ref.projectPath, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
   });
+  const watchedPid = options.watchdog && child.pid ? child.pid : undefined;
+  if (watchedPid !== undefined) options.watchdog?.watch(watchedPid, 'SIGINT');
   // A process that exits or fails to launch before reading stdin reports through close/error, not here.
   child.stdin.on('error', () => undefined);
   child.stdin.end(claudeStdinMessage(options.prompt));
@@ -72,6 +77,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
   const settleTerminal = (value: Terminal): void => {
     if (terminalValue) return;
     terminalValue = value;
+    if (watchedPid !== undefined) options.watchdog?.unwatch(watchedPid);
     resolveTerminal(value);
   };
   child.once('close', (code, signal) => settleTerminal({ code, signal }));

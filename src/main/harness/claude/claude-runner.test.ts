@@ -21,6 +21,15 @@ function fakeProcess(): ClaudeChildProcess & { stdout: PassThrough; stderr: Pass
   });
 }
 
+function recordingWatchdog() {
+  const calls: unknown[][] = [];
+  return {
+    calls,
+    watch(pid: number, signal: string) { calls.push(['watch', pid, signal]); },
+    unwatch(pid: number) { calls.push(['unwatch', pid]); },
+  };
+}
+
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> { const values: T[] = []; for await (const value of iterable) values.push(value); return values; }
 
 function stdinText(child: { stdin: PassThrough }): string { return child.stdin.read()?.toString() ?? ''; }
@@ -106,6 +115,33 @@ describe('runClaudeTurn', () => {
     await vi.advanceTimersByTimeAsync(1); expect(child.signals).toEqual(['SIGINT', 'SIGTERM']);
     child.finish(); await interrupted; await collect(run.events);
     vi.useRealTimers();
+  });
+
+  test('has the watchdog interrupt claude if Fractal dies mid-turn, and withdraws that once claude exits', async () => {
+    const watchdog = recordingWatchdog();
+    const child = fakeProcess();
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, watchdog, rereadNative: async () => [] });
+    expect(watchdog.calls).toEqual([['watch', 123, 'SIGINT']]);
+    child.finish(); await run.completion;
+    expect(watchdog.calls).toEqual([['watch', 123, 'SIGINT'], ['unwatch', 123]]);
+  });
+
+  test('withdraws the watch when the process fails after launch', async () => {
+    const watchdog = recordingWatchdog();
+    const child = fakeProcess();
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'claude', spawnProcess: () => child, watchdog, rereadNative: async () => [] });
+    child.fail(new Error('pipe broke'));
+    await run.completion.catch((): void => undefined);
+    expect(watchdog.calls).toEqual([['watch', 123, 'SIGINT'], ['unwatch', 123]]);
+  });
+
+  test('does not watch a process that never got a pid', async () => {
+    const watchdog = recordingWatchdog();
+    const child = Object.assign(fakeProcess(), { pid: undefined });
+    const run = runClaudeTurn({ ref, prompt: { text: 'go' }, executable: 'missing', spawnProcess: () => child, watchdog, rereadNative: async () => [] });
+    child.fail(Object.assign(new Error('spawn missing ENOENT'), { code: 'ENOENT' }));
+    await run.completion.catch((): void => undefined);
+    expect(watchdog.calls).toEqual([]);
   });
 
   test('authoritative native reread replaces overlapping process observations', async () => {

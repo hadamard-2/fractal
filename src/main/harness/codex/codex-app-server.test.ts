@@ -9,7 +9,9 @@ class FakeCodexProcess extends EventEmitter implements CodexProcess {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   readonly written: string[] = [];
+  readonly pid = 4242;
   killCalls = 0;
+  onKill?: () => void;
   private nextWriteError: Error | undefined;
   private holdNextWrite = false;
   private heldWrite: ((error?: Error | null) => void) | undefined;
@@ -33,6 +35,7 @@ class FakeCodexProcess extends EventEmitter implements CodexProcess {
 
   kill(): boolean {
     this.killCalls += 1;
+    this.onKill?.();
     return true;
   }
 
@@ -433,6 +436,104 @@ describe('CodexAppServer', () => {
     const server = await starting;
 
     expect(server.status).toMatchObject({ availability: 'unavailable', message: expect.stringContaining("Couldn't find \"codex\"") });
+    expect(process.killCalls).toBe(1);
+  });
+});
+
+describe('CodexAppServer commands', () => {
+  // Codex starts each command in its own session, so neither its exit nor a
+  // signal to its process group reaches them. These tests use a reaper double
+  // standing in for the process table and kill(2).
+  function reaper(trees: number[][], log: string[] = []) {
+    const watchdog = { watch: vi.fn(), unwatch: vi.fn() };
+    let call = 0;
+    return {
+      log, watchdog,
+      descendants: vi.fn(async (pid: number) => { log.push(`descendants ${pid}`); return trees[Math.min(call++, trees.length - 1)]; }),
+      kill: vi.fn((pid: number, signal: NodeJS.Signals) => { log.push(`kill ${pid} ${signal}`); }),
+      pollMs: 2_000,
+    };
+  }
+
+  async function startWith(reap: ReturnType<typeof reaper>, process = new FakeCodexProcess()) {
+    const starting = CodexAppServer.start(() => process, undefined, reap);
+    initialize(process);
+    return { server: await starting, process };
+  }
+
+  test('keeps the watchdog told about the server and every command below it, so they stop if Fractal dies', async () => {
+    vi.useFakeTimers();
+    try {
+      const reap = reaper([[], [501, 502], [502]]);
+      await startWith(reap);
+      expect(reap.watchdog.watch.mock.calls).toEqual([[4242, 'SIGTERM']]);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(reap.watchdog.watch.mock.calls).toEqual([[4242, 'SIGTERM'], [501, 'SIGTERM'], [502, 'SIGTERM']]);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(reap.watchdog.unwatch.mock.calls).toEqual([[501]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('terminates the commands still running under the server before stopping it on dispose', async () => {
+    const reap = reaper([[601, 602]]);
+    const { server, process } = await startWith(reap);
+    process.onKill = () => reap.log.push('server');
+    reap.log.length = 0;
+
+    await server.dispose();
+
+    expect(reap.log).toEqual(['descendants 4242', 'kill 601 SIGTERM', 'kill 602 SIGTERM', 'server']);
+    expect(reap.watchdog.unwatch.mock.calls.map(([pid]) => pid).sort()).toEqual([4242]);
+  });
+
+  test('terminates the old server\'s commands before a restart replaces it', async () => {
+    const reap = reaper([[701]]);
+    const first = new FakeCodexProcess();
+    const second = new FakeCodexProcess();
+    first.onKill = () => reap.log.push('first server');
+    const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValue(second);
+    const starting = CodexAppServer.start(spawn, undefined, reap);
+    initialize(first);
+    const server = await starting;
+    reap.log.length = 0;
+
+    const restarting = server.restart();
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+    initialize(second);
+    await restarting;
+
+    expect(reap.log.slice(0, 3)).toEqual(['descendants 4242', 'kill 701 SIGTERM', 'first server']);
+  });
+
+  test('ends the commands it knew about when the server exits on its own', async () => {
+    vi.useFakeTimers();
+    try {
+      const reap = reaper([[801]]);
+      const { server, process } = await startWith(reap);
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      process.exit(1);
+
+      expect(reap.kill.mock.calls).toEqual([[801, 'SIGTERM']]);
+      expect(reap.watchdog.unwatch.mock.calls.map(([pid]) => pid).sort()).toEqual([4242, 801]);
+      await server.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('still stops the server when the process table cannot be read', async () => {
+    const reap = reaper([[]]);
+    const { server, process } = await startWith(reap);
+    reap.descendants.mockRejectedValueOnce(new Error('ps failed'));
+
+    await server.dispose();
+
     expect(process.killCalls).toBe(1);
   });
 });

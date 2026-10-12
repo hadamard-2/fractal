@@ -1,6 +1,7 @@
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 
 export interface CodexProcess {
+  readonly pid?: number;
   stdin: NodeJS.WritableStream;
   stdout: NodeJS.ReadableStream;
   stderr: NodeJS.ReadableStream;

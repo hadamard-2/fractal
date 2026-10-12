@@ -33,6 +33,15 @@ describe('Claude adapter', () => {
     await run.dispose();
   });
 
+  test('hands its watchdog to every turn', async () => {
+    const watchdog = { watch: vi.fn(), unwatch: vi.fn() };
+    const runTurn = vi.fn<(options: RunClaudeTurnOptions) => ClaudeTurnRun>(() => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
+    const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn, watchdog });
+    const run = await adapter.continueConversation(ref, { text: 'Go' });
+    expect(runTurn.mock.calls[0][0].watchdog).toBe(watchdog);
+    await run.dispose();
+  });
+
   test('hands the prompt access to the runner as a permission mode', async () => {
     const runTurn = vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
     const adapter = new ClaudeAdapter(root, { realpath, probe: async () => ({ ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } }), runtime: async () => 'idle', runTurn });

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
+  watchdog: { watch: (): void => undefined, unwatch: (): void => undefined },
   events: [] as string[], windows: [] as Array<{ options: { webPreferences: Record<string, unknown> }; loadFile: ReturnType<typeof vi.fn> }>,
   app: undefined as unknown as EventEmitter & { quit: ReturnType<typeof vi.fn> },
   start: vi.fn(), disposeServer: vi.fn(async () => undefined), disposeService: vi.fn(async () => undefined),
@@ -10,7 +11,7 @@ const state = vi.hoisted(() => ({
   disposeTerminalService: vi.fn(() => { state.events.push('terminal-service-dispose'); }),
   resolveShell: vi.fn(), settings: { agentExecutables: { claude: '', codex: '' } },
   agentEnvironment: undefined as undefined | (() => Promise<unknown>),
-  claudeDependencies: undefined as undefined | { executable?: string; probe?: () => Promise<{ message?: string }> },
+  claudeDependencies: undefined as undefined | { executable?: string; watchdog?: unknown; probe?: () => Promise<{ message?: string }> },
   fetchCatalogs: vi.fn(async () => undefined),
   registerFiles: vi.fn(() => ({ dispose: () => { state.events.push('files-ipc-dispose'); } })),
   disposeFileWatches: vi.fn(() => { state.events.push('file-watches-dispose'); }),
@@ -44,6 +45,7 @@ vi.mock('@/main/agent-ipc', () => ({ registerConversationIpc: state.register, di
 vi.mock('@/main/terminal-ipc', () => ({ registerTerminalIpc: state.registerTerminal }));
 vi.mock('@/main/terminal-service', () => ({ TerminalService: class { dispose = state.disposeTerminalService; } }));
 vi.mock('@/main/terminal-pty', () => ({ createNativePty: vi.fn() }));
+vi.mock('@/main/process-watchdog', () => ({ startProcessWatchdog: () => state.watchdog }));
 vi.mock('@/main/harness/codex/codex-app-server', () => ({ CodexAppServer: { start: state.start }, codexSpawner: (executable: string) => `spawn ${executable}` }));
 vi.mock('@/main/conversation-service', () => ({ ConversationService: class { dispose = state.disposeService; constructor() { state.events.push('service'); } } }));
 vi.mock('@/main/model-choices', () => ({ ModelChoices: class { fetchCatalogs = state.fetchCatalogs; } }));
@@ -156,9 +158,19 @@ describe('main agent environment', () => {
     state.start.mockResolvedValue({ dispose: state.disposeServer });
     await import('@/main'); state.app.emit('ready');
     await vi.waitFor(() => expect(state.claudeDependencies).toBeDefined());
-    expect(state.start).toHaveBeenCalledWith('spawn codex', expect.anything());
+    expect(state.start).toHaveBeenCalledWith('spawn codex', expect.anything(), expect.anything());
     expect(state.claudeDependencies?.executable).toBe('/nonexistent/fractal-claude');
     await expect(state.claudeDependencies?.probe?.()).resolves.toMatchObject({ message: "Couldn't find /nonexistent/fractal-claude. Check its location in Settings." });
+  });
+
+  test('gives both agents the one process watchdog, and Codex a way to find and end its commands', async () => {
+    state.start.mockResolvedValue({ dispose: state.disposeServer });
+    await import('@/main'); state.app.emit('ready');
+    await vi.waitFor(() => expect(state.claudeDependencies).toBeDefined());
+    expect(state.claudeDependencies?.watchdog).toBe(state.watchdog);
+    const commands = state.start.mock.calls[0][2];
+    expect(commands.watchdog).toBe(state.watchdog);
+    await expect(commands.descendants(process.pid)).resolves.toEqual(expect.any(Array));
   });
 
   test('quitting during the shell lookup never starts Codex', async () => {

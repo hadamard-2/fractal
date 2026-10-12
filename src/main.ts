@@ -6,7 +6,7 @@ import started from 'electron-squirrel-startup';
 import { registerConversationIpc, disposeConversationIpc } from '@/main/agent-ipc';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
-import { CodexAppServer, codexSpawner } from '@/main/harness/codex/codex-app-server';
+import { CodexAppServer, codexSpawner, type CodexCommandReaper } from '@/main/harness/codex/codex-app-server';
 import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
 import { defaultClaudeExec, detectClaudeRuntime, probeClaude } from '@/main/harness/claude/claude-probe';
@@ -24,6 +24,8 @@ import { ModelChoiceStore } from '@/main/model-choice-store';
 import { ModelChoices } from '@/main/model-choices';
 import { registerModelIpc } from '@/main/model-ipc';
 import { registerSettingsIpc } from '@/main/settings-ipc';
+import { startProcessWatchdog } from '@/main/process-watchdog';
+import { descendantPids, readProcessTable } from '@/main/process-tree';
 import { mergeSearchPath, resolveLoginShellPath } from '@/main/shell-environment';
 import { registerTerminalIpc } from '@/main/terminal-ipc';
 import { TerminalService } from '@/main/terminal-service';
@@ -209,7 +211,14 @@ app.on('ready', () => {
     settleLaunchExecutables(agentExecutables);
     const claudeExecutable = configuredExecutable(agentExecutables.claude, 'claude', homedir());
     const codexExecutable = configuredExecutable(agentExecutables.codex, 'codex', homedir());
-    codexServer = await CodexAppServer.start(codexSpawner(codexExecutable), conversationStartupController.signal);
+    // Ends the agents' processes if Fractal dies without running its own stop paths.
+    const watchdog = startProcessWatchdog();
+    const codexCommands: CodexCommandReaper | undefined = process.platform === 'win32' ? undefined : {
+      descendants: async (pid) => descendantPids(pid, await readProcessTable()),
+      kill: (pid, signal) => process.kill(pid, signal),
+      ...(watchdog ? { watchdog } : {}),
+    };
+    codexServer = await CodexAppServer.start(codexSpawner(codexExecutable), conversationStartupController.signal, codexCommands);
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
@@ -219,6 +228,7 @@ app.on('ready', () => {
       tempDir: app.getPath('temp'),
       ownedProcesses: claudeOwnedProcesses,
       executable: claudeExecutable,
+      ...(watchdog ? { watchdog } : {}),
       probe: () => probeClaude(defaultClaudeExec, claudeExecutable),
       runtime: (ref) => detectClaudeRuntime(ref, { hasOwnedProcess: (candidate) => claudeOwnedProcesses.has(candidate), exec: defaultClaudeExec, executable: claudeExecutable }),
     });
