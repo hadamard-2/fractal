@@ -84,6 +84,15 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
 }
 
 describe('Codex read adapter', () => {
+  test('reports the server\'s version and warns when it is older than the tested floor', async () => {
+    const server = createFakeAppServer();
+    Object.assign(server.status, { userAgent: 'fractal/0.160.0 (Ubuntu 26.4.0; x86_64)' });
+    const adapter = new CodexAdapter(server as never, { realpath: async (input: string) => input });
+    await expect(adapter.probe()).resolves.toMatchObject({
+      availability: 'available', version: 'fractal/0.160.0 (Ubuntu 26.4.0; x86_64)', warning: expect.stringMatching(/^Codex 0\.160\.0 is older than/),
+    });
+  });
+
   test('paginates active threads in native order and maps stable summary fields', async () => {
     const server = createFakeAppServer();
     const summaries = await new CodexAdapter(server as never).listConversations();

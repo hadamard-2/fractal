@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises';
+import { versionWarning } from '@/main/harness/version-floor';
 import type { CodexAppServer, CodexRequestMap } from '@/main/harness/codex/codex-app-server';
 import { createCodexLiveNormalizationContext, normalizeCodexNotification, normalizeCodexServerRequest, normalizeCodexThread } from '@/main/harness/codex/codex-normalizer';
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
@@ -33,7 +34,12 @@ export class CodexAdapter implements HarnessAdapter {
   constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath } = {}) {}
 
   async probe(): Promise<HarnessStatus> {
-    return { provider: 'codex', availability: this.server.status.availability, ...(this.server.status.message ? { message: this.server.status.message } : {}), capabilities: this.capabilities() };
+    const { availability, message, userAgent } = this.server.status;
+    const warning = availability === 'available' ? versionWarning('codex', userAgent) : undefined;
+    return {
+      provider: 'codex', availability, ...(message ? { message } : {}), ...(userAgent ? { version: userAgent } : {}), ...(warning ? { warning } : {}),
+      capabilities: this.capabilities(),
+    };
   }
 
   capabilities(): HarnessCapabilities { return CAPABILITIES; }

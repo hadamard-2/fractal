@@ -55,6 +55,8 @@ export interface CodexRequestMap {
 export interface CodexAppServerStatus {
   availability: 'available' | 'unavailable';
   message?: string;
+  /** What the running server reports at initialize, e.g. `fractal/0.162.1 (Ubuntu 26.4.0; x86_64)`; its first version is the server's. */
+  userAgent?: string;
 }
 
 const STARTUP_CANCELLED = 'Codex App Server startup cancelled';
@@ -168,7 +170,7 @@ export class CodexAppServer {
         if (this.peer === peer && !this.disposed) this.forwardServerRequest(request);
       });
 
-      await peer.request<InitializeResponse>('initialize', {
+      const initialized = await peer.request<InitializeResponse>('initialize', {
         clientInfo: { name: 'fractal', title: 'Fractal', version: app.getVersion() },
         capabilities: null,
       });
@@ -178,7 +180,7 @@ export class CodexAppServer {
       }
       await peer.notify('initialized');
       if (!peer.isOpen || this.peer !== peer) throw new Error('Codex App Server transport failed');
-      this.setStatus({ availability: 'available' });
+      this.setStatus({ availability: 'available', ...(initialized.userAgent ? { userAgent: initialized.userAgent } : {}) });
     } catch (error) {
       this.stop(unavailableMessage(error));
       this.setStatus({ availability: 'unavailable', message: unavailableMessage(error) });
@@ -278,7 +280,7 @@ export class CodexAppServer {
   }
 
   private setStatus(status: CodexAppServerStatus): void {
-    if (this.status.availability === status.availability && this.status.message === status.message) return;
+    if (this.status.availability === status.availability && this.status.message === status.message && this.status.userAgent === status.userAgent) return;
     this.status = status;
     for (const listener of this.statusListeners) {
       try { listener(status); } catch { /* Status observers are isolated. */ }

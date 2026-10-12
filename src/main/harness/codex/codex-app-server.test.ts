@@ -211,6 +211,14 @@ describe('CodexAppServer', () => {
     await expect(reading).resolves.toMatchObject({ thread: { id: 'one' } });
   });
 
+  test('keeps the user agent the server reports, which carries its version', async () => {
+    const process = new FakeCodexProcess();
+    const starting = CodexAppServer.start(() => process);
+    process.respond(1, { userAgent: 'fractal/0.160.0 (Ubuntu 26.4.0; x86_64)' });
+    const server = await starting;
+    expect(server.status).toEqual({ availability: 'available', userAgent: 'fractal/0.160.0 (Ubuntu 26.4.0; x86_64)' });
+  });
+
   test('serializes restarts, disposes once, and makes new requests unavailable', async () => {
     const first = new FakeCodexProcess();
     const second = new FakeCodexProcess();

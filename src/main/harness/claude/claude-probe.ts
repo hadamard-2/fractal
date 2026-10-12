@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { executableNotFoundMessage } from '@/main/harness/executable';
+import { versionWarning } from '@/main/harness/version-floor';
 import type { ConversationRef, ConversationRuntime, HarnessStatus } from '@/shared/conversation-contract';
 
 /** `launchError` is the OS error code (e.g. ENOENT) when the executable could not be started at all. */
@@ -59,8 +60,10 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     return { provider: 'claude', availability: 'unavailable', message, capabilities, evidence };
   }
   const versionText = firstLine(version.stdout);
-  if (!authenticated) return { provider: 'claude', availability: 'unauthenticated', ...(versionText ? { version: versionText } : {}), message: 'Claude authentication was not confirmed noninteractively.', capabilities, evidence };
-  return { provider: 'claude', availability: 'available', ...(versionText ? { version: versionText } : {}), capabilities, evidence };
+  const warning = versionWarning('claude', versionText);
+  const described = { ...(versionText ? { version: versionText } : {}), ...(warning ? { warning } : {}) };
+  if (!authenticated) return { provider: 'claude', availability: 'unauthenticated', ...described, message: 'Claude authentication was not confirmed noninteractively.', capabilities, evidence };
+  return { provider: 'claude', availability: 'available', ...described, capabilities, evidence };
 }
 
 export interface ClaudeRuntimeDependencies {

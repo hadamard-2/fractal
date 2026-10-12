@@ -28,6 +28,16 @@ describe('probeClaude', () => {
     await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unavailable', message: 'Claude executable is unavailable.' });
   });
 
+  test('warns, without refusing, when the version is older than the tested floor', async () => {
+    const results = (version: string) => fakeExec({
+      '--version': { exitCode: 0, stdout: `${version} (Claude Code)\n` },
+      'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
+    });
+    const old = await probeClaude(results('2.1.0'));
+    expect(old).toMatchObject({ availability: 'available', warning: expect.stringMatching(/^Claude 2\.1\.0 is older than/) });
+    expect((await probeClaude(results('99.0.0'))).warning).toBeUndefined();
+  });
+
   test('the default exec reports a missing executable as a launch error', async () => {
     await expect(defaultClaudeExec('/nonexistent/fractal-claude', ['--version'], { timeoutMs: 5_000 })).resolves.toMatchObject({ launchError: 'ENOENT' });
   });

@@ -32,6 +32,8 @@ export interface HarnessStatus {
   availability: 'available' | 'unavailable' | 'unsupported' | 'unauthenticated';
   version?: string;
   message?: string;
+  /** Something to tell the user about an agent that still works, such as a version older than Fractal is tested with. */
+  warning?: string;
   capabilities: HarnessCapabilities;
 }
 

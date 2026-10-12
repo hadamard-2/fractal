@@ -70,6 +70,31 @@ function CommandNotice({ lead, command, trail }: { lead: string; command: string
   );
 }
 
+/** One notice per agent that can't be used, and one per agent with a warning such as an untested version. */
+export function ProviderNotices({ providers }: { providers: HarnessStatus[] }) {
+  return (
+    <>
+      {providers.filter((provider) => provider.availability !== 'available').map((provider) => (
+        provider.availability === 'unauthenticated' ? (
+          <CommandNotice
+            command={LOGIN_COMMAND[provider.provider]}
+            key={provider.provider}
+            lead={`${providerName(provider.provider)} isn't signed in; run`}
+            trail="to show its conversations"
+          />
+        ) : (
+          <Notice detail={provider.message} key={provider.provider}>
+            {`${providerName(provider.provider)} ${AVAILABILITY_TEXT[provider.availability as keyof typeof AVAILABILITY_TEXT]}, so its conversations are hidden`}
+          </Notice>
+        )
+      ))}
+      {providers.map((provider) => provider.warning && (
+        <Notice key={`${provider.provider}:warning`}>{provider.warning}</Notice>
+      ))}
+    </>
+  );
+}
+
 /**
  * Execute mode: the selected conversation, or the home screen when nothing is
  * selected. App keeps it mounted but hidden in other modes so a running
@@ -109,20 +134,7 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
           </dl>
           <div className="mt-7 flex flex-col items-center gap-2">
             {error && <Notice detail={error.message}>Your conversations couldn't be loaded</Notice>}
-            {providers.filter((provider) => provider.availability !== 'available').map((provider) => (
-              provider.availability === 'unauthenticated' ? (
-                <CommandNotice
-                  command={LOGIN_COMMAND[provider.provider]}
-                  key={provider.provider}
-                  lead={`${providerName(provider.provider)} isn't signed in; run`}
-                  trail="to show its conversations"
-                />
-              ) : (
-                <Notice detail={provider.message} key={provider.provider}>
-                  {`${providerName(provider.provider)} ${AVAILABILITY_TEXT[provider.availability as keyof typeof AVAILABILITY_TEXT]}, so its conversations are hidden`}
-                </Notice>
-              )
-            ))}
+            <ProviderNotices providers={providers} />
           </div>
         </div>
       )}
