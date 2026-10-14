@@ -44,6 +44,14 @@ describe('splitTurnWork', () => {
     expect(ids(answer)).toEqual(['a1']);
   });
 
+  test('lifts answered questions out of the work so the answers stay in view', () => {
+    const question: TurnBlock = { id: 'q1', kind: 'question', request: { id: 'q1', kind: 'question', provider: 'claude', questions: [{ fieldId: 'Size?', prompt: 'Size?', allowFreeText: true }], status: 'resolved', decision: { kind: 'answer', answers: { 'Size?': 'Large' } } } };
+    const { questions, work, answer } = splitTurnWork(turn([packet('p1'), question, packet('p2'), prose('a1', true)]));
+    expect(ids(questions)).toEqual(['q1']);
+    expect(ids(work)).toEqual(['p1', 'p2']);
+    expect(ids(answer)).toEqual(['a1']);
+  });
+
   test('leaves running, unmarked, and answer-only turns whole', () => {
     const blocks = [packet('p1'), prose('a1', true)];
     expect(splitTurnWork(turn(blocks, 'active')).work).toEqual([]);

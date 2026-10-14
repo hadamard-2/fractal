@@ -276,6 +276,42 @@ describe('normalizeClaudeRecord', () => {
     ]);
   });
 
+  test('reads an AskUserQuestion call and its result back as a resolved question, not a tool', () => {
+    const context = createClaudeNormalizationContext();
+    normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Ask me' } }, 0, context);
+    const input = { questions: [
+      { question: 'What next?', header: 'Next', multiSelect: false, options: [{ label: 'Cleanup', description: 'Tidy up' }, { label: 'Docs', description: '' }] },
+      { question: 'Which checks?', header: 'Checks', multiSelect: true, options: [{ label: 'Lint', description: '' }, { label: 'Tests', description: '' }] },
+    ] };
+    const call = (uuid: string, id: string) => normalizeClaudeRecord({ type: 'assistant', uuid, parentUuid: 'u1', message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input }] } }, 1, context);
+    const result = (uuid: string, block: Record<string, unknown>, extra: Record<string, unknown> = {}) => normalizeClaudeRecord({ type: 'user', uuid, parentUuid: 'u1', ...extra, message: { role: 'user', content: [{ type: 'tool_result', ...block }] } }, 2, context);
+    const questions = [
+      { fieldId: 'What next?', prompt: 'What next?', choices: [{ value: 'Cleanup', label: 'Cleanup', description: 'Tidy up' }, { value: 'Docs', label: 'Docs' }], allowFreeText: true },
+      { fieldId: 'Which checks?', prompt: 'Which checks?', choices: [{ value: 'Lint', label: 'Lint' }, { value: 'Tests', label: 'Tests' }], allowFreeText: true, multiSelect: true },
+    ];
+
+    expect(call('r1', 'q1')).toEqual([]);
+    // Transcripts keep the answers in toolUseResult; live output in tool_use_result.
+    expect(result('t1', { tool_use_id: 'q1', content: 'Your questions have been answered.' }, { toolUseResult: { questions: input.questions, answers: { 'What next?': 'Cleanup' } } })).toEqual([
+      expect.objectContaining({ nativeId: 't1:q1:0', payload: { kind: 'request-opened', turnId: 'u1', request: {
+        id: 'q1', kind: 'question', provider: 'claude', questions, status: 'resolved', decision: { kind: 'answer', answers: { 'What next?': 'Cleanup' } },
+      } } }),
+    ]);
+    call('r2', 'q2');
+    expect(result('t2', { tool_use_id: 'q2', content: 'Answered.' }, { tool_use_result: { answers: { 'Which checks?': 'Lint, Tests' } } })).toMatchObject([
+      { payload: { request: { id: 'q2', status: 'resolved', decision: { kind: 'answer', answers: { 'Which checks?': 'Lint, Tests' } } } } },
+    ]);
+    call('r3', 'q3');
+    expect(result('t3', { tool_use_id: 'q3', is_error: true, content: 'The user dismissed the question' }, { toolUseResult: 'Error: The user dismissed the question' })).toMatchObject([
+      { payload: { request: { id: 'q3', status: 'resolved', decision: { kind: 'deny', reason: 'The user dismissed the question' } } } },
+    ]);
+  });
+
+  test('keeps an AskUserQuestion call it cannot read as a tool', () => {
+    const events = normalizeClaudeRecord({ type: 'assistant', uuid: 'r1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [] } }] } }, 0, createClaudeNormalizationContext());
+    expect(events).toMatchObject([{ payload: { kind: 'action-requested', actionId: 'q1', label: 'AskUserQuestion' } }]);
+  });
+
   test('reads a ToolSearch tool_reference as the tool it loaded', () => {
     const events = normalizeClaudeRecord({ type: 'user', uuid: 't1', parentUuid: 'u1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'search-1', content: [{ type: 'tool_reference', tool_name: 'ExitPlanMode' }] }] } }, 0, createClaudeNormalizationContext());
     expect(events).toMatchObject([{ payload: { kind: 'action-updated', actionId: 'search-1', status: 'completed', output: 'Loaded tool: ExitPlanMode' } }]);

@@ -1,5 +1,6 @@
-import { CONVERSATION_IMAGE_TYPES, MAX_CONVERSATION_IMAGE_DATA_LENGTH, type BlockingRequest, type ConversationImage, type UserDecision } from '@/shared/conversation-contract';
+import { CONVERSATION_IMAGE_TYPES, MAX_CONVERSATION_IMAGE_DATA_LENGTH, type BlockingRequest, type ConversationImage, type QuestionField, type UserDecision } from '@/shared/conversation-contract';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
+import { claudeQuestionFields } from './claude-questions';
 
 export interface ClaudeHistoryRecord {
   type?: unknown;
@@ -27,6 +28,8 @@ export interface ClaudeNormalizationContext {
   streamFinalText?: NativeEvent[];
   /** Tool use ids of ExitPlanMode calls, so their results read as plan decisions. */
   planIds?: Set<string>;
+  /** The questions of each AskUserQuestion call by tool use id, so its result reads as the answers. */
+  questions?: Map<string, QuestionField[]>;
 }
 
 class NormalizationContext implements ClaudeNormalizationContext {
@@ -35,6 +38,7 @@ class NormalizationContext implements ClaudeNormalizationContext {
   streamText = new Map<number, string>();
   streamFinalText: NativeEvent[] = [];
   planIds = new Set<string>();
+  questions = new Map<string, QuestionField[]>();
 
   recordTurn(record: ClaudeHistoryRecord, nativeId: string): string | undefined {
     const uuid = nativeId;
@@ -194,6 +198,11 @@ function normalizeContent(
         events.push(event(toolId, blockType, observedAt, { kind: 'plan-proposed', turnId, planId: toolId, ...(text ? { text } : {}) }));
         continue;
       }
+      const questions = name === 'AskUserQuestion' && context.questions ? claudeQuestionFields(input) : undefined;
+      if (questions) {
+        context.questions?.set(toolId, questions);
+        continue;
+      }
       const actionKind = actionKindFor(name, record.isSidechain === true);
       const parentActionId = stringValue(record.parent_tool_use_id);
       events.push(event(toolId, blockType, observedAt, {
@@ -211,6 +220,11 @@ function normalizeContent(
       const actionId = stringValue(block?.tool_use_id) ?? `${uuid}:unknown-tool:${index}`;
       if (context.planIds?.has(actionId)) {
         events.push(planDecision(record, block, uuid, index, actionId, turnId, observedAt));
+        continue;
+      }
+      const asked = context.questions?.get(actionId);
+      if (asked) {
+        events.push(questionAnswer(record, block, uuid, index, actionId, asked, turnId, observedAt));
         continue;
       }
       events.push(...toolResultEvents(block, uuid, index, actionId, turnId, observedAt));
@@ -505,10 +519,7 @@ function planDecision(
   turnId: string,
   observedAt: number,
 ): NativeEvent {
-  const content = block?.content;
-  const message = typeof content === 'string'
-    ? content
-    : (arrayValue(content) ?? []).map((part) => textOf(objectValue(part))).filter((part) => part !== undefined).join('\n');
+  const message = resultText(block);
   const nativeId = `${uuid}:${planId}:${index}`;
   if (block?.is_error === true) {
     return event(nativeId, 'tool_result', observedAt, { kind: 'plan-decided', turnId, planId, approved: false, ...(message ? { feedback: message } : {}) });
@@ -627,4 +638,31 @@ function stringValue(value: unknown): string | undefined {
 function timestampValue(value: unknown, fallback: number): number {
   const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+/** An answered or declined question, recorded as the request it was so it reads the same as when it was asked. */
+function questionAnswer(
+  record: ClaudeHistoryRecord,
+  block: Record<string, unknown> | undefined,
+  uuid: string,
+  index: number,
+  requestId: string,
+  questions: QuestionField[],
+  turnId: string,
+  observedAt: number,
+): NativeEvent {
+  const message = resultText(block);
+  // Transcripts keep the answers in toolUseResult and live output in tool_use_result.
+  const answers = block?.is_error === true ? undefined : stringRecord(objectValue(record.toolUseResult ?? record.tool_use_result)?.answers);
+  const decision: UserDecision = answers ? { kind: 'answer', answers } : { kind: 'deny', ...(message ? { reason: message } : {}) };
+  return event(`${uuid}:${requestId}:${index}`, 'tool_result', observedAt, {
+    kind: 'request-opened', turnId, request: { id: requestId, kind: 'question', provider: 'claude', questions, status: 'resolved', decision },
+  });
+}
+
+function resultText(block: Record<string, unknown> | undefined): string {
+  const content = block?.content;
+  return typeof content === 'string'
+    ? content
+    : (arrayValue(content) ?? []).map((part) => textOf(objectValue(part))).filter((part) => part !== undefined).join('\n');
 }
