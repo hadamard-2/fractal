@@ -477,6 +477,18 @@ describe('runClaudeTurn', () => {
     await collect({ [Symbol.asyncIterator]: () => iterator });
   });
 
+  test('keeps a live tool result in the anchored turn, not a turn of its own', async () => {
+    const turn = fakeTurn();
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'turn-1', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-1', userMessageId: 'turn-1', text: 'go' } };
+    const run = start(turn, { turnId: 'turn-1', rereadNative: async () => [anchor] });
+    turn.push({ type: 'assistant', uuid: 'a1', session_id: 'claude-session-1', parent_tool_use_id: null, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } }] } });
+    // The SDK's user message carries no parentUuid, so nothing in it names the turn.
+    turn.push({ type: 'user', uuid: 'r1', session_id: 'claude-session-1', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'a.ts' }] } });
+    turn.exit();
+    const events = await collect(run.events);
+    expect(events.find((event) => event.payload.kind === 'action-updated')?.payload).toMatchObject({ actionId: 'tool-1', turnId: 'turn-1' });
+  });
+
   test('waits for the persisted user anchor before streaming partials and reconciles by message id', async () => {
     const turn = fakeTurn();
     const anchor: NativeEvent = { provider: 'claude', nativeId: 'file-user', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'file-user', userMessageId: 'file-user', text: 'go' } };

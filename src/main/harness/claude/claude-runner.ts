@@ -258,7 +258,9 @@ async function drainRecords(records: AsyncIterable<unknown>, events: ReplayEvent
       if (anchoredTurnId) for (const event of normalized) events.publish(event);
       continue;
     }
-    for (const event of normalizeClaudeRecord(value, ordinal++, context)) {
+    // The SDK's user messages, such as tool results, carry no parentUuid, so once anchored they join the turn like its assistant messages.
+    const input = anchoredTurnId && record?.type === 'user' && record.parentUuid === undefined ? { ...record, parentUuid: anchoredTurnId } : value;
+    for (const event of normalizeClaudeRecord(input, ordinal++, context)) {
       if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) anchoredTurnId = turnId;
       events.publish(event);
     }
