@@ -38,7 +38,7 @@ export function ChangesPane({ root, active, onOpenFile }: { root: string; active
   const branch = branchLabel(head);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-xs">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border pr-2 pl-[15px] text-xs">
         <span className="shrink-0">{summaryText(files)}</span>
         {branch && <span className="min-w-0 truncate text-muted-foreground">{branch}</span>}
         {failed && <span className="ml-auto shrink-0 text-muted-foreground">Changes couldn&apos;t be read</span>}
@@ -54,7 +54,7 @@ export function ChangesPane({ root, active, onOpenFile }: { root: string; active
       <div className="shrink-0 border-b border-sidebar-border">
         <button
           aria-expanded={listOpen}
-          className="flex h-7 w-full items-center gap-1.5 px-3 text-left text-xs text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring hover:text-foreground"
+          className="flex h-7 w-full items-center gap-1.5 pr-3 pl-2.5 text-left text-xs text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring hover:text-foreground"
           onClick={() => setListOpen((open) => !open)}
           type="button"
         >
@@ -76,7 +76,7 @@ function FileList({ files, onJump }: { files: ChangedFile[]; onJump: (path: stri
       {files.map((file) => (
         <li key={file.path}>
           <button
-            className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left focus-visible:outline-2 focus-visible:outline-ring hover:bg-sidebar-accent"
+            className="flex h-7 w-full items-center gap-2 rounded-md pr-[11px] pl-2 text-left focus-visible:outline-2 focus-visible:outline-ring hover:bg-sidebar-accent"
             onClick={() => onJump(file.path)}
             type="button"
           >

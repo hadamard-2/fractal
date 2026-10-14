@@ -295,8 +295,9 @@ export function AppShell({
           width={sidebarWidth}
         />
         <SidebarInset className="min-h-0 overflow-hidden" ref={insetRef}>
-          {/* Fades whatever scrolls up to the app bar into its background instead of cutting it off. */}
-          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background to-transparent" />
+          {/* Fades whatever scrolls up to the app bar into its background instead of cutting it off.
+              Stops 10px short of the right edge so the scrollbar (its width is set in index.css) stays unfaded. */}
+          <div aria-hidden className="pointer-events-none absolute top-0 right-2.5 left-0 z-10 h-6 bg-linear-to-b from-background to-transparent" />
           {children({ selectedRef, history, actions, onRuntimeChange: reportRuntime, refreshSignal: historyRefreshes })}
         </SidebarInset>
       </div>

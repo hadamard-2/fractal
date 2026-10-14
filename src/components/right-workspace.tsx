@@ -228,7 +228,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
               row centres its 32px controls. Once there are tabs, its bottom
               border is the rule the selected tab's underline sits on.
             */}
-            <div className={cn('flex h-12 shrink-0 items-end gap-1 px-2', tabs.length > 0 && 'border-b border-sidebar-border')}>
+            <div className={cn('flex h-12 shrink-0 items-end gap-1 pr-2 pl-3.5', tabs.length > 0 && 'border-b border-sidebar-border')}>
               {selectedFileTab && (
                 <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
                   <List aria-hidden className="size-4" />

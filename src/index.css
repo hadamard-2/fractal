@@ -221,6 +221,21 @@
   background-clip: content-box;
 }
 
+/* Inset only across the track, not along it, so a thumb at either end of its
+   scroll range sits flush with the scroller's edge instead of 3px short. The
+   painted corners are the outer radius minus the border on each axis, so the
+   radius is elliptical to land on a round 2px (a full pill on the 4px thumb)
+   once the 3px is taken off one axis and nothing off the other. */
+*::-webkit-scrollbar-thumb:vertical {
+  border-width: 0 3px;
+  border-radius: 5px / 2px;
+}
+
+*::-webkit-scrollbar-thumb:horizontal {
+  border-width: 3px 0;
+  border-radius: 2px / 5px;
+}
+
 *::-webkit-scrollbar-thumb:hover {
   background-color: var(--muted-foreground);
 }

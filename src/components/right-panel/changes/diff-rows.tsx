@@ -36,9 +36,9 @@ export function FileHeader({ file, root, collapsed, line, onToggle, onOpenFile }
       <span aria-hidden className="w-3 shrink-0 text-center font-mono text-muted-foreground">{statusLetter(file.status)}</span>
       {file.status === 'conflicted' && <span className="shrink-0 rounded border border-sidebar-border px-1.5 text-muted-foreground">Conflicted</span>}
       <span className="min-w-0 flex-1 truncate">{displayPath(file)}</span>
-      <span className="shrink-0 text-muted-foreground">{countsText(file.added, file.removed)}</span>
+      <span className="mr-1 shrink-0 text-muted-foreground">{countsText(file.added, file.removed)}</span>
       {actionable && (
-        <>
+        <div className="flex shrink-0 items-center">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button aria-label="Open file" className="size-7 shrink-0" onClick={() => onOpenFile(file.path)} size="icon" type="button" variant="ghost">
@@ -48,7 +48,7 @@ export function FileHeader({ file, root, collapsed, line, onToggle, onOpenFile }
             <TooltipContent side="bottom">Open file</TooltipContent>
           </Tooltip>
           <OpenWithMenu line={line} path={file.path} root={root} />
-        </>
+        </div>
       )}
     </div>
   );
