@@ -233,38 +233,62 @@ async function drainRecords(records: AsyncIterable<unknown>, events: ReplayEvent
   const context = createClaudeNormalizationContext();
   let ordinal = 0;
   let anchoredTurnId: string | undefined;
-  for await (const value of records) {
-    const record = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-    if (typeof record?.session_id === 'string' && record.session_id !== sessionId) { ordinal += 1; continue; }
-    if (record?.type === 'system' && record.subtype === 'init') { ordinal += 1; continue; }
-    if (record?.type === 'result') onResult();
-    if (record?.type === 'stream_event' || record?.type === 'assistant' || record?.type === 'result') {
-      if (!anchoredTurnId) {
-        try {
-          for await (const event of asAsync(await rereadNative())) {
-            if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) {
-              anchoredTurnId = event.payload.turnId;
-              events.publish(event);
-            }
-          }
-        } catch { /* The native user record may not be persisted yet. */ }
+  // Events with no turn of their own, from records claude sends before this turn's prompt is anchored. Published then,
+  // they would land on whichever turn the conversation last had open, so they wait and take this turn's id.
+  const held: NativeEvent[] = [];
+  const release = (): void => {
+    for (const event of held.splice(0)) events.publish(anchoredTurnId ? withTurnId(event, anchoredTurnId) : event);
+  };
+  const anchor = async (): Promise<void> => {
+    try {
+      for await (const event of asAsync(await rereadNative())) {
+        if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) {
+          anchoredTurnId = event.payload.turnId;
+          events.publish(event);
+        }
       }
-      // Claude ends a stopped turn with an error result, which says nothing of the stop; only Fractal knows it asked.
-      // A turn that finished before the stop took effect keeps its own result.
-      const stopped = record.type === 'result' && stopRequested() && record.subtype !== 'success';
-      const normalized = record.type === 'stream_event'
-        ? normalizeClaudeStreamRecord(record, ordinal++, context, anchoredTurnId ?? '')
-        : normalizeClaudeRecord({ ...record, ...(stopped ? { subtype: 'interrupted' } : {}), parentUuid: anchoredTurnId }, ordinal++, context);
-      if (anchoredTurnId) for (const event of normalized) events.publish(event);
-      continue;
+    } catch { /* The native user record may not be persisted yet. */ }
+    if (anchoredTurnId) release();
+  };
+  try {
+    for await (const value of records) {
+      const record = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+      if (typeof record?.session_id === 'string' && record.session_id !== sessionId) { ordinal += 1; continue; }
+      if (record?.type === 'system' && record.subtype === 'init') { ordinal += 1; continue; }
+      if (record?.type === 'result') onResult();
+      if (record?.type === 'stream_event' || record?.type === 'assistant' || record?.type === 'result') {
+        if (!anchoredTurnId) await anchor();
+        // Claude ends a stopped turn with an error result, which says nothing of the stop; only Fractal knows it asked.
+        // A turn that finished before the stop took effect keeps its own result.
+        const stopped = record.type === 'result' && stopRequested() && record.subtype !== 'success';
+        const normalized = record.type === 'stream_event'
+          ? normalizeClaudeStreamRecord(record, ordinal++, context, anchoredTurnId ?? '')
+          : normalizeClaudeRecord({ ...record, ...(stopped ? { subtype: 'interrupted' } : {}), parentUuid: anchoredTurnId }, ordinal++, context);
+        if (anchoredTurnId) for (const event of normalized) events.publish(event);
+        continue;
+      }
+      // The SDK's user messages, such as tool results, carry no parentUuid, so once anchored they join the turn like its assistant messages.
+      const input = anchoredTurnId && record?.type === 'user' && record.parentUuid === undefined ? { ...record, parentUuid: anchoredTurnId } : value;
+      for (const event of normalizeClaudeRecord(input, ordinal++, context)) {
+        if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) {
+          anchoredTurnId = turnId;
+          events.publish(event);
+          release();
+        } else if (event.payload.turnId !== undefined) events.publish(event);
+        else if (anchoredTurnId) events.publish(withTurnId(event, anchoredTurnId));
+        else held.push(event);
+      }
     }
-    // The SDK's user messages, such as tool results, carry no parentUuid, so once anchored they join the turn like its assistant messages.
-    const input = anchoredTurnId && record?.type === 'user' && record.parentUuid === undefined ? { ...record, parentUuid: anchoredTurnId } : value;
-    for (const event of normalizeClaudeRecord(input, ordinal++, context)) {
-      if (event.payload.kind === 'turn-started' && event.payload.turnId === turnId) anchoredTurnId = turnId;
-      events.publish(event);
-    }
+  } finally {
+    // A turn that never anchored in the stream may still have its prompt in the transcript.
+    if (held.length > 0 && !anchoredTurnId) await anchor();
+    release();
   }
+}
+
+/** Gives an event that names no turn the live turn's id; one that names a turn keeps it. */
+function withTurnId(event: NativeEvent, turnId: string): NativeEvent {
+  return event.payload.turnId === undefined ? { ...event, payload: { ...event.payload, turnId } } : event;
 }
 
 async function drainStderr(stream: AsyncIterable<Uint8Array | string>, diagnostic: DiagnosticBuffer): Promise<void> {

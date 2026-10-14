@@ -477,6 +477,30 @@ describe('runClaudeTurn', () => {
     await collect({ [Symbol.asyncIterator]: () => iterator });
   });
 
+  test('holds turn-less events that arrive before the turn is anchored, then publishes them under its id', async () => {
+    const turn = fakeTurn();
+    const run = start(turn, { turnId: 'turn-2' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    turn.push({ type: 'future_event', uuid: 'early', session_id: 'claude-session-1' });
+    turn.push(userRecord('turn-2', 'go'));
+    turn.push({ type: 'future_event', uuid: 'late', session_id: 'claude-session-1' });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-started', turnId: 'turn-2' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'early', payload: { kind: 'unsupported', turnId: 'turn-2' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { nativeId: 'late', payload: { kind: 'unsupported', turnId: 'turn-2' } } });
+    turn.exit();
+    await collect({ [Symbol.asyncIterator]: () => iterator });
+  });
+
+  test('publishes held turn-less events after the anchor the transcript holds when the stream never anchored the turn', async () => {
+    const turn = fakeTurn();
+    const anchor: NativeEvent = { provider: 'claude', nativeId: 'turn-2', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-2', userMessageId: 'turn-2', text: 'go' } };
+    const run = start(turn, { turnId: 'turn-2', rereadNative: async () => [anchor] });
+    turn.push({ type: 'future_event', uuid: 'early', session_id: 'claude-session-1' });
+    turn.exit();
+    const events = await collect(run.events);
+    expect(events.map((event) => [event.nativeId, event.payload.turnId])).toEqual([['turn-2', 'turn-2'], ['early', 'turn-2']]);
+  });
+
   test('keeps a live tool result in the anchored turn, not a turn of its own', async () => {
     const turn = fakeTurn();
     const anchor: NativeEvent = { provider: 'claude', nativeId: 'turn-1', nativeType: 'user', observedAt: Date.now(), payload: { kind: 'turn-started', turnId: 'turn-1', userMessageId: 'turn-1', text: 'go' } };

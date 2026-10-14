@@ -253,6 +253,28 @@ describe('normalizeClaudeRecord', () => {
     for (const record of kept) expect(normalizeClaudeRecord(record, 9, context)).toMatchObject([{ payload: { kind: 'unsupported' } }]);
   });
 
+  test('drops the live stream\'s lifecycle records but leaves a failed compaction or hook to surface', () => {
+    const context = createClaudeNormalizationContext();
+    const live = { session_id: 's' };
+    const bookkeeping: ClaudeHistoryRecord[] = [
+      { ...live, type: 'command_lifecycle', uuid: 'u1', state: 'completed' },
+      { ...live, type: 'rate_limit_event', uuid: 'r1', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' } },
+      { ...live, type: 'system', uuid: 's1', subtype: 'status', status: 'requesting' },
+      { ...live, type: 'system', uuid: 's2', subtype: 'status', status: null, compact_result: 'success' },
+      { ...live, type: 'system', uuid: 's3', subtype: 'hook_started', hook_id: 'h1', hook_name: 'SessionStart:startup', hook_event: 'SessionStart' },
+      { ...live, type: 'system', uuid: 's4', subtype: 'hook_progress', hook_id: 'h1', hook_name: 'SessionStart:startup', hook_event: 'SessionStart', stdout: 'partial', stderr: '', output: 'partial' },
+      { ...live, type: 'system', uuid: 's5', subtype: 'hook_response', hook_id: 'h1', hook_name: 'SessionStart:startup', hook_event: 'SessionStart', output: 'ok', stdout: 'ok', stderr: '', exit_code: 0, outcome: 'success' },
+      { ...live, type: 'system', uuid: 's6', subtype: 'post_turn_summary', summarizes_uuid: 'm1', status_category: 'done', status_detail: 'Answered', needs_action: false },
+    ];
+    for (const [ordinal, record] of bookkeeping.entries()) expect(normalizeClaudeRecord(record, ordinal, context)).toEqual([]);
+    const kept: ClaudeHistoryRecord[] = [
+      { ...live, type: 'system', uuid: 's7', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Conversation too long' },
+      { ...live, type: 'system', uuid: 's8', subtype: 'hook_response', hook_id: 'h2', hook_name: 'Stop', hook_event: 'Stop', output: '', stdout: '', stderr: 'boom', exit_code: 1, outcome: 'error' },
+      { ...live, type: 'system', uuid: 's9', subtype: 'hook_response', hook_id: 'h3', hook_name: 'Stop', hook_event: 'Stop', output: '', stdout: '', stderr: '', outcome: 'cancelled' },
+    ];
+    for (const record of kept) expect(normalizeClaudeRecord(record, 9, context)).toMatchObject([{ payload: { kind: 'unsupported' } }]);
+  });
+
   test('drops plan mode markers and turns ExitPlanMode calls into plan proposals and decisions', () => {
     const context = createClaudeNormalizationContext();
     normalizeClaudeRecord({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'Plan first' } }, 0, context);

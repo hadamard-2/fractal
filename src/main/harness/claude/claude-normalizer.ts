@@ -321,15 +321,31 @@ const BOOKKEEPING_ATTACHMENT_TYPES = new Set([
   'total_tokens_reminder',
 ]);
 
-const BOOKKEEPING_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration']);
+// Record types only the live stream carries, never the transcript: a queued prompt's progress
+// ({ uuid, state }) and the account's rate-limit state.
+const BOOKKEEPING_STREAM_RECORD_TYPES = new Set(['command_lifecycle', 'rate_limit_event']);
+
+// hook_started and hook_progress report a hook running; post_turn_summary is a generated status
+// line for a turn whose content the stream already carried. The last three are live-stream only.
+const BOOKKEEPING_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration', 'hook_started', 'hook_progress', 'post_turn_summary']);
 
 function isClaudeBookkeepingRecord(record: ClaudeHistoryRecord): boolean {
   const type = stringValue(record.type);
   if (type === undefined) return false;
-  if (BOOKKEEPING_RECORD_TYPES.has(type)) return true;
+  if (BOOKKEEPING_RECORD_TYPES.has(type) || BOOKKEEPING_STREAM_RECORD_TYPES.has(type)) return true;
   if (type === 'user' && record.isMeta === true) return true;
   if (type === 'attachment') return BOOKKEEPING_ATTACHMENT_TYPES.has(stringValue(objectValue(record.attachment)?.type) ?? '');
-  if (type === 'system') return BOOKKEEPING_SYSTEM_SUBTYPES.has(stringValue(record.subtype) ?? '');
+  if (type === 'system') return isBookkeepingSystemRecord(record);
+  return false;
+}
+
+function isBookkeepingSystemRecord(record: ClaudeHistoryRecord): boolean {
+  const subtype = stringValue(record.subtype) ?? '';
+  if (BOOKKEEPING_SYSTEM_SUBTYPES.has(subtype)) return true;
+  // Routine status changes and hooks that succeeded say nothing new; a failed compaction or a
+  // failed or cancelled hook is left to surface.
+  if (subtype === 'status') return record.compact_result !== 'failed';
+  if (subtype === 'hook_response') return record.outcome === 'success';
   return false;
 }
 
