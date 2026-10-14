@@ -59,7 +59,7 @@ The bridge's decision logic moves to a new module, `claude-permissions.ts`, whic
 
 Deleted: `claude-permission-bridge.ts` with its loopback HTTP server, bearer token, MCP server, temp MCP config file, and the `--mcp-config` and `--permission-prompt-tool` flags. Its dependencies (`@modelcontextprotocol/*`, `express`) go too, unless something else uses them.
 
-The probe's capabilities change with it: approvals require stream-json support (no longer `--mcp-config` and `--permission-prompt-tool`), and questions additionally require `AskUserQuestion` in `claude --help`, as now.
+The probe's capabilities change with it: approvals require stream-json support (no longer `--mcp-config` and `--permission-prompt-tool`), and so do questions, since `AskUserQuestion` reaches `canUseTool` the same way. (Claude Code 2.1.296's `--help` no longer names `AskUserQuestion`, so it is not used as evidence.)
 
 ## Dependency and packaging
 

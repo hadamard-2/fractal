@@ -45,14 +45,14 @@ describe('probeClaude', () => {
   test('derives each capability independently and accepts only documented noninteractive authentication evidence', async () => {
     const exec = fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.0\n' },
-      '--help': { exitCode: 0, stdout: '--resume --session-id --output-format stream-json --mcp-config\nAskUserQuestion\n' },
+      '--help': { exitCode: 0, stdout: '--resume --session-id --output-format stream-json --mcp-config\n' },
       'agents --json': { exitCode: 0, stdout: '[]' },
       'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' },
     });
     const status = await probeClaude(exec, '/usr/bin/claude');
     expect(status).toMatchObject({
       availability: 'available', version: '2.1.0',
-      evidence: { resume: true, sessionId: true, streamJson: true, partialMessages: false, askUserQuestion: true, authenticated: true },
+      evidence: { resume: true, sessionId: true, streamJson: true, partialMessages: false, authenticated: true },
     });
   });
 
@@ -69,14 +69,14 @@ describe('probeClaude', () => {
     await expect(probeClaude(exec)).resolves.toMatchObject({ availability: 'unauthenticated', evidence: { authenticated: false } });
   });
 
-  test('offers approvals with stream-json alone, and questions only when AskUserQuestion is listed', async () => {
+  // 2.1.296's help text no longer names AskUserQuestion, so it is no evidence either way.
+  test('offers approvals and questions together whenever stream-json is supported', async () => {
     const statusFor = (help: string) => probeClaude(fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.296' },
       '--help': { exitCode: 0, stdout: help },
       'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
     }));
-    await expect(statusFor('--output-format stream-json')).resolves.toMatchObject({ capabilities: { approvals: true, questions: false } });
-    await expect(statusFor('--output-format stream-json\nAskUserQuestion')).resolves.toMatchObject({ capabilities: { approvals: true, questions: true } });
+    await expect(statusFor('--output-format stream-json')).resolves.toMatchObject({ capabilities: { approvals: true, questions: true } });
     await expect(statusFor('--mcp-config --permission-prompt-tool <name>\nAskUserQuestion')).resolves.toMatchObject({ capabilities: { approvals: false, questions: false } });
   });
 });

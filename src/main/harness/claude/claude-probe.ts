@@ -12,7 +12,6 @@ export interface ClaudeCapabilityEvidence {
   sessionId: boolean;
   streamJson: boolean;
   partialMessages: boolean;
-  askUserQuestion: boolean;
   authenticated: boolean;
 }
 
@@ -38,16 +37,15 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     sessionId: hasFlag(helpText, '--session-id'),
     streamJson: hasFlag(helpText, '--output-format') && /stream-json/.test(helpText),
     partialMessages: hasFlag(helpText, '--include-partial-messages'),
-    askUserQuestion: /\bAskUserQuestion\b/.test(helpText),
     authenticated,
   };
   const capabilities = {
     ...NO_CAPABILITIES,
     create: evidence.sessionId && evidence.streamJson,
     partialStreaming: evidence.streamJson && evidence.partialMessages,
-    // Through the Agent SDK, prompts and questions travel over the same stream-json pipe as the turn.
+    // Through the Agent SDK, prompts and AskUserQuestion both reach canUseTool over the turn's stream-json pipe.
     approvals: evidence.streamJson,
-    questions: evidence.streamJson && evidence.askUserQuestion,
+    questions: evidence.streamJson,
     interrupt: evidence.streamJson,
   };
   if (version.exitCode !== 0) {
