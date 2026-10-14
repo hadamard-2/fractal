@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Paperclip, Square } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import { PromptInput, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, PromptInputHeader, PromptInputSubmit, PromptInputTextarea, usePromptInputAttachments, type PromptInputMessage } from '@/components/ai-elements/prompt-input';
@@ -11,7 +11,6 @@ import { ModelPicker } from '@/components/conversation/model-picker';
 import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
 import { providerName } from '@/components/sidebar-03/nav-main';
-import { Button } from '@/components/ui/button';
 import { useAccessChoice } from '@/renderer/use-access-choice';
 import { useConversation } from '@/renderer/use-conversation';
 import { useModelChoice } from '@/renderer/use-model-choice';
@@ -34,8 +33,11 @@ function AttachButton({ disabled }: { disabled: boolean }) {
   );
 }
 
-function ComposerSubmit({ blocked, hasText, sending }: { blocked: boolean; hasText: boolean; sending: boolean }) {
+// One button in two states: it sends while the agent is idle and stops it while
+// it works, so the composer never shows send and stop side by side.
+function ComposerSubmit({ blocked, hasText, onStop, sending, stopping }: { blocked: boolean; hasText: boolean; onStop?: () => void; sending: boolean; stopping: boolean }) {
   const attachments = usePromptInputAttachments();
+  if (onStop) return <PromptInputSubmit aria-label="Interrupt session" disabled={stopping} onClick={onStop} status="streaming" type="button" />;
   return <PromptInputSubmit disabled={blocked || sending || (!hasText && attachments.files.length === 0)} status={sending ? 'submitted' : 'ready'} />;
 }
 
@@ -175,15 +177,12 @@ function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSign
           <PromptInputBody><PromptInputTextarea aria-label="Message" disabled={!eligible || sending} onChange={(event) => setInput(event.target.value)} onKeyDownCapture={cycleAccess} placeholder="Ask anything" value={input} /></PromptInputBody>
           <PromptInputFooter className="justify-between">
             <div className="flex min-w-0 items-center gap-1">
-              <AccessPicker access={accessChoice.access} allowDangerous={accessChoice.allowDangerous} levels={accessChoice.levels} observed={accessChoice.observed} onChoose={accessChoice.choose} onOpen={accessChoice.refresh} provider={conversationRef.provider} />
               <AttachButton disabled={!eligible || sending} />
+              <AccessPicker access={accessChoice.access} allowDangerous={accessChoice.allowDangerous} levels={accessChoice.levels} observed={accessChoice.observed} onChoose={accessChoice.choose} onOpen={accessChoice.refresh} provider={conversationRef.provider} />
             </div>
             <div className="flex min-w-0 items-center gap-1">
               <ModelPicker choice={modelChoice.choice} models={modelChoice.models} onChoose={modelChoice.choose} onOpen={modelChoice.refresh} />
-              {state.runtime === 'active-in-fractal' && state.capabilities?.interrupt && (
-                <Button aria-label="Interrupt session" disabled={stopping} onClick={() => { void stop(); }} size="icon-sm" type="button" variant="ghost"><Square aria-hidden className="size-3" /></Button>
-              )}
-              <ComposerSubmit blocked={!eligible || !modelChoice.loaded || !accessChoice.loaded} hasText={Boolean(input.trim())} sending={sending} />
+              <ComposerSubmit blocked={!eligible || !modelChoice.loaded || !accessChoice.loaded} hasText={Boolean(input.trim())} onStop={state.runtime === 'active-in-fractal' && state.capabilities?.interrupt ? () => { void stop(); } : undefined} sending={sending} stopping={stopping} />
             </div>
           </PromptInputFooter>
         </PromptInput>

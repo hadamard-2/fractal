@@ -331,7 +331,17 @@ test('falls back to the agent default when the model list is unavailable', async
   await waitFor(() => expect(send).toHaveBeenCalledWith(ref, { text: 'Go' }));
 });
 
-test('the footer reads Access, Attach files, Model, Effort, then Send', async () => {
+test('the send button becomes the stop button while the agent works', async () => {
+  install('active-in-fractal');
+  render(<ConversationPanel conversationRef={ref} />);
+  await ready();
+  const form = screen.getByRole('textbox', { name: 'Message' }).closest('form');
+  expect(screen.getByRole('button', { name: 'Interrupt session' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
+  expect(Array.from(form?.querySelectorAll('button') ?? []).at(-1)?.getAttribute('aria-label')).toBe('Interrupt session');
+});
+
+test('the footer reads Attach files, Access, Model, Effort, then Send', async () => {
   install();
   installAccess({ levels: accessLevels('codex'), access: level('auto'), allowDangerous: false });
   installModels({ models: [opus], choice: { model: 'opus', effort: 'high' } });
@@ -339,7 +349,7 @@ test('the footer reads Access, Attach files, Model, Effort, then Send', async ()
   await ready();
   await screen.findByRole('button', { name: 'Effort' });
   const names = Array.from(screen.getByRole('textbox', { name: 'Message' }).closest('form')?.querySelectorAll('button') ?? []).map((button) => button.getAttribute('aria-label'));
-  expect(names).toEqual(['Access', 'Attach files', 'Model', 'Effort', 'Submit']);
+  expect(names).toEqual(['Attach files', 'Access', 'Model', 'Effort', 'Submit']);
 });
 
 test('sends the access it shows, and none when nothing is known', async () => {
