@@ -60,8 +60,63 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   await user.click(await screen.findByRole('button', { name: /^Fix parser again, / }));
   expect(screen.getByText('Fractal next', { selector: '[data-slot="breadcrumb-item"]' })).toBeTruthy();
   expect(screen.getByText('Fix parser again', { selector: '[data-slot="breadcrumb-page"]' })).toBeTruthy();
-  expect(await screen.findByText('(Codex · Waiting for you)')).toBeTruthy();
+  // The relisted runtime is not the open conversation's: the label stays with
+  // what the open conversation reports, which is what decides the composer.
+  expect(await screen.findByText('(Codex · Status unknown)')).toBeTruthy();
+  expect(screen.queryByText('(Codex · Waiting for you)')).toBeNull();
   expect(screen.queryByText('Fix parser')).toBeNull();
+});
+
+test('labels the open conversation with the runtime it loads, not the one listed before, and follows it back to idle', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  const claude: ConversationRef = { provider: 'claude', nativeSessionId: 'claude-external', projectPath: '/work/fractal' };
+  const listeners = new Set<(event: ConversationStreamEvent) => void>();
+  let loadId = '';
+  const api: ConversationApi = {
+    // Listed while idle; a separately launched claude takes the session before it is opened.
+    list: async () => ({ projects: [{ projectPath: claude.projectPath, displayName: 'Fractal', conversations: [{ ref: claude, title: 'Run elsewhere', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [{ provider: 'claude', availability: 'available', capabilities }] }),
+    open: async (selected, id) => { loadId = id; return { summary: { ref: selected, title: 'Run elsewhere', updatedAt: 1, runtime: 'active-externally', captureCompleteness: 'complete' }, capabilities }; },
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined,
+    onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
+  const user = userEvent.setup();
+  render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+  await user.click(await screen.findByRole('button', { name: 'Fractal' }));
+  await user.click(await screen.findByRole('button', { name: 'Run elsewhere, Claude Code conversation, Idle' }));
+  expect(await screen.findByText('(Claude Code · Working elsewhere)')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Run elsewhere, Claude Code conversation, Working elsewhere' })).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
+  act(() => { for (const listener of listeners) listener({ type: 'runtime.changed', ref: claude, loadId, seq: 0, runtime: 'idle' }); });
+  expect(await screen.findByText('(Claude Code · Idle)')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Run elsewhere, Claude Code conversation, Idle' })).toBeTruthy();
+});
+
+test('Mod+R reopens the open conversation, so a session whose external run ended reads idle and takes input again', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  const claude: ConversationRef = { provider: 'claude', nativeSessionId: 'claude-finished', projectPath: '/work/fractal' };
+  let runtime: 'active-externally' | 'idle' = 'active-externally';
+  const open = vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Ran elsewhere', updatedAt: 1, runtime, captureCompleteness: 'complete' }, capabilities }));
+  const listeners = new Set<(event: ConversationStreamEvent) => void>();
+  const api: ConversationApi = {
+    list: async () => ({ projects: [{ projectPath: claude.projectPath, displayName: 'Fractal', conversations: [{ ref: claude, title: 'Ran elsewhere', updatedAt: 1, runtime, captureCompleteness: 'complete' }] }], providers: [{ provider: 'claude', availability: 'available', capabilities }] }),
+    open, close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined,
+    onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
+  const user = userEvent.setup();
+  render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+  await user.click(await screen.findByRole('button', { name: 'Fractal' }));
+  await user.click(await screen.findByRole('button', { name: /^Ran elsewhere, / }));
+  expect(await screen.findByText('(Claude Code · Working elsewhere)')).toBeTruthy();
+  expect(open).toHaveBeenCalledTimes(1);
+  runtime = 'idle';
+  await user.keyboard('{Control>}r{/Control}');
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+  const loadId = open.mock.calls[1][1];
+  act(() => { for (const listener of listeners) listener({ type: 'history.complete', ref: claude, loadId, seq: 0 }); });
+  expect(await screen.findByText('(Claude Code · Idle)')).toBeTruthy();
+  await waitFor(() => expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false));
 });
 
 test('creates a chat from a project row and opens its native reference', async () => {

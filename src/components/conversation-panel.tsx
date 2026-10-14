@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Paperclip, Square } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -10,11 +10,12 @@ import { BlockingRequest } from '@/components/conversation/blocking-request';
 import { ModelPicker } from '@/components/conversation/model-picker';
 import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
+import { providerName } from '@/components/sidebar-03/nav-main';
 import { Button } from '@/components/ui/button';
 import { useAccessChoice } from '@/renderer/use-access-choice';
 import { useConversation } from '@/renderer/use-conversation';
 import { useModelChoice } from '@/renderer/use-model-choice';
-import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type PromptAttachment, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
+import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type ConversationRuntime, type HarnessCapabilities, type PromptAttachment, type TurnBlock, type UserDecision } from '@/shared/conversation-contract';
 
 // The transcript and composer share one reading column. On a wide panel only the
 // padding absorbs a resize and the column holds at its 46rem cap; once that padding
@@ -38,8 +39,34 @@ function ComposerSubmit({ blocked, hasText, sending }: { blocked: boolean; hasTe
   return <PromptInputSubmit disabled={blocked || sending || (!hasText && attachments.files.length === 0)} status={sending ? 'submitted' : 'ready'} />;
 }
 
-function NativeConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
+// Names the approval or question routing the agent cannot do, so a request it
+// would have raised is not silently missing.
+function routingGap(provider: ConversationRef['provider'], capabilities: HarnessCapabilities | null): string | null {
+  if (!capabilities) return null;
+  const missing = [!capabilities.approvals && 'approval', !capabilities.questions && 'question'].filter(Boolean);
+  if (missing.length === 0) return null;
+  const subject = missing.length === 2 ? 'approval and question routing are' : `${missing[0]} routing is`;
+  return `${providerName(provider)} ${subject} unavailable. Fractal will not bypass native permissions.`;
+}
+
+type RuntimeListener = (ref: ConversationRef, runtime: ConversationRuntime | null) => void;
+
+function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSignal = 0 }: { conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; refreshSignal?: number }) {
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
+  // A runtime Fractal does not own is only checked on open, so a refresh
+  // reopens. The signal's value at mount is not a request: the open covers it.
+  const seenRefresh = useRef(refreshSignal);
+  useEffect(() => {
+    if (refreshSignal === seenRefresh.current) return;
+    seenRefresh.current = refreshSignal;
+    reload();
+  }, [refreshSignal, reload]);
+  // Until the open settles, `runtime` is the reducer's placeholder, not anything the agent reported.
+  const runtimeKnown = state.summary !== null || state.streamedRuntime || state.history === 'failed';
+  useEffect(() => {
+    if (runtimeKnown) onRuntimeChange?.(conversationRef, state.runtime);
+  }, [conversationRef, onRuntimeChange, runtimeKnown, state.runtime]);
+  useEffect(() => () => onRuntimeChange?.(conversationRef, null), [conversationRef, onRuntimeChange]);
   const modelChoice = useModelChoice(conversationRef);
   const accessChoice = useAccessChoice(conversationRef, state.runtime, state.history === 'complete' ? state.turns.at(-1)?.id ?? '' : undefined);
   const [input, setInput] = useState('');
@@ -64,6 +91,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   const canResolve = state.history === 'complete' && state.sync === 'current'
     && (state.runtime === 'active-in-fractal' || state.runtime === 'waiting-for-user');
   const loading = state.history === 'loading' || state.history === 'idle';
+  const gap = routingGap(conversationRef.provider, state.capabilities);
 
   // Request events own the audit state; open controls stay by the composer
   // so a virtual row cannot hide or duplicate the current decision.
@@ -131,6 +159,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
         {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
         {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}
+        {gap && <p className="py-2 text-sm text-muted-foreground" role="status">{gap}</p>}
         {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
         <PromptInput
           maxFiles={MAX_PROMPT_ATTACHMENTS}
@@ -163,6 +192,7 @@ function NativeConversationPanel({ conversationRef }: { conversationRef: Convers
   );
 }
 
-export function ConversationPanel({ conversationRef }: { conversationRef: ConversationRef }) {
-  return <NativeConversationPanel conversationRef={conversationRef} key={`${conversationKey(conversationRef)}:${conversationRef.projectPath}`} />;
+/** `onRuntimeChange` hears the open conversation's runtime once it is known, and null when the panel closes; a change in `refreshSignal` reopens it. */
+export function ConversationPanel({ conversationRef, onRuntimeChange, refreshSignal }: { conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; refreshSignal?: number }) {
+  return <NativeConversationPanel conversationRef={conversationRef} key={`${conversationKey(conversationRef)}:${conversationRef.projectPath}`} onRuntimeChange={onRuntimeChange} refreshSignal={refreshSignal} />;
 }

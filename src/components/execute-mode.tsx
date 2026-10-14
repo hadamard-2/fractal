@@ -100,7 +100,7 @@ export function ProviderNotices({ providers }: { providers: HarnessStatus[] }) {
  * selected. App keeps it mounted but hidden in other modes so a running
  * session isn't torn down by a mode switch.
  */
-export function ExecuteMode({ active = true, selectedRef, history, actions }: ShellContext & { active?: boolean }) {
+export function ExecuteMode({ active = true, selectedRef, history, actions, onRuntimeChange, refreshSignal }: ShellContext & { active?: boolean }) {
   const { providers, loaded, error } = history;
   const shortcuts = [
     ['Search conversations', `${MOD_KEY_LABEL} K`],
@@ -109,7 +109,7 @@ export function ExecuteMode({ active = true, selectedRef, history, actions }: Sh
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ display: active ? undefined : 'none' }}>
       {selectedRef ? (
-        <ConversationPanel conversationRef={selectedRef} />
+        <ConversationPanel conversationRef={selectedRef} onRuntimeChange={onRuntimeChange} refreshSignal={refreshSignal} />
       ) : (
         /*
           The home screen: one action, the shortcuts that reach the rest, and

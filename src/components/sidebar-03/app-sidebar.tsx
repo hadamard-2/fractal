@@ -31,7 +31,7 @@ import type { ProjectVisibilityState } from '@/renderer/use-project-visibility';
 import type { ProjectFilter } from '@/shared/settings-contract';
 import NavMain from '@/components/sidebar-03/nav-main';
 import { useConversationHistory } from '@/renderer/use-conversation-history';
-import type { ConversationRef, ProjectConversationGroup, ProviderId } from '@/shared/conversation-contract';
+import type { ConversationRef, ConversationRuntime, ProjectConversationGroup, ProviderId } from '@/shared/conversation-contract';
 import { SearchDialog } from '@/components/conversation/search-dialog';
 import { useSidebarOrder } from '@/components/sidebar-03/use-sidebar-order';
 
@@ -169,6 +169,7 @@ function SidebarResizeHandle({
 export function DashboardSidebar({
   onOpenSettings,
   selected,
+  selectedRuntime,
   onItemSelect,
   onConversationCreated,
   onNewProject,
@@ -192,6 +193,8 @@ export function DashboardSidebar({
   // Which nav item is currently picked, owned by ExecuteMode so the header
   // can show its title.
   selected?: ConversationRef | null;
+  // The open conversation's own runtime, shown on its row over the listed one.
+  selectedRuntime?: ConversationRuntime;
   // Not named `onSelect`: that would collide with the native DOM prop the
   // `...props` spread hands to <Sidebar>.
   onItemSelect?: (item: NavSelection) => void;
@@ -389,6 +392,7 @@ export function DashboardSidebar({
               }}
               providers={providers}
               selected={selected ?? null}
+              selectedRuntime={selectedRuntime}
               onRenameChat={renameChat}
               showAgentColorTags={showAgentColorTags}
             />}

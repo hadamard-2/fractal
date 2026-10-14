@@ -4,20 +4,21 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
 import { accessLevels } from '@/shared/access-levels';
-import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
+import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, HarnessCapabilities, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'panel-test', projectPath: '/work/fractal' };
 let emit: (event: ConversationStreamEvent) => void;
 let loadId = '';
 let seq = 0;
-function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['continue'] = async () => undefined) {
+const allCapabilities: HarnessCapabilities = { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
+function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['continue'] = async () => undefined, capabilities: HarnessCapabilities = allCapabilities) {
   seq = 0;
   loadId = '';
   const api: ConversationApi = {
     list: async () => ({ projects: [], providers: [] }), create: async () => null,
     open: async (selected, id) => {
       loadId = id;
-      return { summary: { ref: selected, title: 'Fix parser', updatedAt: 1, runtime, captureCompleteness: 'complete' }, capabilities: { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false } };
+      return { summary: { ref: selected, title: 'Fix parser', updatedAt: 1, runtime, captureCompleteness: 'complete' }, capabilities };
     },
     close: async () => undefined, continue: send, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), previewAttachment: vi.fn(async () => ({ kind: 'missing' as const })), openAttachment: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
     onEvent: (listener) => { emit = listener; return () => undefined; },
@@ -459,4 +460,34 @@ test('a send refused for its access shows the reason and keeps the draft', async
   await user.click(screen.getByRole('button', { name: 'Submit' }));
   expect((await screen.findByRole('alert')).textContent).toBe('Bypass is turned off in Settings');
   expect((input as HTMLTextAreaElement).value).toBe('Go');
+});
+
+test('reports the runtime it loads, not the placeholder before the open settles, and follows later changes', async () => {
+  install('active-externally');
+  const onRuntimeChange = vi.fn();
+  render(<ConversationPanel conversationRef={claudeRef} onRuntimeChange={onRuntimeChange} />);
+  await ready(claudeRef);
+  await waitFor(() => expect(onRuntimeChange).toHaveBeenLastCalledWith(claudeRef, 'active-externally'));
+  expect(onRuntimeChange).not.toHaveBeenCalledWith(claudeRef, 'unknown');
+  act(() => emit({ ref: claudeRef, loadId, seq: seq++, type: 'runtime.changed', runtime: 'idle' }));
+  await waitFor(() => expect(onRuntimeChange).toHaveBeenLastCalledWith(claudeRef, 'idle'));
+});
+
+test.each([
+  [{ approvals: true, questions: false }, 'Claude Code question routing is unavailable. Fractal will not bypass native permissions.'],
+  [{ approvals: false, questions: true }, 'Claude Code approval routing is unavailable. Fractal will not bypass native permissions.'],
+  [{ approvals: false, questions: false }, 'Claude Code approval and question routing are unavailable. Fractal will not bypass native permissions.'],
+])('names the routing the agent cannot do (%o)', async (routing, message) => {
+  install('idle', undefined, { ...allCapabilities, ...routing });
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  expect((await screen.findByText(message)).getAttribute('role')).toBe('status');
+});
+
+test('shows no routing notice when the agent can route approvals and questions', async () => {
+  install('idle');
+  render(<ConversationPanel conversationRef={claudeRef} />);
+  await ready(claudeRef);
+  await waitFor(() => expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false));
+  expect(screen.queryByText(/routing (is|are) unavailable/)).toBeNull();
 });

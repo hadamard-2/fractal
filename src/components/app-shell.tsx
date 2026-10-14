@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { useConversationHistory, type ConversationHistory } from '@/renderer/use-conversation-history';
 import { DashboardSidebar } from '@/components/sidebar-03/app-sidebar';
 import { providerName, runtimeLabel, type NavSelection } from '@/components/sidebar-03/nav-main';
-import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ConversationRuntime } from '@/shared/conversation-contract';
 import { ProjectPickerDialog } from '@/components/conversation/project-picker-dialog';
 import { useStartConversation } from '@/components/conversation/use-start-conversation';
 import { isAppShortcut } from '@/renderer/shortcuts';
@@ -36,6 +36,10 @@ export type ShellContext = {
   selectedRef: ConversationRef | null;
   history: ConversationHistory;
   actions: ShellActions;
+  // Where the open conversation reports its own runtime; null once it closes.
+  onRuntimeChange: (ref: ConversationRef, runtime: ConversationRuntime | null) => void;
+  // Bumped by Mod+R; the open conversation reopens, which re-checks its runtime.
+  refreshSignal: number;
 };
 
 /**
@@ -162,7 +166,19 @@ export function AppShell({
   const currentSummary = selectedRef && projects
     .flatMap((project) => project.conversations)
     .find((conversation) => conversationKey(conversation.ref) === conversationKey(selectedRef));
-  const selectedRuntime = currentSummary?.runtime ?? selectedItem?.runtime;
+  /*
+    The history list probes each session's runtime when it is listed, so it goes
+    stale: a session another process picks up afterwards still lists as idle.
+    The open conversation probes again on open and hears every change after, so
+    its runtime wins for the selected chat.
+  */
+  const [openRuntime, setOpenRuntime] = useState<{ key: string; runtime: ConversationRuntime } | null>(null);
+  const reportRuntime = useCallback((ref: ConversationRef, runtime: ConversationRuntime | null) => {
+    const key = conversationKey(ref);
+    setOpenRuntime((current) => runtime ? { key, runtime } : current?.key === key ? null : current);
+  }, []);
+  const liveRuntime = selectedRef && openRuntime?.key === conversationKey(selectedRef) ? openRuntime.runtime : undefined;
+  const selectedRuntime = liveRuntime ?? currentSummary?.runtime ?? selectedItem?.runtime;
 
   useEffect(() => {
     onProjectPathChange?.(selectedRef?.projectPath ?? null);
@@ -269,6 +285,7 @@ export function AppShell({
           }}
           searchOpen={searchOpen}
           selected={selectedRef}
+          selectedRuntime={liveRuntime}
           style={{
             top: 'var(--app-bar-height)',
             height: 'calc(100svh - var(--app-bar-height))',
@@ -280,7 +297,7 @@ export function AppShell({
         <SidebarInset className="min-h-0 overflow-hidden" ref={insetRef}>
           {/* Fades whatever scrolls up to the app bar into its background instead of cutting it off. */}
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-linear-to-b from-background to-transparent" />
-          {children({ selectedRef, history, actions })}
+          {children({ selectedRef, history, actions, onRuntimeChange: reportRuntime, refreshSignal: historyRefreshes })}
         </SidebarInset>
       </div>
       <ProjectPickerDialog onOpenChange={setPickerOpen} onPick={(target) => void starter.start(target)} open={pickerOpen} projects={visibleProjects(projects, projectVisibility.visibility, 'startable')} />

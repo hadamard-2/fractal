@@ -160,6 +160,7 @@ export default function NavMain({
   groups,
   providers,
   selected,
+  selectedRuntime,
   onSelect,
   onCreated,
   onMoveProject,
@@ -171,6 +172,8 @@ export default function NavMain({
   groups: ProjectConversationGroup[];
   providers: HarnessStatus[];
   selected: ConversationRef | null;
+  // The open conversation's own runtime, which can be newer than the listed one.
+  selectedRuntime?: ConversationRuntime;
   onSelect: (item: NavSelection) => void;
   onCreated: (ref: ConversationRef) => void;
   onMoveProject?: (source: string, target: string) => void;
@@ -296,6 +299,7 @@ export default function NavMain({
                     const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
                     const chatId = conversationKey(conversation.ref);
                     const isEditing = editingChat === chatId;
+                    const runtime = (isSelected && selectedRuntime) || conversation.runtime;
                     return (
                       <SortableRow disabled={!onMoveChat || isEditing} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
                       {({ ref: chatRef, handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget }) => (
@@ -325,14 +329,14 @@ export default function NavMain({
                           isActive={isSelected}
                         >
                           <button
-                            aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(conversation.runtime)].filter(Boolean).join(', ')}
+                            aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
                             ref={chatHandleRef}
                             onClick={() => onSelect({
                               ref: conversation.ref,
                               title: conversation.title,
                               section: group.displayName,
-                              runtime: conversation.runtime,
+                              runtime,
                             })}
                             type="button"
                           >

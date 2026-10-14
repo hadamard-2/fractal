@@ -66,7 +66,7 @@ While a turn is actively running in a separately launched Codex process, open th
 2. Confirm that `claude --version` is at or above the Claude floor in `src/main/harness/version-floor.ts`, and that Fractal's home screen shows no version warning for Claude. Fractal runs Claude through the Agent SDK pinned in `package.json`, against this installed `claude`.
 3. From the temporary repository, run `claude` and start a harmless conversation. Ask it to acknowledge the task without changing files. Note the native session ID, then wait until the run is idle before leaving the CLI.
 4. Start Fractal. Under the temporary project, open the Claude conversation with that exact native session ID. Confirm that the native user prompt and response each appear once.
-5. Check the capabilities Fractal reports in the conversation header, directly below the provider/runtime/capture line. When routing is unavailable, this visible status names approval routing, question routing, or both and states that Fractal will not bypass native permissions.
+5. Check the capabilities Fractal reports for the conversation. When routing is unavailable, a status line directly above the composer names approval routing, question routing, or both and states that Fractal will not bypass native permissions; when both are supported, no such line appears.
 6. Exercise the capabilities reported for this installed Claude version:
    - If approvals are supported, first inspect the installed CLI's current help and permission settings using the commands documented by that installed version. Record the original permission configuration outside the test log, configure a temporary-repository operation to require an approval, and restore the original configuration when the test ends. Provider versions differ, so this guide intentionally does not prescribe a universal permission flag.
    - Ask Claude to perform that known approval-requiring operation: harmlessly create `claude-approval-fixture.txt` inside the temporary repository with non-sensitive disposable text. Exercise allow-once in Fractal. Do not approve deletion, network access, or any operation outside the temporary repository. If no approval is requested, record the approval check as `inconclusive`, recheck the installed CLI help/settings, safely configure the named operation to require approval, and retry; never count a no-request run as a pass.
@@ -83,7 +83,7 @@ While a turn is actively running in a separately launched Codex process, open th
 
 ### Claude external-ownership check
 
-Start a turn in a separately launched `claude` process and keep that run active. Open the same conversation in Fractal. Fractal must remain read-only while the external process owns the session. It must label the session `active-externally` when ownership is proven, or `unknown` when it cannot prove the state, and it must not offer continuation or a bypass. After the native process becomes idle, refresh or reopen the conversation before continuing in Fractal.
+Start a turn in a separately launched `claude` process and keep that run active. Open the same conversation in Fractal. Fractal must remain read-only while the external process owns the session. It must label the session `active-externally` when ownership is proven, or `unknown` when it cannot prove the state, and it must not offer continuation or a bypass. After the native process becomes idle, refresh (Mod+R) or reopen the conversation; confirm the label changes to Idle and the composer accepts input before continuing in Fractal.
 
 ## Pass criteria
 
