@@ -208,10 +208,25 @@ export type UserDecision =
   | { kind: 'deny'; reason?: string }
   | { kind: 'answer'; answers: Record<string, string> };
 
+export interface QuestionChoice { value: string; label: string; description?: string }
+
+/**
+ * One question of a question request. Its answer is keyed by fieldId in the decision's answers.
+ * A multiSelect answer is the chosen values joined with ", ".
+ */
+export interface QuestionField {
+  fieldId: string;
+  prompt: string;
+  choices?: QuestionChoice[];
+  allowFreeText: boolean;
+  multiSelect?: boolean;
+}
+
 export type BlockingRequest =
   // plan: set when approving runs the agent's plan rather than one operation; empty when the agent proposed it unwritten.
   | { id: string; kind: 'approval'; provider: ProviderId; title: string; operation: string; plan?: string; rememberScope?: string; status: 'open' | 'resolved'; decision?: UserDecision }
-  | { id: string; kind: 'question'; provider: ProviderId; prompt: string; fieldId: string; choices?: Array<{ value: string; label: string }>; allowFreeText: boolean; status: 'open' | 'resolved'; decision?: UserDecision };
+  // A question left unanswered has no entry in the decision's answers.
+  | { id: string; kind: 'question'; provider: ProviderId; questions: QuestionField[]; status: 'open' | 'resolved'; decision?: UserDecision };
 
 export type PlanProposalStatus = 'proposed' | 'approved' | 'rejected' | 'interrupted';
 

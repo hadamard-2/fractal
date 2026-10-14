@@ -143,7 +143,17 @@ describe('native conversation event validation', () => {
 
   test('rejects sparse question choices', () => {
     const sparseChoices = new Array(1);
-    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'codex', prompt: 'Choose', fieldId: 'choice', choices: sparseChoices, allowFreeText: false, status: 'open' } })).toThrow('Invalid conversation stream event');
+    expect(() => parseConversationStreamEvent({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'codex', questions: [{ fieldId: 'choice', prompt: 'Choose', choices: sparseChoices, allowFreeText: false }], status: 'open' } })).toThrow('Invalid conversation stream event');
+  });
+
+  test('carries several questions with choice descriptions, and rejects none, sparse or repeated field IDs', () => {
+    const question = (fieldId: string) => ({ fieldId, prompt: `${fieldId}?`, allowFreeText: true });
+    const opened = (questions: unknown) => ({ loadId, seq: 1, ref, type: 'request.opened', request: { id: 'request-1', kind: 'question', provider: 'claude', questions, status: 'open' } });
+    const questions = [{ ...question('where'), choices: [{ value: 'Production', label: 'Production', description: 'Live' }] }, { ...question('checks'), multiSelect: true }];
+    expect(parseConversationStreamEvent(opened(questions))).toMatchObject({ request: { questions } });
+    expect(() => parseConversationStreamEvent(opened([]))).toThrow('Invalid conversation stream event');
+    expect(() => parseConversationStreamEvent(opened(new Array(1)))).toThrow('Invalid conversation stream event');
+    expect(() => parseConversationStreamEvent(opened([question('where'), question('where')]))).toThrow('Invalid conversation stream event');
   });
 
   test('accepts user message attachments and rejects relative paths or unknown kinds', () => {

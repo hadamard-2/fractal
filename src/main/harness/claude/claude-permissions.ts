@@ -1,21 +1,12 @@
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { claudeQuestionFields } from './claude-questions';
 import type { BlockingRequest, UserDecision } from '@/shared/conversation-contract';
 
 /** The reason a prompt is denied when its turn ends or is stopped before anyone answers. */
 export const TURN_ENDED = 'Claude turn ended';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1_000;
-
-// passthrough, not strict: a question with fields this module does not read must still reach the user rather than be denied as invalid.
-const QUESTION_INPUT = z.object({
-  questions: z.array(z.object({
-    question: z.string().min(1),
-    header: z.string().min(1),
-    options: z.array(z.object({ label: z.string().min(1), description: z.string().optional() }).passthrough()).optional(),
-    multiSelect: z.boolean().optional(),
-  }).passthrough()).min(1),
-}).passthrough();
 
 const COMMAND_INPUT = z.object({ command: z.string().min(1) }).passthrough();
 
@@ -44,8 +35,6 @@ export function createClaudePermissions(options: {
     if (closedReason) return denial(closedReason);
     if (toolName === 'AskUserQuestion') {
       if (options.questions === false) return denial('Question routing is unavailable');
-      const questions = QUESTION_INPUT.safeParse(input);
-      if (questions.success && questions.data.questions.length !== 1) return denial('Multiple questions are not supported');
     } else if (options.approvals === false) return denial('Approval routing is unavailable');
     const request = blockingRequest(toolName, toolUseID, input);
     if (!request) return denial('Invalid permission request');
@@ -60,10 +49,11 @@ export function createClaudePermissions(options: {
       if (controller.signal.aborted) return denial(abortReason(controller.signal));
       if (decision.kind === 'allow-once' && request.kind === 'approval') return { behavior: 'allow', updatedInput: input };
       if (decision.kind === 'answer' && request.kind === 'question') {
-        // The SDK's AskUserQuestion output keys answers by question text; fieldId (the header) is the UI's key.
-        const answer = Object.hasOwn(decision.answers, request.fieldId) ? decision.answers[request.fieldId] : undefined;
-        if (answer === undefined) return denial('Unsupported permission decision');
-        return { behavior: 'allow', updatedInput: { ...input, answers: { [request.prompt]: answer } } };
+        // Each fieldId is the question's own text, which is how the SDK's AskUserQuestion output keys answers.
+        const fieldIds = new Set(request.questions.map((question) => question.fieldId));
+        const answered = Object.keys(decision.answers);
+        if (answered.length === 0 || answered.some((fieldId) => !fieldIds.has(fieldId))) return denial('Unsupported permission decision');
+        return { behavior: 'allow', updatedInput: { ...input, answers: { ...decision.answers } } };
       }
       if (decision.kind === 'deny') return denial(decision.reason ?? 'Permission denied');
       return denial('Unsupported permission decision');
@@ -88,14 +78,9 @@ export function createClaudePermissions(options: {
 
 function blockingRequest(toolName: string, id: string, input: Record<string, unknown>): BlockingRequest | undefined {
   if (toolName === 'AskUserQuestion') {
-    const question = QUESTION_INPUT.safeParse(input);
-    if (!question.success) return undefined;
-    const first = question.data.questions[0];
-    return {
-      id, kind: 'question', provider: 'claude', prompt: first.question, fieldId: first.header,
-      ...(first.options ? { choices: first.options.map((option) => ({ value: option.label, label: option.label })) } : {}),
-      allowFreeText: !first.options?.length, status: 'open',
-    };
+    const questions = claudeQuestionFields(input);
+    if (!questions) return undefined;
+    return { id, kind: 'question', provider: 'claude', questions, status: 'open' };
   }
   if (toolName === 'ExitPlanMode') {
     // Claude Code reads the plan file into the input; it is missing when the file wasn't written yet.

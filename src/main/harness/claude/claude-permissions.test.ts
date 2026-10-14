@@ -65,21 +65,23 @@ describe('createClaudePermissions', () => {
     ]);
   });
 
-  test('routes AskUserQuestion as a question and returns the answer under the question Claude asked', async () => {
-    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { deploy: 'Production' } }));
+  test('routes AskUserQuestion as a question keyed by the question Claude asked, with Other always offered', async () => {
+    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { 'Where?': 'Production' } }));
     const { canUseTool } = createClaudePermissions({ onRequest });
     await expect(canUseTool('AskUserQuestion', deployQuestion, call('question-1'))).resolves.toEqual({
       behavior: 'allow', updatedInput: { ...deployQuestion, answers: { 'Where?': 'Production' } },
     });
     expect(onRequest).toHaveBeenCalledWith({
-      id: 'question-1', kind: 'question', provider: 'claude', prompt: 'Where?', fieldId: 'deploy',
-      choices: [{ value: 'Production', label: 'Production' }, { value: 'Staging', label: 'Staging' }],
-      allowFreeText: false, status: 'open',
+      id: 'question-1', kind: 'question', provider: 'claude', status: 'open',
+      questions: [{
+        fieldId: 'Where?', prompt: 'Where?', allowFreeText: true,
+        choices: [{ value: 'Production', label: 'Production', description: 'Live' }, { value: 'Staging', label: 'Staging', description: 'Test' }],
+      }],
     }, expect.any(AbortSignal));
   });
 
   test('routes a question whose options carry previews, which the SDK declares', async () => {
-    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { layout: 'Grid' } }));
+    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { 'Which layout?': 'Grid' } }));
     const { canUseTool } = createClaudePermissions({ onRequest });
     const input = { questions: [{
       question: 'Which layout?', header: 'layout', multiSelect: false,
@@ -89,11 +91,27 @@ describe('createClaudePermissions', () => {
     expect(onRequest).toHaveBeenCalledOnce();
   });
 
-  test('denies an answer that does not name the question header, rather than sending an empty answer', async () => {
-    const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: { other: 'x' } }));
+  test('routes several questions as one request and returns only the ones answered', async () => {
+    const onRequest = vi.fn<(request: BlockingRequest) => Promise<UserDecision>>(async () => ({ kind: 'answer', answers: { 'Which checks?': 'Lint, Tests' } }));
     const { canUseTool } = createClaudePermissions({ onRequest });
+    const input = { questions: [
+      { question: 'Where?', header: 'deploy', multiSelect: false, options: [{ label: 'Production', description: 'Live' }] },
+      { question: 'Which checks?', header: 'checks', multiSelect: true, options: [{ label: 'Lint', description: '' }, { label: 'Tests', description: '' }] },
+    ] };
+    await expect(canUseTool('AskUserQuestion', input, call('many'))).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which checks?': 'Lint, Tests' } } });
+    expect(onRequest.mock.calls[0]?.[0]).toMatchObject({
+      questions: [
+        { fieldId: 'Where?', prompt: 'Where?', allowFreeText: true },
+        { fieldId: 'Which checks?', prompt: 'Which checks?', allowFreeText: true, multiSelect: true },
+      ],
+    });
+  });
+
+  test('denies an answer that names no question, or none at all, rather than sending it on', async () => {
+    const decisions: UserDecision[] = [{ kind: 'answer', answers: { other: 'x' } }, { kind: 'answer', answers: {} }];
+    const { canUseTool } = createClaudePermissions({ onRequest: async () => decisions.shift() ?? { kind: 'deny' } });
     await expect(canUseTool('AskUserQuestion', deployQuestion, call('question-3'))).resolves.toEqual({ behavior: 'deny', message: 'Unsupported permission decision' });
-    expect(onRequest).toHaveBeenCalledOnce();
+    await expect(canUseTool('AskUserQuestion', deployQuestion, call('question-4'))).resolves.toEqual({ behavior: 'deny', message: 'Unsupported permission decision' });
   });
 
   test('enforces approval and question routing independently', async () => {
@@ -108,14 +126,14 @@ describe('createClaudePermissions', () => {
     expect(questionsOnly).not.toHaveBeenCalled();
   });
 
-  test('denies several questions at once without routing any of them', async () => {
+  test('denies two questions with the same text, whose answers Claude could not tell apart', async () => {
     const onRequest = vi.fn(async (): Promise<UserDecision> => ({ kind: 'answer', answers: {} }));
     const { canUseTool } = createClaudePermissions({ onRequest });
     const input = { questions: [
       { question: 'Where?', header: 'deploy', multiSelect: false },
-      { question: 'When?', header: 'timing', multiSelect: false },
+      { question: 'Where?', header: 'again', multiSelect: false },
     ] };
-    await expect(canUseTool('AskUserQuestion', input, call('many'))).resolves.toEqual({ behavior: 'deny', message: 'Multiple questions are not supported' });
+    await expect(canUseTool('AskUserQuestion', input, call('twins'))).resolves.toEqual({ behavior: 'deny', message: 'Invalid permission request' });
     expect(onRequest).not.toHaveBeenCalled();
   });
 

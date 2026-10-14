@@ -112,7 +112,7 @@ test('pins the highest-priority unresolved request and forwards decisions and in
   render(<ConversationPanel conversationRef={ref} />);
   await ready();
   act(() => {
-    emit({ ref, loadId, seq: seq++, type: 'request.opened', request: { id: 'question', kind: 'question', provider: 'codex', prompt: 'Which option?', fieldId: 'choice', allowFreeText: true, status: 'open' } });
+    emit({ ref, loadId, seq: seq++, type: 'request.opened', request: { id: 'question', kind: 'question', provider: 'codex', questions: [{ fieldId: 'choice', prompt: 'Which option?', allowFreeText: true }], status: 'open' } });
     emit({ ref, loadId, seq: seq++, type: 'request.opened', request: { id: 'approval', kind: 'approval', provider: 'codex', title: 'Run command?', operation: 'pnpm lint', status: 'open' } });
   });
   expect(screen.getByRole('region', { name: 'Approval request' })).toBeTruthy();

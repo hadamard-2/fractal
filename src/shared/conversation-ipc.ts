@@ -21,6 +21,7 @@ import {
   type PromptAttachment,
   type PromptInput,
   type ProviderId,
+  type QuestionField,
   type TurnAccess,
   type TurnBlock,
   type UserDecision,
@@ -332,6 +333,17 @@ function cloneAction(value: unknown): AgentAction {
   }
 }
 
+const MAX_QUESTIONS = 20;
+
+function cloneQuestionField(value: unknown): QuestionField {
+  if (!plainObject(value) || !nonblankText(value.fieldId) || !text(value.prompt) || typeof value.allowFreeText !== 'boolean' || (value.multiSelect !== undefined && typeof value.multiSelect !== 'boolean') || (value.choices !== undefined && !denseArray(value.choices))) invalidEvent();
+  const choices = value.choices === undefined ? undefined : mapDense(value.choices, (choice) => {
+    if (!plainObject(choice) || !nonblankText(choice.value) || !text(choice.label) || (choice.description !== undefined && !text(choice.description))) invalidEvent();
+    return { value: choice.value, label: choice.label, ...(choice.description === undefined ? {} : { description: choice.description as string }) };
+  });
+  return { fieldId: value.fieldId, prompt: value.prompt as string, ...(choices === undefined ? {} : { choices }), allowFreeText: value.allowFreeText as boolean, ...(value.multiSelect === undefined ? {} : { multiSelect: value.multiSelect as boolean }) };
+}
+
 function cloneBlockingRequest(value: unknown): BlockingRequest {
   if (!plainObject(value) || !nonblankText(value.id) || !provider(value.provider) || !['open', 'resolved'].includes(String(value.status))) invalidEvent();
   const decision = value.decision === undefined ? {} : { decision: cloneUserDecision(value.decision, invalidEvent) };
@@ -340,12 +352,10 @@ function cloneBlockingRequest(value: unknown): BlockingRequest {
     return { id: value.id, kind: 'approval', provider: value.provider, title: value.title as string, operation: value.operation as string, ...(value.plan === undefined ? {} : { plan: value.plan as string }), ...(value.rememberScope === undefined ? {} : { rememberScope: value.rememberScope as string }), status: value.status as 'open' | 'resolved', ...decision };
   }
   if (value.kind === 'question') {
-    if (!text(value.prompt) || !nonblankText(value.fieldId) || typeof value.allowFreeText !== 'boolean' || (value.choices !== undefined && !denseArray(value.choices))) invalidEvent();
-    const choices = value.choices === undefined ? undefined : mapDense(value.choices, (choice) => {
-      if (!plainObject(choice) || !nonblankText(choice.value) || !text(choice.label)) invalidEvent();
-      return { value: choice.value, label: choice.label };
-    });
-    return { id: value.id, kind: 'question', provider: value.provider, prompt: value.prompt as string, fieldId: value.fieldId as string, ...(choices === undefined ? {} : { choices }), allowFreeText: value.allowFreeText as boolean, status: value.status as 'open' | 'resolved', ...decision };
+    if (!denseArray(value.questions) || value.questions.length === 0 || value.questions.length > MAX_QUESTIONS) invalidEvent();
+    const questions = mapDense(value.questions, cloneQuestionField);
+    if (new Set(questions.map((question) => question.fieldId)).size !== questions.length) invalidEvent();
+    return { id: value.id, kind: 'question', provider: value.provider, questions, status: value.status as 'open' | 'resolved', ...decision };
   }
   invalidEvent();
 }

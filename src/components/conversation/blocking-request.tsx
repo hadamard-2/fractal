@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { BlockingRequest as BlockingRequestData, UserDecision } from '@/shared/conversation-contract';
 import { PlanText } from './plan-block';
+import { QuestionRequest, ResolvedQuestions } from './question-request';
 
 type ResolveRequest = (requestId: string, decision: UserDecision) => void | Promise<void>;
 
@@ -12,7 +13,7 @@ function DecisionAudit({ decision }: { decision: UserDecision | undefined }) {
     case 'allow-once': return <p>allow-once</p>;
     case 'allow-and-remember': return <><p>allow-and-remember</p><pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs">{decision.scope}</pre></>;
     case 'deny': return <><p>deny</p>{decision.reason !== undefined && <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs">{decision.reason}</pre>}</>;
-    case 'answer': return <dl className="space-y-1">{Object.entries(decision.answers).map(([fieldId, answer]) => <div key={fieldId}><dt className="font-mono text-xs text-muted-foreground">{fieldId}</dt><dd className="whitespace-pre-wrap">{answer}</dd></div>)}</dl>;
+    case 'answer': return null;
   }
 }
 
@@ -24,7 +25,6 @@ function BlockingRequestContent({ request, onResolve }: { request: BlockingReque
   const submittedFor = useRef<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [denialReason, setDenialReason] = useState('');
-  const [freeText, setFreeText] = useState('');
   const disabled = submitted || submittedFor.current === request.id || request.status === 'resolved';
 
   const resolve = (decision: UserDecision) => {
@@ -42,7 +42,7 @@ function BlockingRequestContent({ request, onResolve }: { request: BlockingReque
     if (request.kind === 'approval') {
       return <section aria-label="Resolved approval request" className="space-y-2 rounded-md border px-3 py-2 text-sm text-muted-foreground"><p className="font-medium text-foreground">{request.title}</p><ApprovalOperation operation={request.operation} /><DecisionAudit decision={request.decision} /></section>;
     }
-    return <section aria-label="Resolved question request" className="space-y-2 rounded-md border px-3 py-2 text-sm text-muted-foreground"><p className="whitespace-pre-wrap text-foreground">{request.prompt}</p><DecisionAudit decision={request.decision} /></section>;
+    return <ResolvedQuestions request={request} />;
   }
 
   if (request.kind === 'approval' && request.plan !== undefined) {
@@ -79,13 +79,7 @@ function BlockingRequestContent({ request, onResolve }: { request: BlockingReque
     );
   }
 
-  return (
-    <section className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3" aria-label="Question request">
-      <p className="whitespace-pre-wrap font-medium">{request.prompt}</p>
-      {request.choices !== undefined && request.choices.length > 0 && <div className="flex flex-wrap gap-2" role="group" aria-label="Choices">{request.choices.map((choice) => <Button disabled={disabled} key={choice.value} onClick={() => resolve({ kind: 'answer', answers: { [request.fieldId]: choice.value } })} size="sm" type="button" variant="secondary">{choice.label}</Button>)}</div>}
-      {request.allowFreeText && <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); const answer = freeText.trim(); if (answer) resolve({ kind: 'answer', answers: { [request.fieldId]: answer } }); }}><label className="sr-only" htmlFor={`request-${request.id}-answer`}>Other answer</label><Textarea className="min-h-14 flex-1" disabled={disabled} id={`request-${request.id}-answer`} onChange={(event) => setFreeText(event.target.value)} value={freeText} /><Button disabled={disabled || !freeText.trim()} size="sm" type="submit">Submit answer</Button></form>}
-    </section>
-  );
+  return <QuestionRequest disabled={disabled} onResolve={resolve} request={request} />;
 }
 
 export function BlockingRequest({ request, onResolve }: { request: BlockingRequestData; onResolve: ResolveRequest }) {

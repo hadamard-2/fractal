@@ -236,10 +236,7 @@ function normalizeQuestion(record: ClaudeHistoryRecord, turnId: string, uuid: st
     id,
     kind: 'question',
     provider: 'claude',
-    prompt,
-    fieldId,
-    ...(choices ? { choices } : {}),
-    allowFreeText,
+    questions: [{ fieldId, prompt, ...(choices ? { choices } : {}), allowFreeText }],
     status: 'open',
   };
   const events = [event(uuid, 'question', observedAt, { kind: 'request-opened', turnId, request })];

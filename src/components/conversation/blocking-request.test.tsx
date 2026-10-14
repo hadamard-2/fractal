@@ -14,9 +14,19 @@ const approvalRequest: Extract<BlockingRequestData, { kind: 'approval' }> = {
 };
 
 const questionRequest: Extract<BlockingRequestData, { kind: 'question' }> = {
-  id: 'question-1', kind: 'question', provider: 'claude', prompt: 'Choose an approach',
-  fieldId: 'answer', choices: [{ value: 'option-a', label: 'Use option A' }, { value: 'option-b', label: 'Use option B' }],
-  allowFreeText: true, status: 'open',
+  id: 'question-1', kind: 'question', provider: 'claude', status: 'open',
+  questions: [{
+    fieldId: 'answer', prompt: 'Choose an approach', allowFreeText: true,
+    choices: [{ value: 'option-a', label: 'Use option A', description: 'The quick one' }, { value: 'option-b', label: 'Use option B' }],
+  }],
+};
+
+const twoQuestions: Extract<BlockingRequestData, { kind: 'question' }> = {
+  id: 'question-2', kind: 'question', provider: 'claude', status: 'open',
+  questions: [
+    { fieldId: 'focus', prompt: 'What should we work on?', allowFreeText: true, choices: [{ value: 'Benchmark', label: 'Benchmark' }, { value: 'Cleanup', label: 'Cleanup' }] },
+    { fieldId: 'checks', prompt: 'Which checks?', allowFreeText: true, multiSelect: true, choices: [{ value: 'Lint', label: 'Lint' }, { value: 'Tests', label: 'Tests' }] },
+  ],
 };
 
 describe('BlockingRequest', () => {
@@ -62,31 +72,117 @@ describe('BlockingRequest', () => {
     expect(resolve).toHaveBeenLastCalledWith('request-2', { kind: 'deny', reason: 'Tests are running' });
   });
 
-  test('questions return the provider-supplied choice by field ID', async () => {
+  test('a question shows each choice with its description and number, and answers with the chosen value', async () => {
     const user = userEvent.setup();
     const resolve = vi.fn();
     render(<BlockingRequest request={questionRequest} onResolve={resolve} />);
 
-    await user.click(screen.getByRole('button', { name: 'Use option B' }));
+    const optionA = screen.getByRole('radio', { name: /Use option A/ });
+    expect(optionA.textContent).toContain('The quick one');
+    expect(optionA.textContent).toContain('1');
+    expect(screen.queryByText('1/1')).toBeNull();
+    const submit = screen.getByRole('button', { name: /Submit/ });
+    expect(submit.hasAttribute('disabled')).toBe(true);
 
+    await user.click(screen.getByRole('radio', { name: /Use option B/ }));
+    expect(screen.getByRole('radio', { name: /Use option B/ }).getAttribute('aria-checked')).toBe('true');
+    expect(resolve).not.toHaveBeenCalled();
+    await user.click(submit);
     expect(resolve).toHaveBeenCalledWith('question-1', { kind: 'answer', answers: { answer: 'option-b' } });
   });
 
-  test('submits free text only when the provider permits it and waits for native resolution', async () => {
+  test('number keys pick a choice and Ctrl+Enter submits', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    render(<BlockingRequest request={questionRequest} onResolve={resolve} />);
+
+    await user.keyboard('2');
+    expect(screen.getByRole('radio', { name: /Use option B/ }).getAttribute('aria-checked')).toBe('true');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(resolve).toHaveBeenCalledWith('question-1', { kind: 'answer', answers: { answer: 'option-b' } });
+  });
+
+  test('typing in Other picks it, and its text is the answer', async () => {
     const user = userEvent.setup();
     const resolve = vi.fn(() => new Promise<void>(() => undefined));
     const { rerender } = render(<BlockingRequest request={questionRequest} onResolve={resolve} />);
 
+    await user.click(screen.getByRole('radio', { name: /Use option A/ }));
     await user.type(screen.getByLabelText('Other answer'), 'Use a hybrid');
-    await user.click(screen.getByRole('button', { name: 'Submit answer' }));
+    expect(screen.getByRole('radio', { name: /Other/ }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: /Use option A/ }).getAttribute('aria-checked')).toBe('false');
+    await user.keyboard('{Enter}');
     expect(resolve).toHaveBeenCalledWith('question-1', { kind: 'answer', answers: { answer: 'Use a hybrid' } });
-    expect(screen.getByRole('button', { name: 'Use option A' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('radio', { name: /Use option A/ }).hasAttribute('disabled')).toBe(true);
 
-    rerender(<BlockingRequest request={{ ...questionRequest, status: 'resolved' }} onResolve={resolve} />);
-    expect(screen.queryByRole('button', { name: 'Use option A' })).toBeNull();
-
-    rerender(<BlockingRequest request={{ ...questionRequest, id: 'question-2', allowFreeText: false }} onResolve={resolve} />);
+    rerender(<BlockingRequest request={{ ...questionRequest, id: 'question-3', questions: [{ ...questionRequest.questions[0], allowFreeText: false }] }} onResolve={resolve} />);
     expect(screen.queryByLabelText('Other answer')).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Other/ })).toBeNull();
+  });
+
+  test('a question without choices takes a typed answer', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    render(<BlockingRequest request={{ ...questionRequest, questions: [{ fieldId: 'why', prompt: 'Why?', allowFreeText: true }] }} onResolve={resolve} />);
+
+    await user.type(screen.getByLabelText('Answer'), 'Release day');
+    await user.click(screen.getByRole('button', { name: /Submit/ }));
+    expect(resolve).toHaveBeenCalledWith('question-1', { kind: 'answer', answers: { why: 'Release day' } });
+  });
+
+  test('steps through several questions with Next and Back, keeping each answer', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    render(<BlockingRequest request={twoQuestions} onResolve={resolve} />);
+
+    expect(screen.getByText('1/2')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    await user.click(screen.getByRole('radio', { name: /Cleanup/ }));
+    await user.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(screen.getByText('2/2')).toBeTruthy();
+    expect(screen.getByText('Which checks?')).toBeTruthy();
+    await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Tests/ }));
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('radio', { name: /Cleanup/ }).getAttribute('aria-checked')).toBe('true');
+    await user.click(screen.getByRole('button', { name: /Next/ }));
+    expect(screen.getByRole('checkbox', { name: /Tests/ }).getAttribute('aria-checked')).toBe('true');
+
+    await user.click(screen.getByRole('button', { name: /Submit/ }));
+    expect(resolve).toHaveBeenCalledWith('question-2', { kind: 'answer', answers: { focus: 'Cleanup', checks: 'Lint, Tests' } });
+  });
+
+  test('Skip leaves a question unanswered, and skipping every question declines them', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    const { rerender } = render(<BlockingRequest request={twoQuestions} onResolve={resolve} />);
+
+    await user.click(screen.getByRole('button', { name: 'Skip' }));
+    await user.click(screen.getByRole('checkbox', { name: /Tests/ }));
+    await user.click(screen.getByRole('button', { name: /Submit/ }));
+    expect(resolve).toHaveBeenLastCalledWith('question-2', { kind: 'answer', answers: { checks: 'Tests' } });
+
+    rerender(<BlockingRequest request={{ ...twoQuestions, id: 'question-4' }} onResolve={resolve} />);
+    await user.click(screen.getByRole('button', { name: 'Skip' }));
+    await user.click(screen.getByRole('button', { name: 'Skip' }));
+    expect(resolve).toHaveBeenLastCalledWith('question-4', { kind: 'deny', reason: 'The user skipped the questions' });
+  });
+
+  test('dismissing declines the questions, and collapsing hides them without answering', async () => {
+    const user = userEvent.setup();
+    const resolve = vi.fn();
+    render(<BlockingRequest request={twoQuestions} onResolve={resolve} />);
+
+    await user.click(screen.getByRole('button', { name: 'Collapse question' }));
+    expect(screen.queryByRole('radio', { name: /Cleanup/ })).toBeNull();
+    expect(screen.getByText('What should we work on?')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Expand question' }));
+    expect(screen.getByRole('radio', { name: /Cleanup/ })).toBeTruthy();
+    expect(resolve).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss question' }));
+    expect(resolve).toHaveBeenCalledWith('question-2', { kind: 'deny', reason: 'The user dismissed the question' });
   });
 
   test('scopes drafts and submission state to the current request ID', async () => {
@@ -105,7 +201,7 @@ describe('BlockingRequest', () => {
     rerender(<BlockingRequest request={{ ...questionRequest, id: 'question-2' }} onResolve={resolve} />);
     await user.type(screen.getByLabelText('Other answer'), 'First answer');
     rerender(<BlockingRequest request={{ ...questionRequest, id: 'question-3' }} onResolve={resolve} />);
-    expect((screen.getByLabelText('Other answer') as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByLabelText('Other answer') as HTMLInputElement).value).toBe('');
   });
 
   test('retains native request audit data after resolution and preserves operation whitespace', () => {
@@ -118,11 +214,12 @@ describe('BlockingRequest', () => {
     expect(screen.getByText('project:/work/fractal')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Allow once' })).toBeNull();
 
-    rerender(<BlockingRequest request={{ ...questionRequest, status: 'resolved', decision: { kind: 'answer', answers: { answer: 'option-b' } } }} onResolve={vi.fn()} />);
-    expect(screen.getByText('Choose an approach')).toBeTruthy();
-    expect(screen.getByText('answer')).toBeTruthy();
-    expect(screen.getByText('option-b')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Use option B' })).toBeNull();
+    rerender(<BlockingRequest request={{ ...twoQuestions, status: 'resolved', decision: { kind: 'answer', answers: { checks: 'Lint, Tests' } } }} onResolve={vi.fn()} />);
+    expect(screen.getByText('What should we work on?')).toBeTruthy();
+    expect(screen.getByText('Skipped')).toBeTruthy();
+    expect(screen.getByText('Which checks?')).toBeTruthy();
+    expect(screen.getByText('Lint, Tests')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: /Lint/ })).toBeNull();
   });
 
   test('contains synchronous and rejected request-resolution failures while remaining one-shot', async () => {

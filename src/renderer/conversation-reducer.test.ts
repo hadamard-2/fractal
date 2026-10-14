@@ -150,7 +150,7 @@ describe('conversationReducer', () => {
   });
 
   test('resolves a request only after its ordered provider event', () => {
-    const request: BlockingRequest = { id: 'request-1', kind: 'question', provider: 'codex', prompt: 'Proceed?', fieldId: 'proceed', allowFreeText: false, status: 'open' };
+    const request: BlockingRequest = { id: 'request-1', kind: 'question', provider: 'codex', questions: [{ fieldId: 'proceed', prompt: 'Proceed?', allowFreeText: false }], status: 'open' };
     let state = loadedState();
     state = conversationReducer(state, event(0, { type: 'request.opened', request }));
     state = conversationReducer(state, event(1, { type: 'request.resolved', requestId: request.id, decision: { kind: 'answer', answers: { proceed: 'yes' } } }));

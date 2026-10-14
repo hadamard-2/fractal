@@ -485,6 +485,27 @@ describe('Codex native continuation', () => {
     await run.dispose();
   });
 
+  test('routes several questions as one request, each under its native field ID', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Ask' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitRequest({
+      id: 12, method: 'item/tool/requestUserInput',
+      params: { threadId: 'thread-1', turnId: 'turn-live', itemId: 'question-item', isBlocking: true, autoResolutionMs: null,
+        questions: [
+          { id: 'where', header: 'Where', question: 'Where?', isOther: false, isSecret: false, options: [{ label: 'Production', description: 'Live' }] },
+          { id: 'why', header: 'Why', question: 'Why?', isOther: true, isSecret: false, options: null },
+        ] },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'request-opened', request: { questions: [
+      { fieldId: 'where', prompt: 'Where?', choices: [{ value: 'Production', label: 'Production', description: 'Live' }], allowFreeText: false },
+      { fieldId: 'why', prompt: 'Why?', allowFreeText: true },
+    ] } } } });
+    await run.resolveRequest('12', { kind: 'answer', answers: { where: 'Production', why: 'Release day' } });
+    expect(server.responses).toContainEqual({ id: 12, result: { answers: { where: { answers: ['Production'] }, why: { answers: ['Release day'] } } } });
+    await run.dispose();
+  });
+
   test('scopes native events and requests to the exact resumed thread and started turn', async () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run it' });

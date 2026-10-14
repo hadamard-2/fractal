@@ -92,16 +92,18 @@ export function normalizeCodexServerRequest(request: ServerRequest, filePaths: r
   if (!isObject(request) || !isObject(request.params) || (typeof request.id !== 'string' && typeof request.id !== 'number') || typeof request.method !== 'string') return [unsupported('request:malformed', 'malformed-request', 0)];
   switch (request.method) {
     case 'item/tool/requestUserInput': {
-      if (!hasStrings(request.params, 'threadId', 'turnId', 'itemId') || request.params.questions.length !== 1) return [unsupported(`request:${String(request.id)}`, request.method, 0, request.params.turnId)];
-      const question = request.params.questions[0];
-      if (!question || !question.id || !question.question) return [unsupported(`request:${String(request.id)}`, request.method, 0, request.params.turnId)];
+      const nativeQuestions = request.params.questions;
+      if (!hasStrings(request.params, 'threadId', 'turnId', 'itemId') || !Array.isArray(nativeQuestions) || nativeQuestions.length === 0) return [unsupported(`request:${String(request.id)}`, request.method, 0, request.params.turnId)];
+      if (nativeQuestions.some((question) => !question?.id || !question.question) || new Set(nativeQuestions.map((question) => question.id)).size !== nativeQuestions.length) return [unsupported(`request:${String(request.id)}`, request.method, 0, request.params.turnId)];
       return [event(`request:${String(request.id)}`, request.method, 0, {
         kind: 'request-opened', turnId: request.params.turnId,
         request: {
-          id: String(request.id), kind: 'question', provider: 'codex', prompt: question.question,
-          fieldId: question.id,
-          ...(question.options ? { choices: question.options.map((option) => ({ value: option.label, label: option.description })) } : {}),
-          allowFreeText: question.isOther, status: 'open',
+          id: String(request.id), kind: 'question', provider: 'codex', status: 'open',
+          questions: nativeQuestions.map((question) => ({
+            fieldId: question.id, prompt: question.question,
+            ...(question.options ? { choices: question.options.map((option) => ({ value: option.label, label: option.label, ...(option.description ? { description: option.description } : {}) })) } : {}),
+            allowFreeText: question.isOther,
+          })),
         },
       })];
     }
