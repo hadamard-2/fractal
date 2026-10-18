@@ -19,7 +19,7 @@
     "name": "Eyob G.",
     "email": "eyob.g.hagos@gmail.com"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
     "@electron-forge/maker-deb": "^7.11.2",
