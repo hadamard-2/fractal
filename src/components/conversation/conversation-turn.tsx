@@ -86,7 +86,8 @@ function TurnWork({ blocks, onResolve }: { blocks: TurnBlock[]; onResolve: Resol
   );
 }
 
-function CopyResponse({ text }: { text: string }) {
+/** Copies `text`; it stays transparent until the pointer is over the enclosing `group/copy`, or it has focus. */
+function CopyMessage({ className, label, text }: { className?: string; label: string; text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -94,8 +95,8 @@ function CopyResponse({ text }: { text: string }) {
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <MessageActions>
-      <MessageAction className="text-muted-foreground" label="Copy response" onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} tooltip={copied ? 'Copied' : 'Copy'}>
+    <MessageActions className={cn('opacity-0 transition-opacity group-hover/copy:opacity-100 focus-within:opacity-100', className)}>
+      <MessageAction className="text-muted-foreground" label={label} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} tooltip={copied ? 'Copied' : 'Copy'}>
         {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
       </MessageAction>
     </MessageActions>
@@ -113,19 +114,20 @@ export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnDa
   return (
     <article aria-label="Conversation turn" className="space-y-4">
       {(images || attachments || text) && (
-        <Message from="user">
+        <Message className="group/copy" from="user">
           {images && <ConversationImages className="justify-end" images={images} />}
           {attachments && <MessageAttachments attachments={attachments} sentAt={turn.userMessage.createdAt} />}
           {text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
+          {text && <CopyMessage className="justify-end" label="Copy message" text={text} />}
         </Message>
       )}
-      <div className="space-y-4" aria-label="Agent response">
+      <div className="group/copy space-y-4" aria-label="Agent response">
         {lead.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {plans.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {questions.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
         {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
         {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-        {responseText && <CopyResponse text={responseText} />}
+        {responseText && <CopyMessage label="Copy response" text={responseText} />}
       </div>
     </article>
   );

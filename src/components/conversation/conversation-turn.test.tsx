@@ -72,6 +72,15 @@ describe('ConversationTurn copy button', () => {
     render(<ConversationTurn onResolve={() => undefined} turn={turn([packet('p1'), prose('status')], 'active')} />);
     expect(copyButton()).toBeNull();
   });
+
+  test('also copies the user message, and both reveal only on hover or focus', () => {
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([prose('a1', true)])} />);
+    // jsdom has no hover, so this pins the rule; the reveal itself was checked in the running app.
+    for (const button of [screen.getByRole('button', { name: 'Copy message' }), copyButton()]) {
+      expect(button?.parentElement?.className).toContain('opacity-0');
+      expect(button?.parentElement?.className).toContain('group-hover/copy:opacity-100');
+    }
+  });
 });
 
 describe('ConversationTurn plan', () => {
