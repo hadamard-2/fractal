@@ -2,7 +2,7 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import { forkSession as sdkForkSession } from '@anthropic-ai/claude-agent-sdk';
+import { deleteSession as sdkDeleteSession, forkSession as sdkForkSession } from '@anthropic-ai/claude-agent-sdk';
 import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, readClaudeTurnEnd, watchClaudeConversation } from './claude-history';
 import { claudeAccessState, claudePermissionMode } from './claude-access';
 import { listClaudeModels } from './claude-models';
@@ -33,6 +33,7 @@ interface ClaudeAdapterDependencies {
   listModels?: () => Promise<AgentModel[]>;
   watchdog?: RunClaudeTurnOptions['watchdog'];
   forkSession?: typeof sdkForkSession;
+  deleteSession?: typeof sdkDeleteSession;
   /** Says whether a session is a side chat, for sessions this adapter has not itself forked or run read-only (for example after a restart). */
   isReadOnlySession?: (sessionId: string) => boolean;
 }
@@ -168,6 +169,14 @@ export class ClaudeAdapter implements HarnessAdapter {
     const { sessionId } = await (this.dependencies.forkSession ?? sdkForkSession)(ref.nativeSessionId, { dir: found.ref.projectPath, upToMessageId, title: options.title });
     if (options.readOnly) this.readOnlySessions.add(sessionId);
     return { provider: 'claude', nativeSessionId: sessionId, projectPath: found.ref.projectPath };
+  }
+
+  async deleteConversation(input: ConversationRef): Promise<void> {
+    const ref = parseConversationRef(input);
+    if (ref.provider !== 'claude') throw new Error('Conversation provider must be claude');
+    const found = await this.find(ref);
+    await (this.dependencies.deleteSession ?? sdkDeleteSession)(ref.nativeSessionId, { dir: found.ref.projectPath });
+    this.readOnlySessions.delete(ref.nativeSessionId);
   }
 
   private async ensureStatus(): Promise<HarnessStatus> { return this.status ?? this.probe(); }

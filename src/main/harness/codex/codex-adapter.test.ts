@@ -59,6 +59,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
       if (method === 'thread/name/set') return {};
+      if (method === 'thread/delete') return {};
       throw new Error(`unexpected ${method}`);
     }),
     onNotification: vi.fn((listener: (notification: unknown) => void) => {
@@ -824,6 +825,47 @@ describe('Codex fork and read-only runs', () => {
     const server = createFakeAppServer();
     server.setForkCwd('/work/other');
     await expect(adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' })).rejects.toThrow('does not match the selected project');
+  });
+
+  describe('deleting a thread', () => {
+    test('sends thread/delete with the thread id', async () => {
+      const server = createFakeAppServer();
+      await adapterFor(server).deleteConversation(ref);
+      expect(server.requests).toEqual([{ method: 'thread/delete', params: { threadId: 'thread-1' } }]);
+    });
+
+    test('forgets the thread once it is deleted, so a re-created thread of that id is not held to old settings', async () => {
+      const server = createFakeAppServer();
+      const adapter = adapterFor(server);
+      const side = await adapter.forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+      await adapter.deleteConversation(side);
+      await adapter.readAccess(side);
+      expect(server.requests.findLast((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'forked-thread', cwd: '/work/fractal' });
+      await adapter.readAccess(ref);
+      await adapter.deleteConversation(ref);
+      const run = await adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } });
+      await run.dispose();
+    });
+
+    test('leaves its bookkeeping unchanged when the request is rejected', async () => {
+      const server = createFakeAppServer();
+      const adapter = adapterFor(server);
+      const side = await adapter.forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+      await adapter.readAccess(ref);
+      const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+      server.request.mockImplementation(async (method, params) => { if (method === 'thread/delete') throw new Error('delete refused'); return request(method, params); });
+      await expect(adapter.deleteConversation(side)).rejects.toThrow('delete refused');
+      await expect(adapter.deleteConversation(ref)).rejects.toThrow('delete refused');
+      await adapter.readAccess(side);
+      expect(server.requests.findLast((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'forked-thread', cwd: '/work/fractal', config: readOnlyConfig });
+      await expect(adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } })).rejects.toThrow('Read-only thread resumed without its read-only settings');
+    });
+
+    test('refuses a conversation that is not a Codex thread', async () => {
+      const server = createFakeAppServer();
+      await expect(adapterFor(server).deleteConversation({ ...ref, provider: 'claude' })).rejects.toThrow('Conversation provider must be codex');
+      expect(server.requests).toEqual([]);
+    });
   });
 
   test('runs a side chat turn read-only even when the prompt picks full access', async () => {

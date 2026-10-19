@@ -11,6 +11,8 @@ import type { ThreadSetNameParams } from '@/main/harness/codex/generated/v2/Thre
 import type { ThreadSetNameResponse } from '@/main/harness/codex/generated/v2/ThreadSetNameResponse';
 import type { ConfigReadParams } from '@/main/harness/codex/generated/v2/ConfigReadParams';
 import type { ConfigReadResponse } from '@/main/harness/codex/generated/v2/ConfigReadResponse';
+import type { ThreadDeleteParams } from '@/main/harness/codex/generated/v2/ThreadDeleteParams';
+import type { ThreadDeleteResponse } from '@/main/harness/codex/generated/v2/ThreadDeleteResponse';
 import type { ThreadForkParams } from '@/main/harness/codex/generated/v2/ThreadForkParams';
 import type { ThreadForkResponse } from '@/main/harness/codex/generated/v2/ThreadForkResponse';
 import type { ThreadResumeParams } from '@/main/harness/codex/generated/v2/ThreadResumeParams';
@@ -51,6 +53,7 @@ export interface CodexRequestMap {
   'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse };
   'config/read': { params: ConfigReadParams; result: ConfigReadResponse };
   'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse };
+  'thread/delete': { params: ThreadDeleteParams; result: ThreadDeleteResponse };
   'model/list': { params: ModelListParams; result: ModelListResponse };
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse };
   'turn/start': { params: TurnStartParams; result: TurnStartResponse };

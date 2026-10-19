@@ -112,6 +112,47 @@ describe('Claude adapter', () => {
       } finally { await rm(directory, { recursive: true, force: true }); }
     });
 
+    describe('deleting a session', () => {
+      const transcript = (sessionId: string) => `${JSON.stringify({ type: 'user', uuid: `${sessionId}-u1`, parentUuid: null, sessionId, cwd: '/canonical/fractal', message: { role: 'user', content: 'first' } })}\n`;
+
+      test('deletes the session from its canonical project, after finding it there', async () => {
+        const deleteSession = vi.fn(async () => undefined);
+        const adapter = new ClaudeAdapter(root, { realpath, deleteSession });
+        await adapter.deleteConversation(ref);
+        expect(deleteSession).toHaveBeenCalledWith('claude-session-1', { dir: '/canonical/fractal' });
+      });
+
+      test('does not delete a session that is not in the given project', async () => {
+        const deleteSession = vi.fn(async () => undefined);
+        const adapter = new ClaudeAdapter(root, { realpath, deleteSession });
+        await expect(adapter.deleteConversation({ ...ref, projectPath: '/canonical/other' })).rejects.toThrow('not currently available in this project');
+        await expect(adapter.deleteConversation({ ...ref, nativeSessionId: 'missing' })).rejects.toThrow('not currently available in this project');
+        expect(deleteSession).not.toHaveBeenCalled();
+      });
+
+      test('keeps a side chat read-only when its delete fails, and forgets it once the delete resolves', async () => {
+        const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-delete-'));
+        try {
+          const project = path.join(directory, 'project'); await mkdir(project);
+          await writeFile(path.join(project, 'claude-session-1.jsonl'), transcript('claude-session-1'));
+          await writeFile(path.join(project, 'forked-session.jsonl'), transcript('forked-session'));
+          const runTurn = idleRun();
+          const deleteSession = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('disk is read-only')).mockResolvedValue(undefined);
+          const adapter = new ClaudeAdapter(directory, { realpath, probe: async () => forkable, runtime: async () => 'idle', runTurn, forkSession: async () => ({ sessionId: 'forked-session' }), deleteSession });
+          await adapter.probe();
+          const side = await adapter.forkConversation(ref, 'claude-session-1-u1', { readOnly: true, title: 'T (side chat)' });
+
+          await expect(adapter.deleteConversation(side)).rejects.toThrow('disk is read-only');
+          await (await adapter.continueConversation(side, { text: 'Go' })).dispose();
+          expect(runTurn.mock.calls[0][0]).toMatchObject(READ_ONLY_OPTIONS);
+
+          await adapter.deleteConversation(side);
+          await (await adapter.continueConversation(side, { text: 'Go' })).dispose();
+          expect(runTurn.mock.calls[1][0]).not.toHaveProperty('tools');
+        } finally { await rm(directory, { recursive: true, force: true }); }
+      });
+    });
+
     test('refuses to fork when the capability is missing', async () => {
       const forkSession = vi.fn(async () => ({ sessionId: 'forked-session' }));
       const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, forkSession });

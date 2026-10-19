@@ -70,6 +70,8 @@ export interface HarnessAdapter {
   continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;
   /** Copies history through `afterTurnId` (a ConversationTurn.id, inclusive) into a new session. Absent when the agent cannot fork. */
   forkConversation?(source: ConversationRef, afterTurnId: string, options: ForkOptions): Promise<ConversationRef>;
+  /** Removes the session from the agent's own history. Absent when the agent cannot delete. */
+  deleteConversation?(ref: ConversationRef): Promise<void>;
   /** Stores a user-chosen title in the agent's own history. Absent when the agent has no rename. */
   renameConversation?(ref: ConversationRef, title: string): Promise<void>;
   /** The models this agent offers. Absent when it has no way to list them. */

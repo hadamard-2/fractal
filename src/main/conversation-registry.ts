@@ -64,6 +64,14 @@ export class ConversationRegistry {
     return structuredClone(ref);
   }
 
+  async delete(ref: ConversationRef): Promise<void> {
+    const parsed = parseConversationRef(ref);
+    const adapter = this.resolve(parsed);
+    if (!adapter.deleteConversation) throw new Error('Conversation deletion is not available');
+    await adapter.deleteConversation(parsed);
+    await this.refreshProvider(parsed.provider);
+  }
+
   async validate(ref: ConversationRef): Promise<ConversationSummary> {
     const parsed = parseConversationRef(ref);
     this.resolve(parsed);

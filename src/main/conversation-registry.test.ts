@@ -105,4 +105,30 @@ describe('ConversationRegistry', () => {
       await expect(new ConversationRegistry([codex], realpath).fork(source, 't1', { readOnly: false, title: 'T' })).rejects.toThrow('does not match');
     });
   });
+
+  describe('delete', () => {
+    const source = { provider: 'codex' as const, nativeSessionId: 'codex', projectPath: '/repo' };
+
+    test('deletes through the adapter and refreshes discovery', async () => {
+      const codex = adapter('codex');
+      codex.deleteConversation = vi.fn(async () => undefined);
+      const registry = new ConversationRegistry([codex], realpath);
+      await registry.delete(source);
+      expect(codex.deleteConversation).toHaveBeenCalledWith(source);
+      expect(codex.listConversations).toHaveBeenCalledTimes(1);
+    });
+
+    test('refuses when the agent cannot delete', async () => {
+      const codex = adapter('codex');
+      await expect(new ConversationRegistry([codex], realpath).delete(source)).rejects.toThrow('Conversation deletion is not available');
+      expect(codex.listConversations).not.toHaveBeenCalled();
+    });
+
+    test('does not refresh when the delete fails', async () => {
+      const codex = adapter('codex');
+      codex.deleteConversation = vi.fn(async () => { throw new Error('refused'); });
+      await expect(new ConversationRegistry([codex], realpath).delete(source)).rejects.toThrow('refused');
+      expect(codex.listConversations).not.toHaveBeenCalled();
+    });
+  });
 });

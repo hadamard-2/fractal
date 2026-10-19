@@ -186,6 +186,13 @@ export class CodexAdapter implements HarnessAdapter {
     await this.server.request('thread/name/set', { threadId: ref.nativeSessionId, name: title });
   }
 
+  async deleteConversation(ref: ConversationRef): Promise<void> {
+    if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    await this.server.request('thread/delete', { threadId: ref.nativeSessionId });
+    this.readOnlyThreads.delete(ref.nativeSessionId);
+    this.resumedWithoutOverrides.delete(ref.nativeSessionId);
+  }
+
   async listModels(): Promise<AgentModel[]> {
     const models: AgentModel[] = [];
     const cursors = new Set<string>();
