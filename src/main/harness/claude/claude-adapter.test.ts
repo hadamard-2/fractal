@@ -3,7 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/pro
 import { tmpdir } from 'node:os';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, test, vi } from 'vitest';
-import { ClaudeAdapter } from '@/main/harness/claude/claude-adapter';
+import { ClaudeAdapter, CLAUDE_READ_ONLY_TOOLS } from '@/main/harness/claude/claude-adapter';
 import type { NativeEvent } from '@/main/harness/reconciler';
 import type { HarnessStatus } from '@/shared/conversation-contract';
 import type { ClaudeTurnRun, RunClaudeTurnOptions } from './claude-runner';
@@ -64,6 +64,75 @@ describe('Claude adapter', () => {
     const run = await adapter.continueConversation(ref, { text: 'Go', access: { state: { kind: 'level', level: 'auto' }, picked: false } });
     expect(runTurn.mock.calls[0][0]).toMatchObject({ permissionMode: 'auto' });
     await run.dispose();
+  });
+
+  describe('forks and side chats', () => {
+    const idleRun = () => vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
+    const forkable: HarnessStatus = { ...available, capabilities: { ...available.capabilities, fork: true } };
+    const bypass = { state: { kind: 'level' as const, level: 'bypassPermissions' }, picked: true };
+    const READ_ONLY_OPTIONS = { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none' };
+    const quiet = { ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } };
+
+    test('forks the session at the end of the turn and returns the new session', async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-fork-'));
+      try {
+        const project = path.join(directory, 'project'); await mkdir(project);
+        const records = [
+          { type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'claude-session-1', cwd: '/canonical/fractal', message: { role: 'user', content: 'first' } },
+          { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'claude-session-1', cwd: '/canonical/fractal', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+          { type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId: 'claude-session-1', cwd: '/canonical/fractal', message: { role: 'user', content: 'second' } },
+        ];
+        await writeFile(path.join(project, 'claude-session-1.jsonl'), `${records.map((record) => JSON.stringify(record)).join('\n')}\n`);
+        const forkSession = vi.fn(async () => ({ sessionId: 'forked-session' }));
+        const adapter = new ClaudeAdapter(directory, { realpath, probe: async () => forkable, forkSession });
+        await adapter.probe();
+        const forked = await adapter.forkConversation(ref, 'u1', { readOnly: true, note: 'n', title: 'T (side chat)' });
+        expect(forkSession).toHaveBeenCalledWith('claude-session-1', { dir: '/canonical/fractal', upToMessageId: 'a1', title: 'T (side chat)' });
+        expect(forked).toEqual({ provider: 'claude', nativeSessionId: 'forked-session', projectPath: '/canonical/fractal' });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+
+    test('refuses to fork when the capability is missing', async () => {
+      const forkSession = vi.fn(async () => ({ sessionId: 'forked-session' }));
+      const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, forkSession });
+      await adapter.probe();
+      await expect(adapter.forkConversation(ref, 'user-1', { readOnly: false, title: 'T' })).rejects.toThrow('Claude conversation forking is not available');
+      expect(forkSession).not.toHaveBeenCalled();
+    });
+
+    test('runs a side chat with only read tools, no MCP, no prompts and no permission mode, whatever access was picked', async () => {
+      const runTurn = idleRun();
+      const adapter = new ClaudeAdapter(root, { realpath, probe: async () => quiet, runtime: async () => 'idle', runTurn });
+      const run = await adapter.continueConversation(ref, { text: 'Go', access: bypass, branch: { readOnly: true, note: 'n' } });
+      const options = runTurn.mock.calls[0][0];
+      expect(options).toMatchObject({ ...READ_ONLY_OPTIONS, appendSystemPrompt: 'n' });
+      expect(options).not.toHaveProperty('permissionMode');
+      expect(options).not.toHaveProperty('canUseTool');
+      await run.dispose();
+    });
+
+    test('keeps a side chat read-only even with approvals available and no branch on the prompt', async () => {
+      const runTurn = idleRun();
+      const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn, isReadOnlySession: (id) => id === ref.nativeSessionId });
+      const run = await adapter.continueConversation(ref, { text: 'Go', access: bypass });
+      const options = runTurn.mock.calls[0][0];
+      expect(options).toMatchObject(READ_ONLY_OPTIONS);
+      expect(options).not.toHaveProperty('permissionMode');
+      expect(options).not.toHaveProperty('canUseTool');
+      expect(options).not.toHaveProperty('appendSystemPrompt');
+      await run.dispose();
+    });
+
+    test('a fork keeps its normal access and permissions and only gains the note', async () => {
+      const runTurn = idleRun();
+      const adapter = new ClaudeAdapter(root, { realpath, probe: async () => available, runtime: async () => 'idle', runTurn });
+      const run = await adapter.continueConversation(ref, { text: 'Go', access: bypass, branch: { readOnly: false, note: 'n' } });
+      const options = runTurn.mock.calls[0][0];
+      expect(options).toMatchObject({ permissionMode: 'bypassPermissions', appendSystemPrompt: 'n' });
+      expect(options.canUseTool).toBeTypeOf('function');
+      for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig']) expect(options).not.toHaveProperty(key);
+      await run.dispose();
+    });
   });
 
   test('reads the recorded access back from the transcript', async () => {

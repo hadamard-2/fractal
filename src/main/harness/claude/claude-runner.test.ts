@@ -133,6 +133,22 @@ describe('runClaudeTurn', () => {
     expect(turn.options().systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
   });
 
+  test('passes the read-only tool options and the note, and nothing of them when absent', async () => {
+    const restricted = fakeTurn();
+    const first = start(restricted, { tools: ['Read', 'Grep'], disallowedTools: ['mcp__*'], permissionPrompts: 'none', mcpServers: {}, strictMcpConfig: true, appendSystemPrompt: 'note' });
+    restricted.exit(); await first.completion;
+    expect(restricted.options()).toMatchObject({
+      tools: ['Read', 'Grep'], disallowedTools: ['mcp__*'], permissionPrompts: 'none', mcpServers: {}, strictMcpConfig: true,
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'note' },
+    });
+
+    const plain = fakeTurn();
+    const second = start(plain);
+    plain.exit(); await second.completion;
+    for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig']) expect(plain.options()).not.toHaveProperty(key);
+    expect(plain.options().systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
   test.each([undefined, '0.0.1'])('leaves CLAUDE_AGENT_SDK_VERSION in Fractal\'s environment as it was (before: %s), though query() sets it', async (before) => {
     const saved = process.env.CLAUDE_AGENT_SDK_VERSION;
     const restore = (value: string | undefined): void => { if (value === undefined) delete process.env.CLAUDE_AGENT_SDK_VERSION; else process.env.CLAUDE_AGENT_SDK_VERSION = value; };

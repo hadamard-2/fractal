@@ -54,6 +54,9 @@ describe('Claude native history', () => {
     await write([{ type: 'custom-title', customTitle: 'Renamed', sessionId: 's' }]);
     await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
     await expect(readClaudeTurnEnd(file, 'nope')).rejects.toThrow('Claude turn is not in this conversation');
+    // forkSession drops sidechain records, so one is never a cut point even when it chains onto the turn.
+    await write([{ type: 'assistant', uuid: 's1', parentUuid: 'a3', isSidechain: true, message: { id: 'm4', role: 'assistant', content: [{ type: 'text', text: 'side' }] } }]);
+    await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
     await rm(directory, { recursive: true, force: true });
   });
 

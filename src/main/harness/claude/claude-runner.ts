@@ -52,6 +52,18 @@ export interface RunClaudeTurnOptions {
   effort?: string;
   /** Absent leaves Claude on its configured default. */
   permissionMode?: string;
+  /** The built-in tools the turn may use; absent leaves Claude's full set. */
+  tools?: string[];
+  /** Tools removed even when something else would allow them. */
+  disallowedTools?: string[];
+  /** `none` denies anything that would prompt, without asking Fractal. */
+  permissionPrompts?: 'none';
+  /** The MCP servers the turn is given; with strictMcpConfig, the only ones it loads. */
+  mcpServers?: Record<string, never>;
+  /** Ignores every MCP configuration except `mcpServers`. */
+  strictMcpConfig?: boolean;
+  /** Added to the end of Claude Code's own system prompt. */
+  appendSystemPrompt?: string;
   /** Interrupts claude if Fractal dies mid-turn; claude ends the commands it started when interrupted. */
   watchdog?: Pick<ProcessWatchdog, 'watch' | 'unwatch'>;
   rereadNative(): Promise<NativeEvent[] | AsyncIterable<NativeEvent>>;
@@ -100,12 +112,17 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     pathToClaudeCodeExecutable: options.executable,
     cwd: options.ref.projectPath,
     // Without this the SDK sends an empty system prompt, and the turn runs without Claude Code's own instructions and context.
-    systemPrompt: { type: 'preset', preset: 'claude_code' },
+    systemPrompt: { type: 'preset', preset: 'claude_code', ...(options.appendSystemPrompt ? { append: options.appendSystemPrompt } : {}) },
     ...(options.newSession ? { sessionId: options.ref.nativeSessionId } : { resume: options.ref.nativeSessionId }),
     ...(options.model ? { model: options.model } : {}),
     // Fractal passes the user's choice through unchanged.
     ...(options.effort ? { effort: options.effort as Options['effort'] } : {}),
     ...(options.permissionMode ? { permissionMode: options.permissionMode as Options['permissionMode'] } : {}),
+    ...(options.tools ? { tools: options.tools } : {}),
+    ...(options.disallowedTools ? { disallowedTools: options.disallowedTools } : {}),
+    ...(options.permissionPrompts ? { permissionPrompts: options.permissionPrompts } : {}),
+    ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+    ...(options.strictMcpConfig ? { strictMcpConfig: true } : {}),
     includePartialMessages: true,
     ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
     spawnClaudeCodeProcess,

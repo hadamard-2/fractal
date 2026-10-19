@@ -56,6 +56,20 @@ describe('probeClaude', () => {
     });
   });
 
+  test('can fork only when the help text lists --tools alongside resume and stream-json', async () => {
+    const probeWith = (help: string) => probeClaude(fakeExec({
+      '--version': { exitCode: 0, stdout: '2.1.0\n' },
+      '--help': { exitCode: 0, stdout: help },
+      'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
+    }));
+    const withTools = await probeWith('--resume --session-id --output-format stream-json --tools <tools...>\n');
+    expect(withTools.evidence.tools).toBe(true);
+    expect(withTools.capabilities.fork).toBe(true);
+    const withoutTools = await probeWith('--resume --session-id --output-format stream-json\n');
+    expect(withoutTools.evidence.tools).toBe(false);
+    expect(withoutTools.capabilities.fork).toBe(false);
+  });
+
   test('does not infer authentication from a successful version command', async () => {
     const exec = fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.0' }, '--help': { exitCode: 0, stdout: '--resume' },

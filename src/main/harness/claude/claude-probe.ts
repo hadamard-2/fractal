@@ -12,6 +12,7 @@ export interface ClaudeCapabilityEvidence {
   sessionId: boolean;
   streamJson: boolean;
   partialMessages: boolean;
+  tools: boolean;
   authenticated: boolean;
 }
 
@@ -37,6 +38,7 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     sessionId: hasFlag(helpText, '--session-id'),
     streamJson: hasFlag(helpText, '--output-format') && /stream-json/.test(helpText),
     partialMessages: hasFlag(helpText, '--include-partial-messages'),
+    tools: hasFlag(helpText, '--tools'),
     authenticated,
   };
   const capabilities = {
@@ -47,6 +49,8 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     approvals: evidence.streamJson,
     questions: evidence.streamJson,
     interrupt: evidence.streamJson,
+    // A fork keeps history up to a turn; a side chat is confined with --tools, so a CLI without it cannot make one safely.
+    fork: evidence.resume && evidence.tools && evidence.streamJson,
   };
   if (version.exitCode !== 0) {
     const message = version.launchError === 'ENOENT' ? executableNotFoundMessage(executable) : 'Claude executable is unavailable.';

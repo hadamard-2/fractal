@@ -326,8 +326,8 @@ export async function readClaudeTurnEnd(filePath: string, turnId: string): Promi
     const currentOrdinal = ordinal++;
     if (!record) return;
     const turn = claudeRecordTurnId(record, claudeRecordNativeId(record, currentOrdinal), context);
-    // Only a record with a uuid of its own can be named as a cut point.
-    if (turn === turnId && typeof record.uuid === 'string' && record.uuid) end = record.uuid;
+    // Only a record with a uuid of its own can be named as a cut point, and forkSession drops sidechain records, so never one of those.
+    if (turn === turnId && typeof record.uuid === 'string' && record.uuid && record.isSidechain !== true) end = record.uuid;
   };
   for await (const chunk of createReadStream(filePath)) {
     for (const line of decoder.push(chunk as Buffer)) {

@@ -2,18 +2,25 @@ import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
-import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from './claude-history';
+import { forkSession as sdkForkSession } from '@anthropic-ai/claude-agent-sdk';
+import { appendClaudeCustomTitle, discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, readClaudeTurnEnd, watchClaudeConversation } from './claude-history';
 import { claudeAccessState, claudePermissionMode } from './claude-access';
 import { listClaudeModels } from './claude-models';
 import { createClaudePermissions, TURN_ENDED } from './claude-permissions';
 import { runClaudeTurn, type ClaudeTurnRun, type RunClaudeTurnOptions } from './claude-runner';
-import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import type { AgentPrompt, ConversationRun, ForkOptions, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import type { NativeEvent } from '@/main/harness/reconciler';
 import type { AccessState, AgentModel, BlockingRequest, ConversationImage, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 import type { ClaudeOwnedProcessRegistry } from './claude-owned-process-registry';
 
 const NO_CAPABILITIES: HarnessCapabilities = { create: false, partialStreaming: false, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false };
+/**
+ * The tools a side chat may use. Bash is left out on purpose: no rule can tell a read-only command
+ * from a writing one, and the user's own allow rules could approve a writing one.
+ */
+export const CLAUDE_READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'] as const;
+
 interface ClaudeAdapterDependencies {
   realpath?: Realpath;
   probe?: () => Promise<HarnessStatus>;
@@ -25,6 +32,9 @@ interface ClaudeAdapterDependencies {
   ownedProcesses?: ClaudeOwnedProcessRegistry;
   listModels?: () => Promise<AgentModel[]>;
   watchdog?: RunClaudeTurnOptions['watchdog'];
+  forkSession?: typeof sdkForkSession;
+  /** Says whether a session is a side chat, for sessions this process has not itself forked or run read-only. */
+  isReadOnlySession?: (sessionId: string) => boolean;
 }
 
 export class ClaudeAdapter implements HarnessAdapter {
@@ -98,10 +108,16 @@ export class ClaudeAdapter implements HarnessAdapter {
       : undefined;
     const closePermissions = (): void => permissions?.close(TURN_ENDED);
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
-    const permissionMode = claudePermissionMode(prompt.access);
+    // A side chat is confined by Claude's own tool list and prompt handling, so whatever access was picked is ignored for it.
+    const readOnly = prompt.branch?.readOnly === true || this.dependencies.isReadOnlySession?.(ref.nativeSessionId) === true;
+    const permissionMode = readOnly ? undefined : claudePermissionMode(prompt.access);
+    const branchOptions: Partial<RunClaudeTurnOptions> = {
+      ...(readOnly ? { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none' as const } : {}),
+      ...(prompt.branch?.note ? { appendSystemPrompt: prompt.branch.note } : {}),
+    };
     let runner: ClaudeTurnRun;
     try {
-      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), executable: this.dependencies.executable ?? 'claude', ...(permissions ? { canUseTool: permissions.canUseTool } : {}), ...(newSession ? { newSession: true } : {}), ...(this.dependencies.watchdog ? { watchdog: this.dependencies.watchdog } : {}), rereadNative: async () => {
+      runner = (this.dependencies.runTurn ?? runClaudeTurn)({ ref, prompt: turnPrompt, ...(prompt.model ? { model: prompt.model } : {}), ...(prompt.effort ? { effort: prompt.effort } : {}), ...(permissionMode ? { permissionMode } : {}), ...branchOptions, executable: this.dependencies.executable ?? 'claude', ...(permissions && !readOnly ? { canUseTool: permissions.canUseTool } : {}), ...(newSession ? { newSession: true } : {}), ...(this.dependencies.watchdog ? { watchdog: this.dependencies.watchdog } : {}), rereadNative: async () => {
         const events = await (this.dependencies.rereadNative?.(ref) ?? this.rereadExact(ref));
         if (newSession) { this.drafts.delete(ref.nativeSessionId); this.validatedSessions.add(ref.nativeSessionId); }
         return events;
@@ -138,6 +154,16 @@ export class ClaudeAdapter implements HarnessAdapter {
         await pump;
       },
     };
+  }
+
+  async forkConversation(source: ConversationRef, afterTurnId: string, options: ForkOptions): Promise<ConversationRef> {
+    const ref = parseConversationRef(source);
+    if (ref.provider !== 'claude') throw new Error('Conversation provider must be claude');
+    if (!(await this.ensureStatus()).capabilities.fork) throw new Error('Claude conversation forking is not available');
+    const found = await this.find(ref);
+    const upToMessageId = await readClaudeTurnEnd(found.filePath, afterTurnId);
+    const { sessionId } = await (this.dependencies.forkSession ?? sdkForkSession)(ref.nativeSessionId, { dir: found.ref.projectPath, upToMessageId, title: options.title });
+    return { provider: 'claude', nativeSessionId: sessionId, projectPath: found.ref.projectPath };
   }
 
   private async ensureStatus(): Promise<HarnessStatus> { return this.status ?? this.probe(); }
