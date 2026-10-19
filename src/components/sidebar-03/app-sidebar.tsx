@@ -329,10 +329,10 @@ export function DashboardSidebar({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
-                    {/* Tinted away from the default view (Active, every agent), so a different list reads as filtered. */}
+                    {/* Same tone as the Projects label it sits beside. */}
                     <SidebarGroupAction
                       aria-label={`Filter projects: ${filterSummary(filter, hiddenAgents)}`}
-                      className={cn('top-1.5 right-2 text-sidebar-foreground/60', (filter !== 'active' || hiddenAgents.length > 0) && 'text-primary-text')}
+                      className="top-1.5 right-2 text-sidebar-foreground/70"
                     >
                       <Funnel />
                     </SidebarGroupAction>
