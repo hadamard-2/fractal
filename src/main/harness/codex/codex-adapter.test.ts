@@ -650,7 +650,7 @@ function permissionParams() {
 describe('Codex fork and read-only runs', () => {
   const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
   const adapterFor = (server: ReturnType<typeof createFakeAppServer>) => new CodexAdapter(server as never, { realpath: async (value) => value });
-  const readOnlyConfig = { features: { apps: false, plugins: false }, mcp_servers: { node_repl: { enabled: false }, docs: { enabled: false } } };
+  const readOnlyConfig = { features: { apps: false, plugins: false, hooks: false, multi_agent: false }, mcp_servers: { node_repl: { enabled: false }, docs: { enabled: false } } };
   const forkParams = (server: ReturnType<typeof createFakeAppServer>) => server.requests.find((request) => request.method === 'thread/fork')?.params;
 
   test('reports that it can fork', () => {
@@ -672,7 +672,7 @@ describe('Codex fork and read-only runs', () => {
     await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
     expect(server.requests.find((request) => request.method === 'config/read')?.params).toEqual({ cwd: '/work/fractal' });
     expect(forkParams(server)).toMatchObject({ config: {
-      features: { apps: false, plugins: false },
+      features: { apps: false, plugins: false, hooks: false, multi_agent: false },
       mcp_servers: { node_repl: { enabled: false }, docs: { enabled: false } },
     } });
   });
@@ -756,7 +756,7 @@ describe('Codex fork and read-only runs', () => {
     const run = await adapter.continueConversation(ref, { text: 'Look', access: { state: { kind: 'level', level: 'full-access' }, picked: true } });
     expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal', config: readOnlyConfig });
     expect(server.requests.findLast((request) => request.method === 'turn/start')?.params).toMatchObject({
-      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true },
+      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false },
     });
     server.emitRequest({ id: 71, method: 'item/commandExecution/requestApproval', params: {
       threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'rm -rf x', cwd: '/repo',
@@ -830,7 +830,7 @@ describe('Codex fork and read-only runs', () => {
     const server = createFakeAppServer();
     const run = await adapterFor(server).continueConversation(ref, { text: 'Look', branch: { readOnly: true }, access: { state: { kind: 'level', level: 'full-access' }, picked: true } });
     expect(server.requests.findLast((request) => request.method === 'turn/start')?.params).toMatchObject({
-      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true },
+      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false },
     });
     await run.dispose();
   });

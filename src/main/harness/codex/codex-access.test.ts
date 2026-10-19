@@ -58,8 +58,7 @@ describe('codexAccessState', () => {
 });
 
 describe('codexReadOnlyOverrides', () => {
-  test('is the read-only level with approvals turned off, keeping the current network access', () => {
-    expect(codexReadOnlyOverrides(ws)).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true } });
-    expect(codexReadOnlyOverrides({ type: 'dangerFullAccess' })).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
+  test('is the read-only level with approvals turned off and network access off', () => {
+    expect(codexReadOnlyOverrides()).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
   });
 });

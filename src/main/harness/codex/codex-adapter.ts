@@ -168,14 +168,15 @@ export class CodexAdapter implements HarnessAdapter {
   /**
    * The sandbox only confines commands and patches; an MCP tool runs in its own server process and is not confined by it.
    * So a read-only thread loads with no MCP servers: the ones in the user's config are switched off by name, and
-   * plugins and apps, which are where Codex gets the rest, are switched off as features.
+   * plugins and apps, which are where Codex gets the rest, are switched off as features. Hooks are command hooks that run outside
+   * the model's sandbox, and multi-agent lets the thread start agents of its own, so those are off too.
    */
   private async readOnlyConfig(cwd: string): Promise<{ [key: string]: JsonValue }> {
     const { config } = await this.server.request('config/read', { cwd });
     const configured = config.mcp_servers;
     const servers = typeof configured === 'object' && configured !== null && !Array.isArray(configured) ? Object.keys(configured) : [];
     return {
-      features: { apps: false, plugins: false },
+      features: { apps: false, plugins: false, hooks: false, multi_agent: false },
       mcp_servers: Object.fromEntries(servers.map((name) => [name, { enabled: false }])),
     };
   }
@@ -367,7 +368,7 @@ export class CodexAdapter implements HarnessAdapter {
         // Codex applies both to this turn and the thread's later turns.
         ...(prompt.model ? { model: prompt.model } : {}),
         ...(prompt.effort ? { effort: prompt.effort } : {}),
-        ...(readOnly ? codexReadOnlyOverrides(resumed.sandbox)
+        ...(readOnly ? codexReadOnlyOverrides()
           : prompt.access?.picked && prompt.access.state.kind === 'level' ? codexAccessOverrides(prompt.access.state.level, resumed.sandbox) : {}),
       });
       turnId = started.turn.id;

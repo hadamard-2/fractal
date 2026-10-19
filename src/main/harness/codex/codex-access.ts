@@ -49,8 +49,9 @@ export function codexAccessOverrides(level: string, current: SandboxPolicy): Cod
 }
 
 // A side chat can't answer an approval prompt, so it runs read-only with approvals off: a command the sandbox blocks fails instead of asking.
-export function codexReadOnlyOverrides(current: SandboxPolicy): CodexAccessOverrides {
-  return { ...codexAccessOverrides('read-only', current), approvalPolicy: 'never' };
+// Network access is pinned off whatever the thread had, so a side chat can't reach out from a command it runs.
+export function codexReadOnlyOverrides(): CodexAccessOverrides {
+  return { ...codexAccessOverrides('read-only', { type: 'readOnly', networkAccess: false }), approvalPolicy: 'never' };
 }
 
 function approvalLabel(policy: AskForApproval): string {
