@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ACCESS_CHANNELS, isSendableAccessMode, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, CONVERSATION_CHANNELS, isSendableAccessMode, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseForkPoint, parseBranchKind, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
 
 const loadId = 'abcdef12-3456-4abc-8def-1234567890ab';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
@@ -229,4 +229,31 @@ test('carries access through a prompt', () => {
   expect(parsePromptInput({ text: 'hi', access: { state: { kind: 'level', level: 'plan' }, picked: true } }).access).toEqual({ state: { kind: 'level', level: 'plan' }, picked: true });
   expect(parsePromptInput({ text: 'hi' })).not.toHaveProperty('access');
   expect(() => parsePromptInput({ text: 'hi', access: { state: { kind: 'level', level: '' }, picked: true } })).toThrow('Invalid access');
+});
+
+test('names the fork channel', () => {
+  expect(CONVERSATION_CHANNELS.fork).toBe('fractal:conversations:fork');
+});
+
+test('parses a fork point', () => {
+  for (const position of ['after', 'before'] as const) {
+    expect(parseForkPoint({ turnId: 'turn-1', position })).toEqual({ turnId: 'turn-1', position });
+  }
+  const parsed = parseForkPoint({ turnId: 'turn-1', position: 'after', extra: true });
+  expect(parsed).toEqual({ turnId: 'turn-1', position: 'after' });
+  expect(parsed).not.toHaveProperty('extra');
+  const bad: unknown[] = [
+    { turnId: '', position: 'after' },
+    { turnId: 'x'.repeat(513), position: 'after' },
+    { turnId: 'turn-1', position: 'middle' },
+    null,
+    [],
+  ];
+  for (const point of bad) expect(() => parseForkPoint(point)).toThrow('Invalid fork point');
+});
+
+test('parses a branch kind', () => {
+  expect(parseBranchKind('side-chat')).toBe('side-chat');
+  expect(parseBranchKind('fork')).toBe('fork');
+  for (const bad of ['branch', 1]) expect(() => parseBranchKind(bad)).toThrow('Invalid branch kind');
 });

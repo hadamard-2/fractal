@@ -26,6 +26,7 @@ const conversations: ConversationApi = {
   previewAttachment: (ref, path) => ipcRenderer.invoke(CHANNELS.previewAttachment, ref, path),
   openAttachment: (ref, path, action) => ipcRenderer.invoke(CHANNELS.openAttachment, ref, path, action),
   rename: (ref, title) => ipcRenderer.invoke(CHANNELS.rename, ref, title),
+  fork: (ref, point, kind) => ipcRenderer.invoke(CHANNELS.fork, ref, point, kind),
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       let event;

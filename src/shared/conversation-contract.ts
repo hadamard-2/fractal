@@ -275,6 +275,14 @@ export type ConversationStreamEvent = {
   | { type: 'load.failed'; message: string }
 );
 
+export type BranchKind = 'side-chat' | 'fork';
+
+/** A point in a conversation, named by a ConversationTurn.id: right after that turn's reply, or right before its user message. */
+export interface ForkPoint {
+  turnId: string;
+  position: 'after' | 'before';
+}
+
 export interface ConversationApi {
   list(): Promise<{ projects: ProjectConversationGroup[]; providers: HarnessStatus[] }>;
   open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities }>;
@@ -287,6 +295,7 @@ export interface ConversationApi {
   openAttachment(ref: ConversationRef, path: string, action: AttachmentOpenAction): Promise<void>;
   /** Renames the conversation in its agent's own history; resolves once the agent has it. */
   rename(ref: ConversationRef, title: string): Promise<void>;
+  fork(ref: ConversationRef, point: ForkPoint, kind: BranchKind): Promise<ConversationRef>;
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 

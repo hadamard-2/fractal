@@ -7,6 +7,7 @@ import {
   type AgentAction,
   type AttachmentOpenAction,
   type BlockingRequest,
+  type BranchKind,
   type CaptureCompleteness,
   isConversationImageType,
   type ConversationImage,
@@ -15,6 +16,7 @@ import {
   type ConversationStreamEvent,
   type ConversationSummary,
   type ConversationTurn,
+  type ForkPoint,
   type ModelChoice,
   type PlanProposal,
   type PlanProposalStatus,
@@ -34,7 +36,7 @@ export const CONVERSATION_CHANNELS = {
   continue: 'fractal:conversations:continue', interrupt: 'fractal:conversations:interrupt',
   resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
   previewAttachment: 'fractal:conversations:preview-attachment', openAttachment: 'fractal:conversations:open-attachment',
-  rename: 'fractal:conversations:rename',
+  rename: 'fractal:conversations:rename', fork: 'fractal:conversations:fork',
 } as const;
 
 export const MODEL_CHANNELS = { list: 'fractal:models:list', choose: 'fractal:models:choose' } as const;
@@ -159,6 +161,16 @@ export function parseConversationTitle(value: unknown): string {
   const title = typeof value === 'string' ? value.trim() : '';
   if (!title || title.length > MAX_CONVERSATION_TITLE_LENGTH || /[\r\n]/.test(title)) throw new Error('Invalid conversation title');
   return title;
+}
+
+export function parseForkPoint(value: unknown): ForkPoint {
+  if (!plainObject(value) || !nonblankText(value.turnId, MAX_SESSION_ID_LENGTH) || (value.position !== 'after' && value.position !== 'before')) throw new Error('Invalid fork point');
+  return { turnId: value.turnId, position: value.position };
+}
+
+export function parseBranchKind(value: unknown): BranchKind {
+  if (value !== 'side-chat' && value !== 'fork') throw new Error('Invalid branch kind');
+  return value;
 }
 
 export function parseLoadId(value: unknown): string {

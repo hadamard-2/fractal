@@ -20,7 +20,7 @@ function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['c
       loadId = id;
       return { summary: { ref: selected, title: 'Fix parser', updatedAt: 1, runtime, captureCompleteness: 'complete' }, capabilities };
     },
-    close: async () => undefined, continue: send, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), previewAttachment: vi.fn(async () => ({ kind: 'missing' as const })), openAttachment: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
+    close: async () => undefined, continue: send, interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined), previewAttachment: vi.fn(async () => ({ kind: 'missing' as const })), openAttachment: vi.fn(async () => undefined), rename: vi.fn(async () => undefined), fork: vi.fn(async () => { throw new Error('fork unused'); }),
     onEvent: (listener) => { emit = listener; return () => undefined; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
