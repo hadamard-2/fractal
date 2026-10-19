@@ -1,0 +1,3 @@
+export const SIDE_CHAT_NOTE = "You are in a read-only side conversation that branched off an earlier point of the user's main conversation. You can read and search the project, but you cannot change any files. The project's files may have changed since the point this conversation branched from, so when what you read disagrees with the conversation so far, trust the files.";
+
+export const FORK_NOTE = "This conversation was forked from an earlier point of another conversation, and work may have continued there after that point. The project's files may have changed since then, so when what you read disagrees with the conversation so far, trust the files.";
