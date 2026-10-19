@@ -200,8 +200,29 @@ test('reads branches.json.bak when branches.json does not parse, after moving th
   expect(store.get('claude:side')).toEqual(sideChat);
   expect(isSideChat(store, 'claude:side')).toBe(true);
   expect(readdirSync(dir).filter((name) => name.startsWith('branches.json.corrupt-'))).toHaveLength(1);
-  expect(existsSync(file)).toBe(false);
   expect(readFileSync(backup, 'utf8')).toBe(backedUp);
+});
+
+test('writes the records recovered from the backup back, so a later launch still has them', () => {
+  const dir = tempDir();
+  writeFileSync(path.join(dir, 'branches.json'), '{ not json');
+  writeFileSync(path.join(dir, 'branches.json.bak'), JSON.stringify({ conversations: { 'claude:side': sideChat, 'codex:fork': fork } }));
+  expect(new BranchStore(dir).get('claude:side')).toEqual(sideChat);
+  expect(JSON.parse(readFileSync(path.join(dir, 'branches.json'), 'utf8'))).toEqual({ conversations: { 'claude:side': sideChat, 'codex:fork': fork } });
+  const relaunched = new BranchStore(dir);
+  expect(relaunched.get('codex:fork')).toEqual(fork);
+  expect(isSideChat(relaunched, 'claude:side')).toBe(true);
+  expect(readdirSync(dir).filter((name) => name.startsWith('branches.json.corrupt-'))).toHaveLength(1);
+});
+
+test('keeps the recovered records in memory when writing them back fails', () => {
+  const dir = tempDir();
+  writeFileSync(path.join(dir, 'branches.json'), '{ not json');
+  writeFileSync(path.join(dir, 'branches.json.bak'), JSON.stringify({ conversations: { 'claude:side': sideChat } }));
+  mkdirSync(path.join(dir, 'branches.json.tmp'));
+  const store = new BranchStore(dir);
+  expect(store.get('claude:side')).toEqual(sideChat);
+  expect(isSideChat(store, 'claude:side')).toBe(true);
 });
 
 test('reads as empty when both branches.json and its backup do not parse', () => {

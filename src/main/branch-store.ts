@@ -26,8 +26,8 @@ interface StoredBranches { conversations: Record<string, BranchRecord> }
  * That record is what keeps a side chat read-only after a restart, so it fails closed:
  * only a missing file reads as empty, and any other read error throws. A file that
  * does not parse is moved aside to `branches.json.corrupt-<timestamp>` rather than
- * overwritten, then the previous state in `branches.json.bak` is read instead (empty
- * when that does not parse either). Every write first copies the file it replaces to
+ * overwritten, then the previous state in `branches.json.bak` is read instead and written back
+ * to `branches.json` (empty when that does not parse either). Every write first copies the file it replaces to
  * `branches.json.bak`. The records are loaded once and kept in memory,
  * and every write goes through to disk, so a file that becomes unreadable later
  * cannot drop what this process already knows. An invalid entry is dropped while
@@ -93,16 +93,22 @@ export class BranchStore {
       throw error;
     }
     let conversations = parseConversations(text);
+    let recovered = false;
     if (!conversations) {
       // Read before moving anything, so a backup that cannot be read throws with the bad file still in place.
       conversations = this.readBackup();
+      recovered = conversations !== undefined;
       renameSync(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
     }
     for (const [key, value] of Object.entries(conversations ?? {})) {
       const entry = coerceEntry(value);
       if (entry) stored.conversations[key] = entry;
     }
-    return this.stored = stored;
+    this.stored = stored;
+    // The bad file is gone, so without this the next launch would find no file and start empty, ignoring the backup.
+    // If the write fails the records stay in memory, and the next successful write restores the file.
+    if (recovered) { try { this.save(stored); } catch { /* kept in memory */ } }
+    return stored;
   }
 
   private readBackup(): Record<string, unknown> | undefined {
