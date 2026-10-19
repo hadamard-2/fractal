@@ -67,6 +67,44 @@ describe('ConversationRegistry', () => {
     expect(() => registry.resolve({ ...ref, provider: 'claude' })).toThrow();
   });
 
+  describe('lookup', () => {
+    const ref = { provider: 'codex' as const, nativeSessionId: 'codex', projectPath: '/repo' };
+
+    test('returns a copy of the summary the listing has', async () => {
+      const registry = new ConversationRegistry([adapter('codex')], realpath);
+      const found = await registry.lookup(ref);
+      expect(found?.title).toBe('codex');
+      if (found) found.title = 'forged';
+      expect((await registry.lookup(ref))?.title).toBe('codex');
+    });
+
+    test('returns null when a working listing does not have the conversation', async () => {
+      const codex = adapter('codex');
+      const registry = new ConversationRegistry([codex], realpath);
+      await expect(registry.lookup({ ...ref, nativeSessionId: 'gone' })).resolves.toBeNull();
+      vi.mocked(codex.listConversations).mockResolvedValue([]);
+      await expect(registry.lookup(ref)).resolves.toBeNull();
+    });
+
+    test('throws when the conversation is listed under another project', async () => {
+      const registry = new ConversationRegistry([adapter('codex')], realpath);
+      await expect(registry.lookup({ ...ref, projectPath: '/elsewhere' })).rejects.toThrow('Conversation is not currently available in this project');
+    });
+
+    test.each(['probe', 'listConversations'] as const)('throws when the provider cannot list because %s fails', async (method) => {
+      const codex = adapter('codex');
+      vi.mocked(codex[method]).mockRejectedValue(new Error('boom'));
+      await expect(new ConversationRegistry([codex], realpath).lookup(ref)).rejects.toThrow('Conversation provider is not available');
+    });
+
+    test('throws when the provider reports itself unavailable, or is not registered', async () => {
+      const codex = adapter('codex');
+      vi.mocked(codex.probe).mockResolvedValue({ provider: 'codex', availability: 'unavailable', capabilities, message: 'not installed' });
+      await expect(new ConversationRegistry([codex], realpath).lookup(ref)).rejects.toThrow('Conversation provider is not available');
+      await expect(new ConversationRegistry([], realpath).lookup(ref)).rejects.toThrow('Conversation provider is not registered');
+    });
+  });
+
   test('knows a project only once discovery has found a conversation in it', async () => {
     const registry = new ConversationRegistry([adapter('codex')], realpath);
     expect(registry.hasProject('/repo')).toBe(false);

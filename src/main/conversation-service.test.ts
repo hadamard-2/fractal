@@ -928,6 +928,30 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('deletes nothing when a side chat is named under a project it is not listed in', async () => {
+      const f = tree();
+      await expect(f.service.deleteSideChat({ ...at('sc1'), projectPath: '/other' })).rejects.toThrow('Conversation is not currently available in this project');
+      expect(f.deleteConversation).not.toHaveBeenCalled();
+      expect(f.records.size).toBe(5);
+    });
+
+    test('deletes nothing when the agent cannot list its conversations', async () => {
+      const f = tree();
+      vi.mocked(f.adapter.listConversations).mockRejectedValue(new Error('offline'));
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('Conversation provider is not available');
+      expect(f.deleteConversation).not.toHaveBeenCalled();
+      expect(f.records.size).toBe(5);
+    });
+
+    test('removes only the record of a side chat the agent no longer has, and still reports it deleted', async () => {
+      const f = tree();
+      f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item.ref.nativeSessionId !== 'sc2'));
+      await expect(f.service.deleteSideChat(at('sc1'))).resolves.toEqual([at('sc3'), at('sc2'), at('sc1')]);
+      expect(f.deleteConversation.mock.calls.map(([deleted]) => deleted.nativeSessionId)).toEqual(['sc3', 'sc1']);
+      expect([...f.records.keys()]).toEqual(['codex:fk', 'codex:fk-sc']);
+      await f.service.dispose();
+    });
+
     test('is not available without a branch store', async () => {
       const f = fixture();
       await expect(f.service.deleteSideChat(ref)).rejects.toThrow('Side chat deletion is not available');

@@ -72,6 +72,21 @@ export class ConversationRegistry {
     await this.refreshProvider(parsed.provider);
   }
 
+  /**
+   * The conversation as the agent's own listing has it right now, or null when a working listing does not have it.
+   * Throws when the listing cannot vouch either way: the provider is unavailable, or the conversation is listed under another project.
+   */
+  async lookup(ref: ConversationRef): Promise<ConversationSummary | null> {
+    const parsed = parseConversationRef(ref);
+    this.resolve(parsed);
+    await this.refreshProvider(parsed.provider);
+    if (this.statuses.get(parsed.provider)?.availability !== 'available') throw new Error('Conversation provider is not available');
+    const summary = this.summaries.get(parsed.provider)?.find((item) => conversationKey(item.ref) === conversationKey(parsed));
+    if (!summary) return null;
+    if (summary.ref.projectPath !== parsed.projectPath) throw new Error('Conversation is not currently available in this project');
+    return structuredClone(summary);
+  }
+
   async validate(ref: ConversationRef): Promise<ConversationSummary> {
     const parsed = parseConversationRef(ref);
     this.resolve(parsed);

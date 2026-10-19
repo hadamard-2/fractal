@@ -208,17 +208,17 @@ export class ConversationService {
     const refs = [rootKey, ...this.sideChatsBelow(rootKey).map(([key]) => key)].reverse()
       .map((key): ConversationRef => ({ ...parseConversationKey(key), projectPath: root.projectPath }));
     // A turn in flight may be writing the history that is about to go; refuse before anything is deleted.
-    const busy = await Promise.all(refs.map(async (ref) => {
+    // A lookup that cannot vouch for a side chat either way aborts the whole deletion, since it could be running under a path we were not given.
+    const listed = await Promise.all(refs.map(async (ref) => {
       const key = conversationKey(ref);
-      if (this.ownedRuns.has(key) || this.startingRuns.has(key)) return true;
-      // A session the agent no longer lists has no run to wait for.
-      const listed = await this.registry.validate(ref).catch((): undefined => undefined);
-      return listed !== undefined && BUSY_RUNTIMES.has(listed.runtime);
+      const summary = await this.registry.lookup(ref);
+      if (this.ownedRuns.has(key) || this.startingRuns.has(key) || (summary !== null && BUSY_RUNTIMES.has(summary.runtime))) throw new Error('Side chat is busy');
+      return summary;
     }));
-    if (busy.some(Boolean)) throw new Error('Side chat is busy');
-    for (const ref of refs) {
+    for (const [index, ref] of refs.entries()) {
       const key = conversationKey(ref);
-      await this.registry.delete(ref);
+      // Absent from a working listing: already gone from the agent's history, so only Fractal's record is left to remove.
+      if (listed[index] !== null) await this.registry.delete(ref);
       branches.delete(key);
       const load = this.loads.get(key);
       if (load?.ref.projectPath === ref.projectPath) this.release(load);
