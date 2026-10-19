@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { AppShell } from './app-shell';
 import { ExecuteMode } from './execute-mode';
+import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 vi.mock('./terminal-view', () => ({ TerminalView: (): null => null }));
 import type { ConversationApi, ConversationRef, ConversationStreamEvent } from '@/shared/conversation-contract';
 import type { FractalSettings, SidebarOrder } from '@/shared/settings-contract';
@@ -12,6 +13,7 @@ const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'native-choic
 const capabilities = { create: false, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: true, fork: false };
 const emptyOrder: SidebarOrder = { projects: [], chatsByProject: {} };
 const settings = { get: async () => ({ theme: 'system' as const, defaultCodingAgent: 'ask' as const, sidebarOrder: emptyOrder }), set: async () => ({ theme: 'system' as const, defaultCodingAgent: 'ask' as const, sidebarOrder: emptyOrder }) };
+beforeEach(() => { resetConversationHubForTests(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 test('explains no selection and opens native sidebar refs while identifying unavailable providers', async () => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });

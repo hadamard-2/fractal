@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
+import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { accessLevels } from '@/shared/access-levels';
 import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, HarnessCapabilities, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
 
@@ -24,6 +25,7 @@ function install(runtime: ConversationRuntime = 'idle', send: ConversationApi['c
     onEvent: (listener) => { emit = listener; return () => undefined; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  resetConversationHubForTests();
   return api;
 }
 async function ready(target: ConversationRef = ref) {

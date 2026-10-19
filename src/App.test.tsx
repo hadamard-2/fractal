@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import App from './App';
+import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 vi.mock('@/components/terminal-view', () => ({ TerminalView: ({ cwd }: { cwd: string | null }) => <div data-cwd={cwd ?? ''} data-testid="terminal" /> }));
 import type { ConversationApi, ConversationRef } from '@/shared/conversation-contract';
 import type { SidebarOrder } from '@/shared/settings-contract';
@@ -25,6 +26,7 @@ function installApi() {
     interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => ({ theme: 'system', defaultCodingAgent: 'claude', sidebarOrder: emptyOrder }) } } });
+  resetConversationHubForTests();
   return { list, open };
 }
 

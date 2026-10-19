@@ -2,6 +2,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { useConversation } from '@/renderer/use-conversation';
 import type { ConversationApi, ConversationRef, ConversationStreamEvent, ConversationTurn, HarnessCapabilities } from '@/shared/conversation-contract';
 
@@ -17,6 +18,7 @@ function turn(): ConversationTurn {
 
 function install(api: Partial<ConversationApi>) {
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api } });
+  resetConversationHubForTests();
 }
 
 function stream(loadId: string, seq: number, payload: EventPayload): ConversationStreamEvent {
@@ -174,21 +176,23 @@ describe('useConversation', () => {
     unmount();
   });
 
-  test('replays setup and cleanup under Testing Library StrictMode without reopening equivalent refs', async () => {
+  test('keeps one load through StrictMode\'s replayed setup and cleanup without reopening equivalent refs', async () => {
     const unsubscribe = vi.fn();
     const onEvent = vi.fn<ConversationApi['onEvent']>(() => unsubscribe);
     const open = vi.fn<ConversationApi['open']>().mockResolvedValue({ summary, capabilities });
     const close = vi.fn<ConversationApi['close']>().mockResolvedValue();
     install({ onEvent, open, close });
-    const { rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref }, reactStrictMode: true });
-    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    const { result, rerender, unmount } = renderHook(({ selected }) => useConversation(selected), { initialProps: { selected: ref }, reactStrictMode: true });
+    await waitFor(() => expect(result.current.state.capabilities).toEqual(capabilities));
     rerender({ selected: { ...ref } });
-    expect(open).toHaveBeenCalledTimes(2);
-    expect(onEvent).toHaveBeenCalledTimes(2);
-    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    await act(async () => { await Promise.resolve(); });
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledTimes(1);
     unmount();
-    expect(unsubscribe).toHaveBeenCalledTimes(2);
-    expect(close).toHaveBeenCalledTimes(2);
+    await act(async () => { await Promise.resolve(); });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
   });
 
   test('makes callbacks inert across a same-ref reload, null selection, and unmount', async () => {
