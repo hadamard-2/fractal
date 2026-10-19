@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BranchKind } from '@/shared/conversation-contract';
 import { parseBranchKind } from '@/shared/conversation-ipc';
@@ -14,6 +14,8 @@ export interface BranchRecord {
   /** Told to the agent on every turn (Claude) or set once at fork time (Codex). */
   note?: string;
   createdAt: number;
+  /** The start of the reply a side chat was cut after, at most 500 characters; shown when that reply is gone. */
+  branchPointText?: string;
 }
 
 interface StoredBranches { conversations: Record<string, BranchRecord> }
@@ -24,17 +26,21 @@ interface StoredBranches { conversations: Record<string, BranchRecord> }
  * That record is what keeps a side chat read-only after a restart, so it fails closed:
  * only a missing file reads as empty, and any other read error throws. A file that
  * does not parse is moved aside to `branches.json.corrupt-<timestamp>` rather than
- * overwritten, then reads as empty. The records are loaded once and kept in memory,
+ * overwritten, then the previous state in `branches.json.bak` is read instead (empty
+ * when that does not parse either). Every write first copies the file it replaces to
+ * `branches.json.bak`. The records are loaded once and kept in memory,
  * and every write goes through to disk, so a file that becomes unreadable later
  * cannot drop what this process already knows. An invalid entry is dropped while
  * its valid siblings are kept.
  */
 export class BranchStore {
   private readonly filePath: string;
+  private readonly backupPath: string;
   private stored: StoredBranches | undefined;
 
   constructor(rootDir: string) {
     this.filePath = path.join(rootDir, 'branches.json');
+    this.backupPath = `${this.filePath}.bak`;
     mkdirSync(rootDir, { recursive: true });
   }
 
@@ -44,6 +50,30 @@ export class BranchStore {
     const stored = this.load();
     stored.conversations[conversationKey] = record;
     this.save(stored);
+  }
+
+  delete(conversationKey: string): void {
+    const stored = this.load();
+    if (!Object.hasOwn(stored.conversations, conversationKey)) return;
+    delete stored.conversations[conversationKey];
+    this.save(stored);
+  }
+
+  /** Every record below `conversationKey`, at any depth, as [key, record] pairs, parents before children, oldest first among siblings. */
+  descendants(conversationKey: string): Array<[string, BranchRecord]> {
+    const children = new Map<string, Array<[string, BranchRecord]>>();
+    for (const entry of Object.entries(this.load().conversations)) {
+      const siblings = children.get(entry[1].parentKey);
+      if (siblings) siblings.push(entry); else children.set(entry[1].parentKey, [entry]);
+    }
+    const visited = new Set([conversationKey]);
+    const found: Array<[string, BranchRecord]> = [];
+    const queue = [conversationKey];
+    for (const key of queue) {
+      const below = (children.get(key) ?? []).filter(([childKey]) => !visited.has(childKey)).sort((a, b) => a[1].createdAt - b[1].createdAt);
+      for (const entry of below) { visited.add(entry[0]); found.push(entry); queue.push(entry[0]); }
+    }
+    return found;
   }
 
   sideChatKeys(): Set<string> {
@@ -62,23 +92,39 @@ export class BranchStore {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this.stored = stored;
       throw error;
     }
-    let conversations: Record<string, unknown> | undefined;
-    try { conversations = objectValue(objectValue(JSON.parse(text))?.conversations); } catch { /* moved aside below */ }
+    let conversations = parseConversations(text);
     if (!conversations) {
+      // Read before moving anything, so a backup that cannot be read throws with the bad file still in place.
+      conversations = this.readBackup();
       renameSync(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
-      return this.stored = stored;
     }
-    for (const [key, value] of Object.entries(conversations)) {
+    for (const [key, value] of Object.entries(conversations ?? {})) {
       const entry = coerceEntry(value);
       if (entry) stored.conversations[key] = entry;
     }
     return this.stored = stored;
   }
 
+  private readBackup(): Record<string, unknown> | undefined {
+    try { return parseConversations(readFileSync(this.backupPath, 'utf8')); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
   private save(stored: StoredBranches): void {
+    this.backUpCurrentFile();
     const tmpPath = `${this.filePath}.tmp`;
     writeFileSync(tmpPath, JSON.stringify(stored, null, 2));
     renameSync(tmpPath, this.filePath);
+  }
+
+  /** Best effort: a file that is missing, unreadable or does not parse is not worth keeping, and must not stop the write. */
+  private backUpCurrentFile(): void {
+    try {
+      if (!parseConversations(readFileSync(this.filePath, 'utf8'))) return;
+      copyFileSync(this.filePath, this.backupPath);
+    } catch { /* nothing to back up */ }
   }
 }
 
@@ -90,6 +136,10 @@ export function isSideChat(branches: Pick<BranchStore, 'get'>, conversationKey: 
   try { return branches.get(conversationKey)?.kind === 'side-chat'; } catch { return true; }
 }
 
+function parseConversations(text: string): Record<string, unknown> | undefined {
+  try { return objectValue(objectValue(JSON.parse(text))?.conversations); } catch { return undefined; }
+}
+
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -97,7 +147,7 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 function coerceEntry(value: unknown): BranchRecord | undefined {
   const record = objectValue(value);
   if (!record) return undefined;
-  const { parentKey, afterTurnId, inheritedTurnCount, note, createdAt } = record;
+  const { parentKey, afterTurnId, inheritedTurnCount, note, createdAt, branchPointText } = record;
   if (typeof parentKey !== 'string') return undefined;
   if (afterTurnId !== null && typeof afterTurnId !== 'string') return undefined;
   if (typeof inheritedTurnCount !== 'number' || !Number.isInteger(inheritedTurnCount) || inheritedTurnCount < 0) return undefined;
@@ -107,5 +157,6 @@ function coerceEntry(value: unknown): BranchRecord | undefined {
   try { kind = parseBranchKind(record.kind); } catch { return undefined; }
   const entry: BranchRecord = { kind, parentKey, afterTurnId: afterTurnId as string | null, inheritedTurnCount, createdAt };
   if (typeof note === 'string') entry.note = note;
+  if (typeof branchPointText === 'string') entry.branchPointText = branchPointText;
   return entry;
 }

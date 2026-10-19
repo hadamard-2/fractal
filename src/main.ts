@@ -39,6 +39,13 @@ if (started) {
   app.quit();
 }
 
+// One instance at a time: two would each keep their own copy of branches.json in memory
+// and overwrite the other's writes. A second launch quits and the first brings its window forward.
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) {
+  app.quit();
+}
+
 // Agents are launched by bare name, so they must be on PATH — but a launch
 // from a desktop entry, Finder or the Dock inherits the session's PATH, not
 // the one the user's shell sets up. Started at load so the shell's startup
@@ -117,6 +124,13 @@ const bindWindowShortcuts = (window: BrowserWindow) => {
 };
 
 let mainWindowRef: BrowserWindow | null = null;
+
+app.on('second-instance', () => {
+  const window = mainWindowRef;
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.focus();
+});
 let conversationService: ConversationService | undefined;
 let codexServer: CodexAppServer | undefined;
 let conversationStartup: Promise<void> = Promise.resolve();
@@ -199,6 +213,8 @@ const loadWindow = (mainWindow: BrowserWindow) => {
 // The IPC handlers are registered exactly once here; createWindow() can run
 // again later (see 'activate' below) and must not re-register them.
 app.on('ready', () => {
+  // The lock is lost: this launch is already quitting and must not open a window or touch the stores.
+  if (!hasInstanceLock) return;
   // First, so the stored theme is applied to `nativeTheme.themeSource` before
   // the window loads and the first frame already has the right scheme.
   const settingsStore = registerSettingsIpc(agentEnvironment, () => mainWindowRef);

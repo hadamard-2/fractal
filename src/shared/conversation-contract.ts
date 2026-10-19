@@ -302,3 +302,14 @@ export interface ConversationApi {
 export function conversationKey(ref: Pick<ConversationRef, 'provider' | 'nativeSessionId'> & Partial<ConversationRef>): string {
   return `${ref.provider}:${ref.nativeSessionId}`;
 }
+
+const PROVIDER_IDS: readonly ProviderId[] = ['codex', 'claude'];
+
+/** The inverse of conversationKey(); throws on a key it could not have made. */
+export function parseConversationKey(key: string): Pick<ConversationRef, 'provider' | 'nativeSessionId'> {
+  const separator = key.indexOf(':');
+  const provider = PROVIDER_IDS.find((id) => id === key.slice(0, separator));
+  const nativeSessionId = key.slice(separator + 1);
+  if (separator < 0 || !provider || nativeSessionId.trim() === '') throw new Error('Invalid conversation key');
+  return { provider, nativeSessionId };
+}

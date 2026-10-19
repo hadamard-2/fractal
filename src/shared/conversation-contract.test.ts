@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { conversationKey, MAX_ATTACHMENT_IMAGE_DATA_LENGTH } from '@/shared/conversation-contract';
+import { conversationKey, parseConversationKey, MAX_ATTACHMENT_IMAGE_DATA_LENGTH } from '@/shared/conversation-contract';
 import {
   parseAttachmentOpenAction,
   parseAttachmentPath,
@@ -15,6 +15,14 @@ describe('native conversation IPC contract', () => {
       nativeSessionId: 'session-1',
       projectPath: '/work/fractal',
     })).toBe('claude:session-1');
+  });
+
+  test('parses a key back into its provider and session id', () => {
+    expect(parseConversationKey('claude:session-1')).toEqual({ provider: 'claude', nativeSessionId: 'session-1' });
+    expect(parseConversationKey(conversationKey({ provider: 'codex', nativeSessionId: 'a:b:c' }))).toEqual({ provider: 'codex', nativeSessionId: 'a:b:c' });
+    for (const bad of ['', 'claude', 'claude:', 'claude:   ', 'other:session-1', ':session-1', 'Claude:session-1']) {
+      expect(() => parseConversationKey(bad), bad).toThrow('Invalid conversation key');
+    }
   });
 
   test('rejects unknown providers and empty identity fields', () => {

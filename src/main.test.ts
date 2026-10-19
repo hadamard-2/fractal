@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   watchdog: { watch: (): void => undefined, unwatch: (): void => undefined },
-  events: [] as string[], windows: [] as Array<{ options: { webPreferences: Record<string, unknown> }; loadFile: ReturnType<typeof vi.fn> }>,
-  app: undefined as unknown as EventEmitter & { quit: ReturnType<typeof vi.fn> },
+  events: [] as string[], windows: [] as Array<{ options: { webPreferences: Record<string, unknown> }; loadFile: ReturnType<typeof vi.fn>; restore: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn>; minimized: boolean }>,
+  app: undefined as unknown as EventEmitter & { quit: ReturnType<typeof vi.fn>; requestSingleInstanceLock: ReturnType<typeof vi.fn> },
   start: vi.fn(), disposeServer: vi.fn(async () => undefined), disposeService: vi.fn(async () => undefined),
   register: vi.fn(() => ({ emit: vi.fn() })), disposeIpc: vi.fn(async () => undefined),
   registerTerminal: vi.fn(() => ({ dispose: () => { state.events.push('terminal-ipc-dispose'); } })),
@@ -19,12 +19,16 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
-  state.app = Object.assign(new EventEmitter(), { quit: vi.fn(), isPackaged: false, getPath: () => '/tmp' });
+  state.app = Object.assign(new EventEmitter(), { quit: vi.fn(), requestSingleInstanceLock: vi.fn(() => true), isPackaged: false, getPath: () => '/tmp' });
   class Window extends EventEmitter {
     static getAllWindows() { return state.windows; }
     webContents = new EventEmitter();
     loadFile = vi.fn(() => { state.events.push('load'); });
     maximize = vi.fn();
+    restore = vi.fn();
+    focus = vi.fn();
+    minimized = false;
+    isMinimized() { return this.minimized; }
     isDestroyed() { return false; }
     constructor(public options: { webPreferences: Record<string, unknown> }) { super(); state.windows.push(this); state.events.push('window'); }
   }
@@ -65,6 +69,34 @@ beforeEach(() => {
   vi.stubGlobal('MAIN_WINDOW_VITE_DEV_SERVER_URL', undefined); vi.stubGlobal('MAIN_WINDOW_VITE_NAME', 'main_window');
 });
 afterEach(() => vi.unstubAllGlobals());
+describe('single instance', () => {
+  test('requests the lock before the app is ready and, when it is lost, quits without opening a window', async () => {
+    await import('electron'); // builds the mock app before main.ts runs
+    state.app.requestSingleInstanceLock.mockReturnValueOnce(false);
+    await import('@/main');
+    expect(state.app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
+    expect(state.app.quit).toHaveBeenCalledTimes(1);
+    state.app.emit('ready');
+    await Promise.resolve();
+    expect(state.windows).toHaveLength(0);
+    expect(state.events).toEqual([]);
+    expect(state.start).not.toHaveBeenCalled();
+  });
+  test('holding the lock does not quit, and a second launch restores a minimized window and focuses it', async () => {
+    state.start.mockImplementation(() => new Promise(() => undefined));
+    await import('@/main');
+    expect(state.app.quit).not.toHaveBeenCalled();
+    state.app.emit('ready');
+    await vi.waitFor(() => expect(state.windows).toHaveLength(1));
+    state.app.emit('second-instance');
+    expect(state.windows[0].focus).toHaveBeenCalledTimes(1);
+    expect(state.windows[0].restore).not.toHaveBeenCalled();
+    state.windows[0].minimized = true;
+    state.app.emit('second-instance');
+    expect(state.windows[0].restore).toHaveBeenCalledTimes(1);
+    expect(state.windows[0].focus).toHaveBeenCalledTimes(2);
+  });
+});
 describe('main conversation lifecycle', () => {
   test('starts once after the window exists, waits before loading, and disposes before final quit', async () => {
     let started!: (server: unknown) => void;
