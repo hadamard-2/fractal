@@ -739,6 +739,42 @@ describe('Codex fork and read-only runs', () => {
     expect(server.requests.map((request) => request.method)).not.toContain('turn/start');
   });
 
+  test('refuses a read-only run when the thread only became known as a side chat after it was resumed without the overrides', async () => {
+    const server = createFakeAppServer();
+    let sideChat = false;
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value, isReadOnlyThread: () => sideChat });
+    await adapter.readAccess(ref);
+    sideChat = true;
+    await expect(adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } })).rejects.toThrow('Read-only thread resumed without its read-only settings');
+    await expect(adapter.continueConversation(ref, { text: 'Look' })).rejects.toThrow('Read-only thread resumed without its read-only settings');
+    expect(server.requests.map((request) => request.method)).not.toContain('turn/start');
+  });
+
+  test('runs a thread the service names as a side chat read-only even when the prompt carries no branch', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value, isReadOnlyThread: (id) => id === 'thread-1' });
+    const run = await adapter.continueConversation(ref, { text: 'Look', access: { state: { kind: 'level', level: 'full-access' }, picked: true } });
+    expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal', config: readOnlyConfig });
+    expect(server.requests.findLast((request) => request.method === 'turn/start')?.params).toMatchObject({
+      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true },
+    });
+    server.emitRequest({ id: 71, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'rm -rf x', cwd: '/repo',
+    } });
+    expect(server.responses).toEqual([{ id: 71, result: { decision: 'decline' } }]);
+    await run.dispose();
+  });
+
+  test('titling or reading a thread does not load it, so neither blocks a later read-only run', async () => {
+    const server = createFakeAppServer();
+    const adapter = adapterFor(server);
+    await adapter.renameConversation(ref, 'Renamed');
+    await adapter.loadConversation(ref);
+    const run = await adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } });
+    expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toMatchObject({ config: readOnlyConfig });
+    await run.dispose();
+  });
+
   test('refuses a read-only run while a resume without the overrides is still in flight', async () => {
     const server = createFakeAppServer();
     const adapter = adapterFor(server);

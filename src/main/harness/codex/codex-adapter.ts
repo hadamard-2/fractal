@@ -246,11 +246,11 @@ export class CodexAdapter implements HarnessAdapter {
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);
-    if (prompt.branch?.readOnly) {
+    // A thread known to be read-only runs read-only whatever the prompt says.
+    const readOnly = prompt.branch?.readOnly === true || this.isReadOnlyThread(ref.nativeSessionId);
+    if (readOnly) {
       // Codex ignores the overrides for a thread that is already loaded, so one resumed without them would run with MCP tools on.
-      if (!this.isReadOnlyThread(ref.nativeSessionId) && this.resumedWithoutOverrides.has(ref.nativeSessionId)) {
-        throw new Error('Read-only thread resumed without its read-only settings');
-      }
+      if (this.resumedWithoutOverrides.has(ref.nativeSessionId)) throw new Error('Read-only thread resumed without its read-only settings');
       this.readOnlyThreads.add(ref.nativeSessionId);
     }
     const resumed = await this.resumeThread(ref);
@@ -303,7 +303,6 @@ export class CodexAdapter implements HarnessAdapter {
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
       if (completed) { completeTurn(); queue.close(); }
     };
-    const readOnly = prompt.branch?.readOnly === true;
     const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
       if (!turnId) { bufferedTraffic.push({ kind: 'request', value: request }); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
