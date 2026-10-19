@@ -13,6 +13,9 @@ export interface ClaudeCapabilityEvidence {
   streamJson: boolean;
   partialMessages: boolean;
   tools: boolean;
+  disallowedTools: boolean;
+  strictMcpConfig: boolean;
+  permissionPrompts: boolean;
   authenticated: boolean;
 }
 
@@ -39,6 +42,9 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     streamJson: hasFlag(helpText, '--output-format') && /stream-json/.test(helpText),
     partialMessages: hasFlag(helpText, '--include-partial-messages'),
     tools: hasFlag(helpText, '--tools'),
+    disallowedTools: hasFlag(helpText, '--disallowedTools'),
+    strictMcpConfig: hasFlag(helpText, '--strict-mcp-config'),
+    permissionPrompts: hasFlag(helpText, '--permission-prompts'),
     authenticated,
   };
   const capabilities = {
@@ -49,8 +55,8 @@ export async function probeClaude(exec: ClaudeExec = defaultClaudeExec, executab
     approvals: evidence.streamJson,
     questions: evidence.streamJson,
     interrupt: evidence.streamJson,
-    // A fork keeps history up to a turn; a side chat is confined with --tools, so a CLI without it cannot make one safely.
-    fork: evidence.resume && evidence.tools && evidence.streamJson,
+    // A fork keeps history up to a turn; a side chat is confined with these flags, so a CLI without all of them cannot make one safely.
+    fork: evidence.resume && evidence.streamJson && evidence.tools && evidence.disallowedTools && evidence.strictMcpConfig && evidence.permissionPrompts,
   };
   if (version.exitCode !== 0) {
     const message = version.launchError === 'ENOENT' ? executableNotFoundMessage(executable) : 'Claude executable is unavailable.';

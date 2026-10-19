@@ -62,6 +62,8 @@ export interface RunClaudeTurnOptions {
   mcpServers?: Record<string, never>;
   /** Ignores every MCP configuration except `mcpServers`. */
   strictMcpConfig?: boolean;
+  /** Settings applied over the user's own for this turn, e.g. to switch hooks and inline skill shell off. */
+  settings?: { disableAllHooks?: boolean; disableSkillShellExecution?: boolean };
   /** Added to the end of Claude Code's own system prompt. */
   appendSystemPrompt?: string;
   /** Interrupts claude if Fractal dies mid-turn; claude ends the commands it started when interrupted. */
@@ -123,6 +125,7 @@ export function runClaudeTurn(options: RunClaudeTurnOptions): ClaudeTurnRun {
     ...(options.permissionPrompts ? { permissionPrompts: options.permissionPrompts } : {}),
     ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.strictMcpConfig ? { strictMcpConfig: true } : {}),
+    ...(options.settings ? { settings: options.settings } : {}),
     includePartialMessages: true,
     ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
     spawnClaudeCodeProcess,

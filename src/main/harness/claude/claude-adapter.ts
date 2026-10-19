@@ -33,7 +33,7 @@ interface ClaudeAdapterDependencies {
   listModels?: () => Promise<AgentModel[]>;
   watchdog?: RunClaudeTurnOptions['watchdog'];
   forkSession?: typeof sdkForkSession;
-  /** Says whether a session is a side chat, for sessions this process has not itself forked or run read-only. */
+  /** Says whether a session is a side chat, for sessions this adapter has not itself forked or run read-only (for example after a restart). */
   isReadOnlySession?: (sessionId: string) => boolean;
 }
 
@@ -42,6 +42,8 @@ export class ClaudeAdapter implements HarnessAdapter {
   private status?: HarnessStatus;
   private readonly drafts = new Map<string, ConversationRef>();
   private readonly validatedSessions = new Set<string>();
+  /** Sessions this adapter forked read-only or has run read-only; they stay read-only. */
+  private readonly readOnlySessions = new Set<string>();
 
   constructor(private readonly rootDir: string, private readonly dependencies: ClaudeAdapterDependencies = {}) {}
 
@@ -109,10 +111,11 @@ export class ClaudeAdapter implements HarnessAdapter {
     const closePermissions = (): void => permissions?.close(TURN_ENDED);
     const releaseOwned = this.dependencies.ownedProcesses?.claim(ref) ?? (() => undefined);
     // A side chat is confined by Claude's own tool list and prompt handling, so whatever access was picked is ignored for it.
-    const readOnly = prompt.branch?.readOnly === true || this.dependencies.isReadOnlySession?.(ref.nativeSessionId) === true;
+    const readOnly = prompt.branch?.readOnly === true || this.readOnlySessions.has(ref.nativeSessionId) || this.dependencies.isReadOnlySession?.(ref.nativeSessionId) === true;
+    if (readOnly) this.readOnlySessions.add(ref.nativeSessionId);
     const permissionMode = readOnly ? undefined : claudePermissionMode(prompt.access);
     const branchOptions: Partial<RunClaudeTurnOptions> = {
-      ...(readOnly ? { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none' as const } : {}),
+      ...(readOnly ? { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none' as const, settings: { disableAllHooks: true, disableSkillShellExecution: true } } : {}),
       ...(prompt.branch?.note ? { appendSystemPrompt: prompt.branch.note } : {}),
     };
     let runner: ClaudeTurnRun;
@@ -163,6 +166,7 @@ export class ClaudeAdapter implements HarnessAdapter {
     const found = await this.find(ref);
     const upToMessageId = await readClaudeTurnEnd(found.filePath, afterTurnId);
     const { sessionId } = await (this.dependencies.forkSession ?? sdkForkSession)(ref.nativeSessionId, { dir: found.ref.projectPath, upToMessageId, title: options.title });
+    if (options.readOnly) this.readOnlySessions.add(sessionId);
     return { provider: 'claude', nativeSessionId: sessionId, projectPath: found.ref.projectPath };
   }
 

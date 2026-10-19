@@ -135,17 +135,18 @@ describe('runClaudeTurn', () => {
 
   test('passes the read-only tool options and the note, and nothing of them when absent', async () => {
     const restricted = fakeTurn();
-    const first = start(restricted, { tools: ['Read', 'Grep'], disallowedTools: ['mcp__*'], permissionPrompts: 'none', mcpServers: {}, strictMcpConfig: true, appendSystemPrompt: 'note' });
+    const first = start(restricted, { tools: ['Read', 'Grep'], disallowedTools: ['mcp__*'], permissionPrompts: 'none', mcpServers: {}, strictMcpConfig: true, settings: { disableAllHooks: true, disableSkillShellExecution: true }, appendSystemPrompt: 'note' });
     restricted.exit(); await first.completion;
     expect(restricted.options()).toMatchObject({
       tools: ['Read', 'Grep'], disallowedTools: ['mcp__*'], permissionPrompts: 'none', mcpServers: {}, strictMcpConfig: true,
+      settings: { disableAllHooks: true, disableSkillShellExecution: true },
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'note' },
     });
 
     const plain = fakeTurn();
     const second = start(plain);
     plain.exit(); await second.completion;
-    for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig']) expect(plain.options()).not.toHaveProperty(key);
+    for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig', 'settings']) expect(plain.options()).not.toHaveProperty(key);
     expect(plain.options().systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
   });
 

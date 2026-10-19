@@ -56,18 +56,22 @@ describe('probeClaude', () => {
     });
   });
 
-  test('can fork only when the help text lists --tools alongside resume and stream-json', async () => {
-    const probeWith = (help: string) => probeClaude(fakeExec({
+  test('can fork only when the help text lists every flag a side chat is confined with', async () => {
+    const base = ['--resume', '--session-id', '--output-format stream-json'];
+    const confinement = ['--tools <tools...>', '--disallowedTools, --disallowed-tools <tools...>', '--strict-mcp-config', '--permission-prompts <target>'];
+    const probeWith = (flags: string[]) => probeClaude(fakeExec({
       '--version': { exitCode: 0, stdout: '2.1.0\n' },
-      '--help': { exitCode: 0, stdout: help },
+      '--help': { exitCode: 0, stdout: `${flags.join('\n')}\n` },
       'auth status --json': { exitCode: 0, stdout: '{"loggedIn":true}' },
     }));
-    const withTools = await probeWith('--resume --session-id --output-format stream-json --tools <tools...>\n');
-    expect(withTools.evidence.tools).toBe(true);
-    expect(withTools.capabilities.fork).toBe(true);
-    const withoutTools = await probeWith('--resume --session-id --output-format stream-json\n');
-    expect(withoutTools.evidence.tools).toBe(false);
-    expect(withoutTools.capabilities.fork).toBe(false);
+    const full = await probeWith([...base, ...confinement]);
+    expect(full.evidence).toMatchObject({ tools: true, disallowedTools: true, strictMcpConfig: true, permissionPrompts: true });
+    expect(full.capabilities.fork).toBe(true);
+    for (const missing of confinement) {
+      const status = await probeWith([...base, ...confinement.filter((flag) => flag !== missing)]);
+      expect(status.capabilities.fork, `without ${missing}`).toBe(false);
+    }
+    expect((await probeWith(confinement)).capabilities.fork).toBe(false);
   });
 
   test('does not infer authentication from a successful version command', async () => {

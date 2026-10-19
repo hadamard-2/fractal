@@ -70,7 +70,7 @@ describe('Claude adapter', () => {
     const idleRun = () => vi.fn((_options: RunClaudeTurnOptions): ClaudeTurnRun => ({ events: (async function* () { yield* [] as NativeEvent[]; })(), completion: Promise.resolve({ exitCode: 0, signal: null }), interrupt: vi.fn(async () => undefined) }));
     const forkable: HarnessStatus = { ...available, capabilities: { ...available.capabilities, fork: true } };
     const bypass = { state: { kind: 'level' as const, level: 'bypassPermissions' }, picked: true };
-    const READ_ONLY_OPTIONS = { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none' };
+    const READ_ONLY_OPTIONS = { tools: [...CLAUDE_READ_ONLY_TOOLS], disallowedTools: ['mcp__*'], mcpServers: {}, strictMcpConfig: true, permissionPrompts: 'none', settings: { disableAllHooks: true, disableSkillShellExecution: true } };
     const quiet = { ...available, capabilities: { ...available.capabilities, approvals: false, questions: false } };
 
     test('forks the session at the end of the turn and returns the new session', async () => {
@@ -89,6 +89,26 @@ describe('Claude adapter', () => {
         const forked = await adapter.forkConversation(ref, 'u1', { readOnly: true, note: 'n', title: 'T (side chat)' });
         expect(forkSession).toHaveBeenCalledWith('claude-session-1', { dir: '/canonical/fractal', upToMessageId: 'a1', title: 'T (side chat)' });
         expect(forked).toEqual({ provider: 'claude', nativeSessionId: 'forked-session', projectPath: '/canonical/fractal' });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+
+    test('remembers the side chats it forked and keeps running them read-only without a branch', async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-fork-'));
+      try {
+        const project = path.join(directory, 'project'); await mkdir(project);
+        const transcript = (sessionId: string) => `${JSON.stringify({ type: 'user', uuid: `${sessionId}-u1`, parentUuid: null, sessionId, cwd: '/canonical/fractal', message: { role: 'user', content: 'first' } })}\n${JSON.stringify({ type: 'assistant', uuid: `${sessionId}-a1`, parentUuid: `${sessionId}-u1`, sessionId, cwd: '/canonical/fractal', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'done' }] } })}\n`;
+        await writeFile(path.join(project, 'claude-session-1.jsonl'), transcript('claude-session-1'));
+        await writeFile(path.join(project, 'forked-session.jsonl'), transcript('forked-session'));
+        const runTurn = idleRun();
+        const adapter = new ClaudeAdapter(directory, { realpath, probe: async () => forkable, runtime: async () => 'idle', runTurn, forkSession: async () => ({ sessionId: 'forked-session' }) });
+        await adapter.probe();
+        const side = await adapter.forkConversation(ref, 'claude-session-1-u1', { readOnly: true, title: 'T (side chat)' });
+        const run = await adapter.continueConversation(side, { text: 'Go', access: bypass });
+        const options = runTurn.mock.calls[0][0];
+        expect(options).toMatchObject(READ_ONLY_OPTIONS);
+        expect(options).not.toHaveProperty('permissionMode');
+        expect(options).not.toHaveProperty('canUseTool');
+        await run.dispose();
       } finally { await rm(directory, { recursive: true, force: true }); }
     });
 
@@ -130,7 +150,7 @@ describe('Claude adapter', () => {
       const options = runTurn.mock.calls[0][0];
       expect(options).toMatchObject({ permissionMode: 'bypassPermissions', appendSystemPrompt: 'n' });
       expect(options.canUseTool).toBeTypeOf('function');
-      for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig']) expect(options).not.toHaveProperty(key);
+      for (const key of ['tools', 'disallowedTools', 'permissionPrompts', 'mcpServers', 'strictMcpConfig', 'settings']) expect(options).not.toHaveProperty(key);
       await run.dispose();
     });
   });
