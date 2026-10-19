@@ -57,6 +57,11 @@ describe('Claude native history', () => {
     // forkSession drops sidechain records, so one is never a cut point even when it chains onto the turn.
     await write([{ type: 'assistant', uuid: 's1', parentUuid: 'a3', isSidechain: true, message: { id: 'm4', role: 'assistant', content: [{ type: 'text', text: 'side' }] } }]);
     await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
+    // forkSession accepts only message-bearing record types, so a chained record of any other type is not a cut point either.
+    await write([{ type: 'file-history-snapshot', uuid: 'f1', parentUuid: 'a3' }, { type: 'summary', uuid: 'x1', parentUuid: 'f1' }]);
+    await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
+    await write([{ type: 'system', uuid: 'y1', parentUuid: 'a3', subtype: 'turn_duration' }]);
+    await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('y1');
     await rm(directory, { recursive: true, force: true });
   });
 

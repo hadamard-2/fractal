@@ -312,6 +312,8 @@ export async function readClaudeLastRun(filePath: string): Promise<ModelChoice |
   return last;
 }
 
+const FORK_CUT_TYPES: ReadonlySet<string> = new Set(['user', 'assistant', 'attachment', 'system', 'progress']);
+
 /**
  * The uuid of the last transcript record that belongs to a turn, which is where a fork
  * has to cut to keep the whole turn. A turn's id is its prompt record's uuid.
@@ -326,8 +328,8 @@ export async function readClaudeTurnEnd(filePath: string, turnId: string): Promi
     const currentOrdinal = ordinal++;
     if (!record) return;
     const turn = claudeRecordTurnId(record, claudeRecordNativeId(record, currentOrdinal), context);
-    // Only a record with a uuid of its own can be named as a cut point, and forkSession drops sidechain records, so never one of those.
-    if (turn === turnId && typeof record.uuid === 'string' && record.uuid && record.isSidechain !== true) end = record.uuid;
+    // Only a record with a uuid of its own, of a type forkSession accepts as a cut point, can be named; it drops sidechain records, so never one of those.
+    if (turn === turnId && FORK_CUT_TYPES.has(String(record.type)) && typeof record.uuid === 'string' && record.uuid && record.isSidechain !== true) end = record.uuid;
   };
   for await (const chunk of createReadStream(filePath)) {
     for (const line of decoder.push(chunk as Buffer)) {
