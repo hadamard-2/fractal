@@ -50,10 +50,11 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
       if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
-      if (method === 'thread/resume') return { thread: threadRead.thread, model: 'gpt-5.6-terra', reasoningEffort: 'high', ...resumeAccess };
+      if (method === 'thread/resume') return { thread: { ...threadRead.thread, id: params.threadId }, model: 'gpt-5.6-terra', reasoningEffort: 'high', ...resumeAccess };
       if (method === 'model/list') return params.cursor === 'models-2'
         ? { data: [codexModel('gpt-5.5', ['low', 'medium', 'high', 'xhigh'])], nextCursor: null }
         : { data: [codexModel('gpt-5.6-terra', ['low', 'medium', 'ultra']), { ...codexModel('codex-auto-review', ['low']), hidden: true }], nextCursor: 'models-2' };
+      if (method === 'config/read') return { config: { model: null, mcp_servers: { node_repl: { command: 'node_repl' }, docs: { url: 'https://example.test/mcp' } } }, origins: {}, layers: null };
       if (method === 'thread/fork') return { thread: { ...threadRead.thread, id: 'forked-thread', cwd: forkCwd ?? params.cwd }, ...resumeAccess };
       if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
@@ -649,6 +650,7 @@ function permissionParams() {
 describe('Codex fork and read-only runs', () => {
   const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
   const adapterFor = (server: ReturnType<typeof createFakeAppServer>) => new CodexAdapter(server as never, { realpath: async (value) => value });
+  const readOnlyConfig = { features: { apps: false, plugins: false }, mcp_servers: { node_repl: { enabled: false }, docs: { enabled: false } } };
   const forkParams = (server: ReturnType<typeof createFakeAppServer>) => server.requests.find((request) => request.method === 'thread/fork')?.params;
 
   test('reports that it can fork', () => {
@@ -659,10 +661,71 @@ describe('Codex fork and read-only runs', () => {
     const server = createFakeAppServer();
     const forked = await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, note: 'Side chat note', title: 'Side' });
     expect(forkParams(server)).toEqual({
-      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: 'Side chat note',
+      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: 'Side chat note', config: readOnlyConfig,
     });
     expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
     expect(server.requests.map((request) => request.method)).not.toContain('thread/resume');
+  });
+
+  test('forks a side chat with every configured MCP server off, read from the project\'s effective config', async () => {
+    const server = createFakeAppServer();
+    await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+    expect(server.requests.find((request) => request.method === 'config/read')?.params).toEqual({ cwd: '/work/fractal' });
+    expect(forkParams(server)).toMatchObject({ config: {
+      features: { apps: false, plugins: false },
+      mcp_servers: { node_repl: { enabled: false }, docs: { enabled: false } },
+    } });
+  });
+
+  test('does not fork a side chat when it cannot read the configured MCP servers', async () => {
+    const server = createFakeAppServer();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'config/read') throw new Error('no config'); return request(method, params); });
+    await expect(adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' })).rejects.toThrow('no config');
+    expect(server.requests.map((entry) => entry.method)).not.toContain('thread/fork');
+  });
+
+  test('titles the fork with thread/name/set after forking', async () => {
+    const server = createFakeAppServer();
+    await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side: why the cache' });
+    expect(server.requests.at(-1)).toEqual({ method: 'thread/name/set', params: { threadId: 'forked-thread', name: 'Side: why the cache' } });
+    const full = createFakeAppServer();
+    await adapterFor(full).forkConversation(ref, 'turn-3', { readOnly: false, title: 'Fork of it' });
+    expect(full.requests.at(-1)).toEqual({ method: 'thread/name/set', params: { threadId: 'forked-thread', name: 'Fork of it' } });
+  });
+
+  test('still returns the fork when titling it fails', async () => {
+    const server = createFakeAppServer();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'thread/name/set') throw new Error('rename failed'); return request(method, params); });
+    await expect(adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: false, title: 'Fork' })).resolves.toMatchObject({ nativeSessionId: 'forked-thread' });
+  });
+
+  test('repeats the MCP overrides whenever a side chat thread is resumed, so a reload cannot bring the servers back', async () => {
+    const server = createFakeAppServer();
+    const adapter = adapterFor(server);
+    const side = await adapter.forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+    await adapter.readAccess(side);
+    const run = await adapter.continueConversation(side, { text: 'Look', branch: { readOnly: true } });
+    const resumes = server.requests.filter((request) => request.method === 'thread/resume');
+    expect(resumes).toHaveLength(2);
+    for (const resume of resumes) expect(resume.params).toEqual({ threadId: 'forked-thread', cwd: '/work/fractal', config: readOnlyConfig });
+    await run.dispose();
+  });
+
+  test('applies the MCP overrides when a read-only run resumes a thread this process did not fork', async () => {
+    const server = createFakeAppServer();
+    const run = await adapterFor(server).continueConversation(ref, { text: 'Look', branch: { readOnly: true } });
+    expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal', config: readOnlyConfig });
+    await run.dispose();
+  });
+
+  test('leaves MCP config off the resume of a thread that is not a side chat', async () => {
+    const server = createFakeAppServer();
+    const run = await adapterFor(server).continueConversation(ref, { text: 'Go', branch: { readOnly: false } });
+    expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal' });
+    expect(server.requests.map((request) => request.method)).not.toContain('config/read');
+    await run.dispose();
   });
 
   test('forks a side chat without developer instructions when there is no note', async () => {
@@ -674,7 +737,7 @@ describe('Codex fork and read-only runs', () => {
   test('forks a full fork with the parent\'s model and access, and no developer instructions without a note', async () => {
     const server = createFakeAppServer();
     const forked = await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: false, title: 'Fork' });
-    expect(server.requests.map((request) => request.method)).toEqual(['thread/resume', 'thread/fork']);
+    expect(server.requests.map((request) => request.method)).toEqual(['thread/resume', 'thread/fork', 'thread/name/set']);
     expect(forkParams(server)).toEqual({
       threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', model: 'gpt-5.6-terra', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
     });

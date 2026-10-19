@@ -9,6 +9,7 @@ import type { AccessState, AgentModel, ConversationRef, ConversationRuntime, Con
 import type { AgentPrompt, ConversationRun, ForkOptions, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import { codexAccessOverrides, codexAccessState, codexReadOnlyOverrides } from '@/main/harness/codex/codex-access';
 import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
+import type { JsonValue } from '@/main/harness/codex/generated/serde_json/JsonValue';
 import type { SandboxMode } from '@/main/harness/codex/generated/v2/SandboxMode';
 import type { ThreadResumeResponse as CodexResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
 
@@ -31,6 +32,9 @@ export class CodexAdapter implements HarnessAdapter {
   readonly provider = 'codex' as const;
 
   private readonly resumes = new Map<string, Promise<CodexResumeResponse>>();
+  // Threads that must run without MCP tools. Codex fixes a thread's tool set when it loads the thread and ignores
+  // overrides sent to one that is already loaded, so every resume of these threads repeats the overrides.
+  private readonly readOnlyThreads = new Set<string>();
 
   constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath } = {}) {}
 
@@ -148,11 +152,30 @@ export class CodexAdapter implements HarnessAdapter {
     const note = options.note ? { developerInstructions: options.note } : {};
     // A full fork starts with the parent's own model and access; a side chat is pinned read-only with approvals off.
     const settings = options.readOnly
-      ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const }
+      ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const, config: await this.readOnlyConfig(projectPath) }
       : forkSettingsFrom(await this.resumeThread(source));
     const response = await this.server.request('thread/fork', { ...base, ...settings, ...note });
     if (await this.canonicalPath(response.thread.cwd) !== projectPath) throw new Error('Forked Codex project does not match the selected project');
-    return { provider: 'codex', nativeSessionId: response.thread.id, projectPath };
+    if (options.readOnly) this.readOnlyThreads.add(response.thread.id);
+    const forked: ConversationRef = { provider: 'codex', nativeSessionId: response.thread.id, projectPath };
+    // The fork already exists; a failed rename leaves it untitled rather than orphaned.
+    try { await this.renameConversation(forked, options.title); } catch { /* the fork is usable without its title */ }
+    return forked;
+  }
+
+  /**
+   * The sandbox only confines commands and patches; an MCP tool runs in its own server process and is not confined by it.
+   * So a read-only thread loads with no MCP servers: the ones in the user's config are switched off by name, and
+   * plugins and apps, which are where Codex gets the rest, are switched off as features.
+   */
+  private async readOnlyConfig(cwd: string): Promise<{ [key: string]: JsonValue }> {
+    const { config } = await this.server.request('config/read', { cwd });
+    const configured = config.mcp_servers;
+    const servers = typeof configured === 'object' && configured !== null && !Array.isArray(configured) ? Object.keys(configured) : [];
+    return {
+      features: { apps: false, plugins: false },
+      mcp_servers: Object.fromEntries(servers.map((name) => [name, { enabled: false }])),
+    };
   }
 
   async renameConversation(ref: ConversationRef, title: string): Promise<void> {
@@ -203,7 +226,10 @@ export class CodexAdapter implements HarnessAdapter {
     const existing = this.resumes.get(ref.nativeSessionId);
     if (existing) return existing;
     const resume = this.canonicalPath(ref.projectPath)
-      .then((cwd) => this.server.request('thread/resume', { threadId: ref.nativeSessionId, cwd }))
+      .then(async (cwd) => this.server.request('thread/resume', {
+        threadId: ref.nativeSessionId, cwd,
+        ...(this.readOnlyThreads.has(ref.nativeSessionId) ? { config: await this.readOnlyConfig(cwd) } : {}),
+      }))
       .finally(() => { this.resumes.delete(ref.nativeSessionId); });
     this.resumes.set(ref.nativeSessionId, resume);
     return resume;
@@ -212,6 +238,7 @@ export class CodexAdapter implements HarnessAdapter {
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);
+    if (prompt.branch?.readOnly) this.readOnlyThreads.add(ref.nativeSessionId);
     const resumed = await this.resumeThread(ref);
     if (resumed.thread.id !== ref.nativeSessionId) throw new Error('Resumed Codex thread does not match the requested thread');
     if (await this.canonicalPath(resumed.thread.cwd) !== projectPath) throw new Error('Resumed Codex project does not match the requested project');
