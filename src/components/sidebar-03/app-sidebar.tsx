@@ -26,7 +26,7 @@ import { FractalMark } from '@/components/fractal-mark';
 import { AGENT_DOT_CLASS, providerName, type NavSelection } from '@/components/sidebar-03/nav-main';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { visibleProjects, withoutAgents } from '@/renderer/project-visibility';
+import { sidebarProjects, visibleProjects, withoutAgents } from '@/renderer/project-visibility';
 import type { ProjectVisibilityState } from '@/renderer/use-project-visibility';
 import type { ProjectFilter } from '@/shared/settings-contract';
 import NavMain from '@/components/sidebar-03/nav-main';
@@ -55,7 +55,7 @@ const clampSidebarWidth = (width: number) =>
 const PLACEHOLDER_WIDTHS = ['w-32', 'w-24', 'w-40', 'w-28', 'w-20'];
 
 const FILTER_LABELS: Record<ProjectFilter, string> = { active: 'Active', archived: 'Archived', all: 'All' };
-const EMPTY_FILTER_TEXT: Partial<Record<ProjectFilter, string>> = { active: 'No active projects.', archived: 'No archived projects.' };
+const EMPTY_FILTER_TEXT: Partial<Record<ProjectFilter, string>> = { active: 'No active projects.', archived: 'Nothing archived.' };
 // Same order as the settings dialog's agent list.
 const FILTER_AGENTS: readonly ProviderId[] = ['claude', 'codex'];
 
@@ -242,7 +242,9 @@ export function DashboardSidebar({
   const [pendingRemoval, setPendingRemoval] = useState<ProjectConversationGroup | null>(null);
   const filter = projectVisibility?.filter ?? 'all';
   const hiddenAgents = projectVisibility?.hiddenAgents ?? [];
-  const statusShownProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, filter) : orderedProjects;
+  const statusShownProjects = projectVisibility
+    ? sidebarProjects(orderedProjects, projectVisibility.visibility, projectVisibility.archivedChats, filter)
+    : orderedProjects;
   const shownProjects = withoutAgents(statusShownProjects, hiddenAgents);
   const searchableProjects = projectVisibility ? visibleProjects(orderedProjects, projectVisibility.visibility, 'searchable') : orderedProjects;
   const emptyFilterText = orderReady && projects.length > 0 && shownProjects.length === 0
@@ -389,6 +391,10 @@ export function DashboardSidebar({
                 statusOf: projectVisibility.statusOf,
                 onToggleArchive: (projectPath) => projectVisibility.setStatus(projectPath, projectVisibility.statusOf(projectPath) === 'archived' ? 'active' : 'archived'),
                 onRemove: setPendingRemoval,
+              }}
+              chatMenu={projectVisibility && {
+                isArchived: projectVisibility.isChatArchived,
+                onToggleArchive: (ref) => projectVisibility.setChatArchived(ref, !projectVisibility.isChatArchived(ref)),
               }}
               providers={providers}
               selected={selected ?? null}

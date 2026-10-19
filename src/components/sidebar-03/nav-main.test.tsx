@@ -172,7 +172,7 @@ describe('NavMain', () => {
     );
     const project = screen.getByRole('button', { name: 'Atlas' });
     fireEvent.contextMenu(project);
-    expect(await screen.findByRole('menuitem', { name: 'Archive project' })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: 'Archive' })).toBeTruthy();
     expect(project.classList.contains('bg-sidebar-accent')).toBe(true);
     await userEvent.setup().keyboard('{Escape}');
     await waitFor(() => expect(project.classList.contains('bg-sidebar-accent')).toBe(false));
@@ -182,6 +182,30 @@ describe('NavMain', () => {
     fireEvent.contextMenu(chat);
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeTruthy();
     expect(chat.classList.contains('bg-sidebar-accent')).toBe(true);
+  });
+
+  test('marks archived projects and chats with the archive icon, and lays out both menus alike', async () => {
+    render(
+      <SidebarProvider>
+        <NavMain chatMenu={{ isArchived: () => true, onToggleArchive: vi.fn() }} groups={[atlasGroup]} onCreated={vi.fn()} onRenameChat={vi.fn()} onSelect={vi.fn()} projectMenu={{ statusOf: () => 'archived', onToggleArchive: vi.fn(), onRemove: vi.fn() }} providers={[codex]} selected={null} />
+      </SidebarProvider>
+    );
+    const project = screen.getByRole('button', { name: 'Atlas' });
+    expect(project.querySelector('.lucide-archive')).not.toBeNull();
+    expect(project.querySelector('.lucide-folder')).toBeNull();
+    expect(project.className).toContain('text-muted-foreground');
+    fireEvent.contextMenu(project);
+    const projectItems = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
+    expect(projectItems).toEqual(['Unarchive', 'Remove']);
+    // Neither menu splits its items with a divider.
+    expect(screen.queryByRole('separator')).toBeNull();
+    await userEvent.setup().keyboard('{Escape}');
+
+    await userEvent.setup().click(project);
+    const chat = screen.getByRole('button', { name: /Map routes, Codex conversation, Archived/ });
+    expect(chat.querySelector('.lucide-archive')).not.toBeNull();
+    fireEvent.contextMenu(chat);
+    await waitFor(() => expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Rename', 'Unarchive']));
   });
 
   describe('renaming a chat', () => {
@@ -306,7 +330,7 @@ describe('NavMain', () => {
     const user = userEvent.setup();
     const create = vi.fn(async () => fractalGroup.conversations[0].ref);
     const onCreated = vi.fn();
-    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {} }) } } });
+    Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: { create }, settings: { get: async (): Promise<FractalSettings> => ({ theme: 'system', defaultCodingAgent: 'ask', sidebarOrder: { projects: [], chatsByProject: {} }, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', archivedChats: [], hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {} }) } } });
     renderNav([fractalGroup], null, vi.fn(), onCreated);
 
     const project = screen.getByRole('button', { name: 'Fractal' });

@@ -68,6 +68,11 @@ export interface FractalSettings {
   sidebarOrder: SidebarOrder;
   projectVisibility: ProjectVisibility;
   projectFilter: ProjectFilter;
+  /**
+   * Chats Fractal tucks behind the sidebar filter, as conversation keys. Like an archived
+   * project, this lives only here and leaves the agent's own history untouched.
+   */
+  archivedChats: string[];
   /** Agents whose chats the sidebar filter hides. Stored as the hidden set so an agent added later shows by default. */
   hiddenAgents: ProviderId[];
   /** Colored per-agent dot on each sidebar chat row. */

@@ -1,4 +1,4 @@
-import type { ProviderId } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
 import type { ProjectFilter, ProjectVisibility } from '@/shared/settings-contract';
 
 export type ProjectStatus = 'active' | 'archived' | 'removed';
@@ -48,5 +48,24 @@ export function withoutAgents<T extends { conversations: Array<{ ref: { provider
   return projects.flatMap((project) => {
     const conversations = project.conversations.filter((conversation) => !hidden.includes(conversation.ref.provider));
     return conversations.length > 0 ? [{ ...project, conversations }] : [];
+  });
+}
+
+/**
+ * The projects and chats the sidebar's status filter shows, given the archived chat keys.
+ * Every chat in an archived project counts as archived with it. Archived also shows an
+ * active project's archived chats, dropping the project when it has none; Active keeps a
+ * project whose chats are all archived, since the project itself is still active. Removed
+ * projects never show. Returns the same array when nothing is filtered out.
+ */
+export function sidebarProjects<T extends { projectPath: string; conversations: Array<{ ref: ConversationRef }> }>(projects: T[], visibility: ProjectVisibility, archivedChats: readonly string[], filter: ProjectFilter): T[] {
+  const shown = visibleProjects(projects, visibility, filter === 'archived' ? 'all' : filter);
+  if (filter === 'all' || (filter === 'active' && archivedChats.length === 0)) return shown.length === projects.length ? projects : shown;
+  const wanted = filter === 'archived';
+  return shown.flatMap((project) => {
+    if (projectStatus(visibility, project.projectPath) === 'archived') return [project];
+    const conversations = project.conversations.filter((conversation) => archivedChats.includes(conversationKey(conversation.ref)) === wanted);
+    if (wanted && conversations.length === 0) return [];
+    return conversations.length === project.conversations.length ? [project] : [{ ...project, conversations }];
   });
 }

@@ -23,7 +23,7 @@ import { conversationKey, type ConversationRef, type ConversationRuntime, type C
 import { MAX_CONVERSATION_TITLE_LENGTH } from '@/shared/conversation-ipc';
 import { NewConversationMenu } from '@/components/conversation/new-conversation-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import type { ProjectStatus } from '@/renderer/project-visibility';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +32,11 @@ export type ProjectMenuActions = {
   statusOf: (projectPath: string) => ProjectStatus;
   onToggleArchive: (projectPath: string) => void;
   onRemove: (group: ProjectConversationGroup) => void;
+};
+
+export type ChatMenuActions = {
+  isArchived: (ref: ConversationRef) => boolean;
+  onToggleArchive: (ref: ConversationRef) => void;
 };
 
 export type NavSelection = {
@@ -167,6 +172,7 @@ export default function NavMain({
   onMoveChat,
   projectMenu,
   onRenameChat,
+  chatMenu,
   showAgentColorTags = true,
 }: {
   groups: ProjectConversationGroup[];
@@ -180,8 +186,10 @@ export default function NavMain({
   onMoveChat?: (projectPath: string, source: string, target: string) => void;
   projectMenu?: ProjectMenuActions;
   // Renames a chat in its agent's history and refreshes; rejects to keep the
-  // editor open. Absent, chat rows have no right-click menu.
+  // editor open. With chatMenu also absent, chat rows have no right-click menu.
   onRenameChat?: (ref: ConversationRef, title: string) => Promise<void>;
+  // Archives and unarchives chats, which only Fractal records.
+  chatMenu?: ChatMenuActions;
   // Off hides the dot only; the row's accessible name still carries the agent.
   showAgentColorTags?: boolean;
 }) {
@@ -238,6 +246,8 @@ export default function NavMain({
         const isOpen = openProjects.has(group.projectPath);
         const showAll = expandedProjects.has(group.projectPath);
         const visibleConversations = showAll ? group.conversations : group.conversations.slice(0, 5);
+        // Only reachable through the sidebar filter. Dimmed like a chat row at rest.
+        const isArchived = projectMenu?.statusOf(group.projectPath) === 'archived';
 
         return (
           <SortableRow disabled={!onMoveProject || (isOpen && { draggable: true })} group="projects" id={`project:${group.projectPath}`} index={projectIndex} key={group.projectPath}>
@@ -270,11 +280,11 @@ export default function NavMain({
               <ContextMenuTrigger asChild disabled={!projectMenu}>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton
-                  className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]', menuRow === `project:${group.projectPath}` && 'bg-sidebar-accent text-sidebar-accent-foreground')}
+                  className={cn('pr-20 transition-[width,height,padding,background-color,box-shadow,scale] duration-150 ease-out motion-reduce:transition-none', onMoveProject && !isOpen && 'touch-none', (isDragging || isDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isDragging && 'scale-[1.02]', isArchived && 'text-muted-foreground hover:text-foreground', menuRow === `project:${group.projectPath}` && 'bg-sidebar-accent text-sidebar-accent-foreground')}
                   ref={onMoveProject && !isOpen ? handleRef : undefined}
                   type="button"
                 >
-                  {isOpen ? <FolderOpen /> : <Folder />}
+                  {isArchived ? <Archive /> : isOpen ? <FolderOpen /> : <Folder />}
                   <span>{group.displayName}</span>
                 </SidebarMenuButton>
               </CollapsibleTrigger>
@@ -282,13 +292,10 @@ export default function NavMain({
               {projectMenu && (
                 <ContextMenuContent className="min-w-44">
                   <ContextMenuItem onSelect={() => projectMenu.onToggleArchive(group.projectPath)}>
-                    {projectMenu.statusOf(group.projectPath) === 'archived'
-                      ? <><ArchiveRestore />Unarchive project</>
-                      : <><Archive />Archive project</>}
+                    {isArchived ? <><ArchiveRestore />Unarchive</> : <><Archive />Archive</>}
                   </ContextMenuItem>
-                  <ContextMenuSeparator />
                   <ContextMenuItem onSelect={() => projectMenu.onRemove(group)} variant="destructive">
-                    <FolderX />Remove project…
+                    <FolderX />Remove
                   </ContextMenuItem>
                 </ContextMenuContent>
               )}
@@ -300,6 +307,7 @@ export default function NavMain({
                     const chatId = conversationKey(conversation.ref);
                     const isEditing = editingChat === chatId;
                     const runtime = (isSelected && selectedRuntime) || conversation.runtime;
+                    const isChatArchived = chatMenu?.isArchived(conversation.ref) ?? false;
                     return (
                       <SortableRow disabled={!onMoveChat || isEditing} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
                       {({ ref: chatRef, handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget }) => (
@@ -315,7 +323,7 @@ export default function NavMain({
                           />
                         ) : (
                         <ContextMenu onOpenChange={trackMenu(`chat:${chatId}`)}>
-                        <ContextMenuTrigger asChild disabled={!onRenameChat}>
+                        <ContextMenuTrigger asChild disabled={!onRenameChat && !chatMenu}>
                         {/*
                           The row's classes go on SidebarMenuSubButton rather than
                           the button: Slot only concatenates the two class lists,
@@ -329,7 +337,7 @@ export default function NavMain({
                           isActive={isSelected}
                         >
                           <button
-                            aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, runtimeLabel(runtime)].filter(Boolean).join(', ')}
+                            aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, isChatArchived && 'Archived', runtimeLabel(runtime)].filter(Boolean).join(', ')}
                             aria-current={isSelected ? 'page' : undefined}
                             ref={chatHandleRef}
                             onClick={() => onSelect({
@@ -341,6 +349,7 @@ export default function NavMain({
                             type="button"
                           >
                             <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+                            {isChatArchived && <Archive aria-hidden="true" className="size-3.5 shrink-0" />}
                             {showAgentColorTags && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -359,12 +368,19 @@ export default function NavMain({
                             renamePicked.current = false;
                           }}
                         >
-                          <ContextMenuItem
-                            disabled={!canRename(conversation, providers)}
-                            onSelect={() => { renamePicked.current = true; setEditingChat(chatId); }}
-                          >
-                            <Pencil />Rename
-                          </ContextMenuItem>
+                          {onRenameChat && (
+                            <ContextMenuItem
+                              disabled={!canRename(conversation, providers)}
+                              onSelect={() => { renamePicked.current = true; setEditingChat(chatId); }}
+                            >
+                              <Pencil />Rename
+                            </ContextMenuItem>
+                          )}
+                          {chatMenu && (
+                            <ContextMenuItem onSelect={() => chatMenu.onToggleArchive(conversation.ref)}>
+                              {isChatArchived ? <><ArchiveRestore />Unarchive</> : <><Archive />Archive</>}
+                            </ContextMenuItem>
+                          )}
                         </ContextMenuContent>
                         </ContextMenu>
                         )}

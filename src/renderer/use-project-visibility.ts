@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ProviderId } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ProviderId } from '@/shared/conversation-contract';
 import type { FractalSettings, ProjectFilter, ProjectVisibility } from '@/shared/settings-contract';
 import { projectStatus, withProjectStatus, type ProjectStatus } from './project-visibility';
 
 const emptyVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
 
 /**
- * The archived/removed project lists and the sidebar's status and agent
+ * The archived/removed project lists, the archived chats, and the sidebar's status and agent
  * filters, loaded from settings and saved back on every change. One instance
  * lives in the app shell so the sidebar, search, and the new-conversation
  * picker agree.
@@ -15,9 +15,11 @@ export function useProjectVisibility() {
   const [visibility, setVisibility] = useState<ProjectVisibility>(emptyVisibility);
   const [filter, setFilterState] = useState<ProjectFilter>('active');
   const [hiddenAgents, setHiddenAgentsState] = useState<ProviderId[]>([]);
+  const [archivedChats, setArchivedChatsState] = useState<string[]>([]);
   const [error, setError] = useState(false);
   const visibilityRef = useRef(visibility);
   const hiddenAgentsRef = useRef(hiddenAgents);
+  const archivedChatsRef = useRef(archivedChats);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
@@ -32,6 +34,9 @@ export function useProjectVisibility() {
       const hidden = settings.hiddenAgents ?? [];
       hiddenAgentsRef.current = hidden;
       setHiddenAgentsState(hidden);
+      const archived = settings.archivedChats ?? [];
+      archivedChatsRef.current = archived;
+      setArchivedChatsState(archived);
     }).catch(() => {
       if (active) setError(true);
     });
@@ -63,8 +68,19 @@ export function useProjectVisibility() {
     save({ hiddenAgents: next });
   };
 
+  const setChatArchived = (ref: ConversationRef, archived: boolean) => {
+    const key = conversationKey(ref);
+    const current = archivedChatsRef.current;
+    if (current.includes(key) === archived) return;
+    const next = archived ? [...current, key] : current.filter((item) => item !== key);
+    archivedChatsRef.current = next;
+    setArchivedChatsState(next);
+    save({ archivedChats: next });
+  };
+
   return {
     visibility,
+    archivedChats,
     filter,
     hiddenAgents,
     error,
@@ -75,6 +91,8 @@ export function useProjectVisibility() {
     },
     setAgentShown,
     setStatus,
+    isChatArchived: (ref: ConversationRef) => archivedChats.includes(conversationKey(ref)),
+    setChatArchived,
   };
 }
 

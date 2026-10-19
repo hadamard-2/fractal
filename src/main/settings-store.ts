@@ -7,7 +7,7 @@ import { DEFAULT_CODING_AGENT, type AgentExecutables, type DefaultCodingAgent, t
 const emptySidebarOrder = (): SidebarOrder => ({ projects: [], chatsByProject: {} });
 const emptyProjectVisibility = (): ProjectVisibility => ({ archived: [], removed: [] });
 const emptyAgentExecutables = (): AgentExecutables => ({ claude: '', codex: '' });
-const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: emptyAgentExecutables(), fileOpener: null, allowDangerousAccess: {} });
+const defaults = (): FractalSettings => ({ theme: 'system', defaultCodingAgent: DEFAULT_CODING_AGENT, sidebarOrder: emptySidebarOrder(), projectVisibility: emptyProjectVisibility(), projectFilter: 'active', archivedChats: [], hiddenAgents: [], showAgentColorTags: true, agentExecutables: emptyAgentExecutables(), fileOpener: null, allowDangerousAccess: {} });
 
 const THEME_VALUES: readonly string[] = ['system', 'light', 'dark'];
 const CODING_AGENT_VALUES: readonly string[] = ['codex', 'claude', 'ask'];
@@ -93,6 +93,7 @@ function coerceSettings(record: Record<string, unknown>): FractalSettings {
     sidebarOrder: coerceSidebarOrder(record.sidebarOrder),
     projectVisibility: coerceProjectVisibility(record.projectVisibility),
     projectFilter: coerceProjectFilter(record.projectFilter),
+    archivedChats: coerceStrings(record.archivedChats),
     hiddenAgents: coerceHiddenAgents(record.hiddenAgents),
     showAgentColorTags: coerceBoolean(record.showAgentColorTags, true),
     agentExecutables: coerceAgentExecutables(record.agentExecutables),

@@ -250,14 +250,14 @@ describe('project status', () => {
       open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
       close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, onEvent: () => () => undefined,
     };
-    let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {}, ...initial };
+    let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', archivedChats: [], hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {}, ...initial };
     const set = vi.fn(async (patch: Partial<FractalSettings>) => { stored = { ...stored, ...patch }; return stored; });
     Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: { get: async () => stored, set } } });
     render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
     return { set, create, stored: () => stored };
   }
   const projectRow = (name: string) => screen.queryByRole('button', { name });
-  async function openMenu(name: string) {
+  async function openMenu(name: string | RegExp) {
     fireEvent.contextMenu(await screen.findByRole('button', { name }));
     return screen.findByRole('menu');
   }
@@ -269,7 +269,7 @@ describe('project status', () => {
   test('archiving moves a project behind the Archived filter, and unarchiving brings it back', async () => {
     const { set, stored } = install();
     const user = userEvent.setup();
-    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Archive project' }));
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Archive' }));
     await waitFor(() => expect(projectRow('Atlas')).toBeNull());
     expect(projectRow('Fractal')).toBeTruthy();
     expect(set).toHaveBeenCalledWith({ projectVisibility: { archived: ['/work/atlas'], removed: [] } });
@@ -281,9 +281,33 @@ describe('project status', () => {
 
     await chooseFilter(user, 'All');
     expect(await screen.findByRole('button', { name: 'Fractal' })).toBeTruthy();
-    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Unarchive project' }));
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Unarchive' }));
     await chooseFilter(user, 'Active');
     expect(await screen.findByRole('button', { name: 'Atlas' })).toBeTruthy();
+  });
+
+  test('archiving a chat moves it behind the Archived filter, and unarchiving brings it back', async () => {
+    const { set, stored } = install({ atlasClaudeChat: true });
+    const user = userEvent.setup();
+    const chatRow = (name: RegExp) => screen.queryByRole('button', { name });
+    await user.click(await screen.findByRole('button', { name: 'Atlas' }));
+    await user.click(within(await openMenu(/^Atlas chat,/)).getByRole('menuitem', { name: 'Archive' }));
+    await waitFor(() => expect(chatRow(/^Atlas chat,/)).toBeNull());
+    expect(chatRow(/^Atlas Claude chat,/)).toBeTruthy();
+    expect(set).toHaveBeenCalledWith({ archivedChats: ['codex:native-atlas'] });
+
+    await chooseFilter(user, 'Archived');
+    expect(await screen.findByRole('button', { name: /^Atlas chat,/ })).toBeTruthy();
+    expect(chatRow(/^Atlas Claude chat,/)).toBeNull();
+    expect(projectRow('Fractal')).toBeNull();
+
+    await user.click(within(await openMenu(/^Atlas chat,/)).getByRole('menuitem', { name: 'Unarchive' }));
+    expect(await screen.findByText('Nothing archived.')).toBeTruthy();
+    await waitFor(() => expect(stored().archivedChats).toEqual([]));
+    await chooseFilter(user, 'Active');
+    // Atlas left the list under Archived, so it comes back collapsed.
+    await user.click(await screen.findByRole('button', { name: 'Atlas' }));
+    expect(await screen.findByRole('button', { name: /^Atlas chat,/ })).toBeTruthy();
   });
 
   test('archived projects stay searchable but are not offered for new conversations', async () => {
@@ -315,12 +339,12 @@ describe('project status', () => {
     const create = vi.fn<ConversationApi['create']>(async ({ provider }) => ({ provider, nativeSessionId: 'created', projectPath: '/work/atlas' }));
     const { stored } = install({ create, stored: { projectFilter: 'all' } });
     const user = userEvent.setup();
-    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove' }));
     const confirm = await screen.findByRole('dialog', { name: 'Remove Atlas from Fractal?' });
     await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
     expect(projectRow('Atlas')).toBeTruthy();
 
-    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(projectRow('Atlas')).toBeNull());
     expect(stored().projectVisibility).toEqual({ archived: [], removed: ['/work/atlas'] });
@@ -385,7 +409,7 @@ describe('project status', () => {
     await user.click(await screen.findByRole('button', { name: 'Atlas' }));
     await user.click(await screen.findByText('Atlas chat'));
     await waitFor(() => expect(screen.queryByText('Pick up a thread')).toBeNull());
-    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove project…' }));
+    await user.click(within(await openMenu('Atlas')).getByRole('menuitem', { name: 'Remove' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }));
     expect(await screen.findByText('Pick up a thread')).toBeTruthy();
   });
