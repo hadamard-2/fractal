@@ -35,8 +35,10 @@ export class CodexAdapter implements HarnessAdapter {
   // Threads that must run without MCP tools. Codex fixes a thread's tool set when it loads the thread and ignores
   // overrides sent to one that is already loaded, so every resume of these threads repeats the overrides.
   private readonly readOnlyThreads = new Set<string>();
+  // Threads this process resumed without those overrides, so their tools are already fixed.
+  private readonly resumedWithoutOverrides = new Set<string>();
 
-  constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath } = {}) {}
+  constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath; /** Says whether a thread is a side chat, for threads this process has not itself forked or run read-only. */ isReadOnlyThread?: (threadId: string) => boolean } = {}) {}
 
   async probe(): Promise<HarnessStatus> {
     const { availability, message, userAgent } = this.server.status;
@@ -222,13 +224,19 @@ export class CodexAdapter implements HarnessAdapter {
   // as it does after continueConversation: this connection is shared, and
   // unsubscribing would also silence a run streaming on it. Concurrent calls
   // for one thread share a single request.
+  private isReadOnlyThread(threadId: string): boolean {
+    return this.readOnlyThreads.has(threadId) || this.dependencies.isReadOnlyThread?.(threadId) === true;
+  }
+
   private resumeThread(ref: ConversationRef): Promise<CodexResumeResponse> {
     const existing = this.resumes.get(ref.nativeSessionId);
     if (existing) return existing;
+    const readOnly = this.isReadOnlyThread(ref.nativeSessionId);
+    if (!readOnly) this.resumedWithoutOverrides.add(ref.nativeSessionId);
     const resume = this.canonicalPath(ref.projectPath)
       .then(async (cwd) => this.server.request('thread/resume', {
         threadId: ref.nativeSessionId, cwd,
-        ...(this.readOnlyThreads.has(ref.nativeSessionId) ? { config: await this.readOnlyConfig(cwd) } : {}),
+        ...(readOnly ? { config: await this.readOnlyConfig(cwd) } : {}),
       }))
       .finally(() => { this.resumes.delete(ref.nativeSessionId); });
     this.resumes.set(ref.nativeSessionId, resume);
@@ -238,7 +246,13 @@ export class CodexAdapter implements HarnessAdapter {
   async continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     const projectPath = await this.canonicalPath(ref.projectPath);
-    if (prompt.branch?.readOnly) this.readOnlyThreads.add(ref.nativeSessionId);
+    if (prompt.branch?.readOnly) {
+      // Codex ignores the overrides for a thread that is already loaded, so one resumed without them would run with MCP tools on.
+      if (!this.isReadOnlyThread(ref.nativeSessionId) && this.resumedWithoutOverrides.has(ref.nativeSessionId)) {
+        throw new Error('Read-only thread resumed without its read-only settings');
+      }
+      this.readOnlyThreads.add(ref.nativeSessionId);
+    }
     const resumed = await this.resumeThread(ref);
     if (resumed.thread.id !== ref.nativeSessionId) throw new Error('Resumed Codex thread does not match the requested thread');
     if (await this.canonicalPath(resumed.thread.cwd) !== projectPath) throw new Error('Resumed Codex project does not match the requested project');

@@ -720,6 +720,33 @@ describe('Codex fork and read-only runs', () => {
     await run.dispose();
   });
 
+  test('sends the MCP overrides on the first resume of a side chat this process did not fork, when the service says it is one', async () => {
+    const server = createFakeAppServer();
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value, isReadOnlyThread: (id) => id === 't-side' });
+    await adapter.readAccess({ provider: 'codex', nativeSessionId: 't-side', projectPath: '/work/fractal' });
+    expect(server.requests.filter((request) => request.method === 'thread/resume')).toEqual([
+      { method: 'thread/resume', params: { threadId: 't-side', cwd: '/work/fractal', config: readOnlyConfig } },
+    ]);
+    await adapter.readAccess(ref);
+    expect(server.requests.filter((request) => request.method === 'thread/resume').at(-1)?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal' });
+  });
+
+  test('refuses a read-only run on a thread already resumed in this process without the overrides', async () => {
+    const server = createFakeAppServer();
+    const adapter = adapterFor(server);
+    await adapter.readAccess(ref);
+    await expect(adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } })).rejects.toThrow('Read-only thread resumed without its read-only settings');
+    expect(server.requests.map((request) => request.method)).not.toContain('turn/start');
+  });
+
+  test('refuses a read-only run while a resume without the overrides is still in flight', async () => {
+    const server = createFakeAppServer();
+    const adapter = adapterFor(server);
+    const reading = adapter.readAccess(ref);
+    await expect(adapter.continueConversation(ref, { text: 'Look', branch: { readOnly: true } })).rejects.toThrow('Read-only thread resumed without its read-only settings');
+    await reading;
+  });
+
   test('leaves MCP config off the resume of a thread that is not a side chat', async () => {
     const server = createFakeAppServer();
     const run = await adapterFor(server).continueConversation(ref, { text: 'Go', branch: { readOnly: false } });
