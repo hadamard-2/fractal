@@ -1,11 +1,13 @@
 import { setImmediate } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
+import type { BranchStore } from '@/main/branch-store';
+import { FORK_NOTE, SIDE_CHAT_NOTE } from '@/main/branch-notes';
 import type { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
-import { conversationKey, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
+import { conversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
 import { parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
 type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities };
@@ -45,14 +47,27 @@ export class ConversationService {
   private readonly startingRuns = new Map<string, StartingRun>();
   private readonly drafts = new Map<string, ConversationSummary>();
   private readonly chunkSize: number;
+  private readonly branches: Pick<BranchStore, 'get' | 'set' | 'sideChatKeys'> | undefined;
   private disposed = false;
 
-  constructor(private readonly registry: ConversationRegistry, private readonly emit: (event: ConversationStreamEvent) => void, options: { historyChunkSize?: number } = {}) {
+  constructor(private readonly registry: ConversationRegistry, private readonly emit: (event: ConversationStreamEvent) => void, options: { historyChunkSize?: number; branches?: Pick<BranchStore, 'get' | 'set' | 'sideChatKeys'> } = {}) {
+    this.branches = options.branches;
     this.chunkSize = options.historyChunkSize ?? 50;
     if (!Number.isInteger(this.chunkSize) || this.chunkSize < 1 || this.chunkSize > 50) throw new Error('History chunk size must be between 1 and 50');
   }
 
-  async list() { this.assertAvailable(); return this.registry.list(); }
+  /** Side chats stay out of the list: they are reached from the conversation they branched from. Forks are listed like any conversation. */
+  async list() {
+    this.assertAvailable();
+    const listing = await this.registry.list();
+    const sideChats = this.branches?.sideChatKeys();
+    if (!sideChats?.size) return listing;
+    return { ...listing, projects: listing.projects.map((project) => ({ ...project, conversations: project.conversations.filter((conversation) => !sideChats.has(conversationKey(conversation.ref))) })) };
+  }
+
+  branchKind(input: ConversationRef): BranchKind | undefined {
+    return this.branches?.get(conversationKey(parseConversationRef(input)))?.kind;
+  }
 
   /** Whether a conversation main knows of is in this project: a discovered one, or a Claude draft not yet sent. */
   async knowsProject(projectPath: string): Promise<boolean> {
@@ -128,13 +143,41 @@ export class ConversationService {
     return ref;
   }
 
-  async continue(input: ConversationRef, prompt: AgentPrompt, rendererId: string): Promise<void> {
+  async fork(input: ConversationRef, point: ForkPoint, kind: BranchKind): Promise<ConversationRef> {
+    this.assertAvailable();
+    const branches = this.branches;
+    if (!branches) throw new Error('Conversation forking is not available');
+    const source = parseConversationRef(input);
+    const load = this.currentLoad(source);
+    if (!load) throw new Error('Conversation is not open');
+    // Map insertion order is history order: turns are projected in the order the agent's history yields them, and a replaced turn keeps its place.
+    const turns = [...load.turns.values()];
+    const index = turns.findIndex((turn) => turn.id === point.turnId);
+    if (index < 0) throw new Error('Fork point is not in this conversation');
+    const after = point.position === 'after';
+    if (kind === 'side-chat' && !after) throw new Error('Side chats branch after a reply');
+    const afterIndex = after ? index : index - 1;
+    const afterTurn = turns[afterIndex] as ConversationTurn | undefined;
+    if (afterTurn?.status === 'active') throw new Error('Cannot fork from a turn in progress');
+    const summary = await this.registry.validate(source);
+    if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
+    const note = kind === 'side-chat' ? SIDE_CHAT_NOTE : afterIndex !== turns.length - 1 ? FORK_NOTE : undefined;
+    const title = `${summary.title} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
+    const ref = afterTurn
+      ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), title })
+      : await this.create(source.provider, source.projectPath);
+    branches.set(conversationKey(ref), { kind, parentKey: conversationKey(source), afterTurnId: afterTurn?.id ?? null, inheritedTurnCount: afterIndex + 1, ...(note === undefined ? {} : { note }), createdAt: Date.now() });
+    return ref;
+  }
+
+  async continue(input: ConversationRef, inputPrompt: AgentPrompt, rendererId: string): Promise<void> {
     this.assertAvailable();
     const ref = parseConversationRef(input);
     const key = conversationKey(ref);
     const load = this.loads.get(key);
     if (!load || load.ref.projectPath !== ref.projectPath) throw new Error('Conversation is not open');
     if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
+    const prompt = this.branchPrompt(key, inputPrompt);
     const draft = this.drafts.get(key);
     const summary = draft?.ref.projectPath === ref.projectPath ? draft : await this.registry.validate(ref);
     if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
@@ -187,6 +230,17 @@ export class ConversationService {
       if (this.startingRuns.get(key) === starting) this.startingRuns.delete(key);
       starting.settle();
     }
+  }
+
+  /** A side chat never runs with the user's access choice; every turn of a branch carries its mode and note. */
+  private branchPrompt(key: string, prompt: AgentPrompt): AgentPrompt {
+    const record = this.branches?.get(key);
+    if (!record) return prompt;
+    const sideChat = record.kind === 'side-chat';
+    if (!sideChat && record.note === undefined) return prompt;
+    const branched: AgentPrompt = { ...prompt, branch: { readOnly: sideChat, ...(record.note === undefined ? {} : { note: record.note }) } };
+    if (sideChat) delete branched.access;
+    return branched;
   }
 
   async interrupt(ref: ConversationRef): Promise<void> {

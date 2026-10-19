@@ -74,4 +74,35 @@ describe('ConversationRegistry', () => {
     expect(registry.hasProject('/repo')).toBe(true);
     expect(registry.hasProject('/elsewhere')).toBe(false);
   });
+
+  describe('fork', () => {
+    const source = { provider: 'codex' as const, nativeSessionId: 'codex', projectPath: '/repo' };
+    const forkCapabilities = { ...capabilities, fork: true };
+    function forking(forked = { ...source, nativeSessionId: 'forked' }, fork = true) {
+      const codex = adapter('codex');
+      vi.mocked(codex.probe).mockResolvedValue({ provider: 'codex', availability: 'available', capabilities: fork ? forkCapabilities : capabilities });
+      codex.forkConversation = vi.fn(async () => forked);
+      return codex;
+    }
+
+    test('forks through the adapter and refreshes discovery', async () => {
+      const codex = forking();
+      const registry = new ConversationRegistry([codex], realpath);
+      const options = { readOnly: true, note: 'note', title: 'Title' };
+      await expect(registry.fork(source, 't1', options)).resolves.toEqual({ ...source, nativeSessionId: 'forked' });
+      expect(codex.forkConversation).toHaveBeenCalledWith(source, 't1', options);
+      expect(codex.listConversations).toHaveBeenCalledTimes(2);
+    });
+
+    test('refuses when the agent cannot fork', async () => {
+      const codex = forking(undefined, false);
+      await expect(new ConversationRegistry([codex], realpath).fork(source, 't1', { readOnly: false, title: 'T' })).rejects.toThrow('Conversation forking is not available');
+      expect(codex.forkConversation).not.toHaveBeenCalled();
+    });
+
+    test('refuses a fork that lands in another project', async () => {
+      const codex = forking({ ...source, nativeSessionId: 'forked', projectPath: '/elsewhere' });
+      await expect(new ConversationRegistry([codex], realpath).fork(source, 't1', { readOnly: false, title: 'T' })).rejects.toThrow('does not match');
+    });
+  });
 });

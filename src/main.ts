@@ -4,6 +4,7 @@ import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import started from 'electron-squirrel-startup';
 import { registerConversationIpc, disposeConversationIpc } from '@/main/agent-ipc';
+import { BranchStore } from '@/main/branch-store';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { CodexAppServer, codexSpawner, type CodexCommandReaper } from '@/main/harness/codex/codex-app-server';
@@ -30,6 +31,7 @@ import { mergeSearchPath, resolveLoginShellPath } from '@/main/shell-environment
 import { registerTerminalIpc } from '@/main/terminal-ipc';
 import { TerminalService } from '@/main/terminal-service';
 import { createNativePty } from '@/main/terminal-pty';
+import { conversationKey, type ProviderId } from '@/shared/conversation-contract';
 import type { AgentEnvironment, AgentExecutables } from '@/shared/settings-contract';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -222,9 +224,13 @@ app.on('ready', () => {
     if (shutdown) return;
     const canonicalPath = async (input: string) => realpath(input).catch(() => input);
     const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
-    const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath });
+    // Before the adapters: they ask it whether a session is a side chat on every run, and must know before the first resume.
+    const branches = new BranchStore(app.getPath('userData'));
+    const isSideChat = (provider: ProviderId, nativeSessionId: string) => branches.get(conversationKey({ provider, nativeSessionId }))?.kind === 'side-chat';
+    const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath, isReadOnlyThread: (id) => isSideChat('codex', id) });
     const claudeAdapter = new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
       realpath: canonicalPath,
+      isReadOnlySession: (id) => isSideChat('claude', id),
       ownedProcesses: claudeOwnedProcesses,
       executable: claudeExecutable,
       ...(watchdog ? { watchdog } : {}),
@@ -238,7 +244,7 @@ app.on('ready', () => {
     modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
     const accessChoices = new AccessChoices([codexAdapter, claudeAdapter], new AccessChoiceStore(app.getPath('userData')), (provider) => settingsStore.load().allowDangerousAccess[provider] === true);
     accessRegistration = registerAccessIpc(accessChoices, () => mainWindowRef);
-    conversationService = new ConversationService(registry, (event) => registration.emit(event));
+    conversationService = new ConversationService(registry, (event) => registration.emit(event), { branches });
     const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices, accessChoices });
     // Editors are found on first use, by which point the login shell's PATH has been merged above.
     let editors: Promise<DetectedEditor[]> | undefined;

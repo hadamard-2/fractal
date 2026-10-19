@@ -1,5 +1,5 @@
 import { canonicalizeProjectPath, groupConversationsByProject, type Realpath } from '@/main/harness/project-path';
-import type { HarnessAdapter } from '@/main/harness/types';
+import type { ForkOptions, HarnessAdapter } from '@/main/harness/types';
 import { conversationKey, type ConversationRef, type ConversationSummary, type HarnessStatus, type ProviderId } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 
@@ -49,6 +49,18 @@ export class ConversationRegistry {
     if (!adapter || status?.availability !== 'available' || !status.capabilities.create) throw new Error('Conversation creation is not available');
     const ref = parseConversationRef(await adapter.createConversation(projectPath));
     if (ref.provider !== provider || ref.projectPath !== projectPath) throw new Error('Created conversation does not match the selected provider and project');
+    return structuredClone(ref);
+  }
+
+  async fork(source: ConversationRef, afterTurnId: string, options: ForkOptions): Promise<ConversationRef> {
+    const parsedSource = parseConversationRef(source);
+    await this.refreshProvider(parsedSource.provider);
+    const adapter = this.adapters.get(parsedSource.provider);
+    const status = this.statuses.get(parsedSource.provider);
+    if (!adapter?.forkConversation || status?.availability !== 'available' || !status.capabilities.fork) throw new Error('Conversation forking is not available');
+    const ref = parseConversationRef(await adapter.forkConversation(parsedSource, afterTurnId, options));
+    if (ref.provider !== parsedSource.provider || ref.projectPath !== parsedSource.projectPath) throw new Error('Forked conversation does not match the source provider and project');
+    await this.refreshProvider(parsedSource.provider);
     return structuredClone(ref);
   }
 

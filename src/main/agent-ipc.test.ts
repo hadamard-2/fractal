@@ -51,6 +51,7 @@ function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, acces
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
     create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
+    fork: vi.fn(async () => ({ ...ref, nativeSessionId: 'forked' })), branchKind: vi.fn((): 'side-chat' | 'fork' | undefined => undefined),
     resolveRequest: vi.fn(async () => undefined), denyRequestsForOwner: vi.fn(async () => undefined),
     attachmentAllowed: vi.fn((_ref: unknown, path: string) => path === '/repo/notes.md'),
   };
@@ -87,6 +88,11 @@ describe('conversation IPC', () => {
     ['list', ['unexpected'], 'Invalid conversation arguments'],
     ['rename', [ref, '  '], 'Invalid conversation title'],
     ['rename', [{ ...ref, projectPath: 'relative' }, 'Name'], 'Invalid conversation reference'],
+    ['fork', [{ ...ref, projectPath: 'relative' }, { turnId: 't1', position: 'after' }, 'fork'], 'Invalid conversation reference'],
+    ['fork', [ref, { turnId: '', position: 'after' }, 'fork'], 'Invalid fork point'],
+    ['fork', [ref, { turnId: 't1', position: 'beside' }, 'fork'], 'Invalid fork point'],
+    ['fork', [ref, { turnId: 't1', position: 'after' }, 'branch'], 'Invalid branch kind'],
+    ['fork', [ref, { turnId: 't1', position: 'after' }], 'Invalid conversation arguments'],
   ])('rejects invalid %s inputs before dispatch', async (channel, args, message) => {
     const f = fixture();
     await expect(f.invoke(channel, ...args)).rejects.toThrow(message);
@@ -94,11 +100,11 @@ describe('conversation IPC', () => {
     expect(electron.picker).not.toHaveBeenCalled();
   });
 
-  test('registers only nine invoke handlers, is idempotent, and preserves unrelated handlers', async () => {
+  test('registers only the conversation invoke handlers, is idempotent, and preserves unrelated handlers', async () => {
     const unrelated = vi.fn(); electron.handlers.set('unrelated', unrelated);
     const f = fixture();
     expect(f.register()).toBe(f.registration);
-    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment', 'rename'].map((name) => `fractal:conversations:${name}`)].sort());
+    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment', 'rename', 'fork'].map((name) => `fractal:conversations:${name}`)].sort());
     await f.invoke('list');
     await boundary.disposeConversationIpc(); await boundary.disposeConversationIpc();
     expect([...electron.handlers.keys()]).toEqual(['unrelated']);
@@ -334,6 +340,29 @@ describe('conversation IPC', () => {
     await f.invoke('open', ref, loadId);
     await expect(f.invoke('continue', ref, { text: 'Go', model: 'gpt-5.5' })).resolves.toBeUndefined();
   });
+  describe('fork', () => {
+    const point = { turnId: 't1', position: 'after' as const };
+    test('forks a conversation this renderer has loaded and returns the new reference', async () => {
+      const f = fixture();
+      await f.invoke('open', ref, loadId);
+      await expect(f.invoke('fork', ref, point, 'side-chat')).resolves.toEqual({ ...ref, nativeSessionId: 'forked' });
+      expect(f.service.fork).toHaveBeenCalledWith(ref, point, 'side-chat');
+    });
+
+    test('refuses a conversation that renderer has not loaded', async () => {
+      const f = fixture();
+      await expect(f.invoke('fork', ref, point, 'fork')).rejects.toThrow('Conversation is not owned by this renderer');
+      expect(f.service.fork).not.toHaveBeenCalled();
+    });
+
+    test('hides why a fork failed', async () => {
+      const f = fixture();
+      f.service.fork.mockRejectedValue(new Error('/private/path'));
+      await f.invoke('open', ref, loadId);
+      await expect(f.invoke('fork', ref, point, 'fork')).rejects.toThrow('Conversation operation failed');
+    });
+  });
+
   describe('access on send', () => {
     const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
     test('validates before sending and records after', async () => {
@@ -348,6 +377,17 @@ describe('conversation IPC', () => {
       expect(order).toEqual(['validate', 'continue', 'record']);
       await f.invoke('continue', ref, { text: 'Again' });
       expect(accessChoices.recordSend).toHaveBeenLastCalledWith(ref, undefined);
+    });
+
+    test('a side chat neither validates nor remembers the access choice', async () => {
+      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), forget: vi.fn() };
+      const f = fixture(undefined, accessChoices);
+      f.service.branchKind.mockReturnValue('side-chat');
+      await f.invoke('open', ref, loadId);
+      await expect(f.invoke('continue', ref, { text: 'Go', access })).resolves.toBeUndefined();
+      expect(f.service.continue).toHaveBeenCalled();
+      expect(accessChoices.validateSend).not.toHaveBeenCalled();
+      expect(accessChoices.recordSend).not.toHaveBeenCalled();
     });
 
     test('a rejected access reaches the renderer verbatim and nothing is sent', async () => {

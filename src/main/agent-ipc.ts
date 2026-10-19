@@ -9,7 +9,7 @@ import { canonicalizeProjectPath } from '@/main/harness/project-path';
 import type { AccessChoices } from '@/main/access-choices';
 import type { ModelChoices } from '@/main/model-choices';
 import { conversationKey, type ConversationRef, type ProviderId, type TurnAccess } from '@/shared/conversation-contract';
-import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseConversationTitle, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
+import { CONVERSATION_CHANNELS as CHANNELS, parseAttachmentOpenAction, parseAttachmentPath, parseConversationRef, parseConversationStreamEvent, parseBranchKind, parseConversationTitle, parseForkPoint, parseLoadId, parsePromptInput, parseUserDecision } from '@/shared/conversation-ipc';
 
 type Owner = { sender: WebContents; closed: boolean; detach: () => void };
 type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
@@ -179,13 +179,19 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     });
     invoke(CHANNELS.continue, 2, ([input, promptInput], owner) => {
       const ref = parseConversationRef(input), prompt = parsePromptInput(promptInput); requireLoad(owner, ref);
+      // A side chat always runs read-only, so the access choice neither applies nor is remembered.
+      const sideChat = service.branchKind(ref) === 'side-chat';
       // Here rather than in the returned run: only errors thrown in this phase reach the renderer with their own message.
-      options.accessChoices?.validateSend(ref, prompt.access);
+      if (!sideChat) options.accessChoices?.validateSend(ref, prompt.access);
       return async () => {
         await service.continue(ref, await resolveAttachments(prompt, { root: options.attachmentsRoot, ref }), String(owner.sender.id));
         recordChoice(ref, prompt.model, prompt.effort);
-        recordAccess(ref, prompt.access);
+        if (!sideChat) recordAccess(ref, prompt.access);
       };
+    });
+    invoke(CHANNELS.fork, 3, ([input, pointInput, kindInput], owner) => {
+      const ref = parseConversationRef(input), point = parseForkPoint(pointInput), kind = parseBranchKind(kindInput); requireLoad(owner, ref);
+      return async () => parseConversationRef(await service.fork(ref, point, kind));
     });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {
       const ref = parseConversationRef(input); requireLoad(owner, ref);

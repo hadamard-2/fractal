@@ -299,6 +299,6 @@ export interface ConversationApi {
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 
-export function conversationKey(ref: ConversationRef): string {
+export function conversationKey(ref: Pick<ConversationRef, 'provider' | 'nativeSessionId'> & Partial<ConversationRef>): string {
   return `${ref.provider}:${ref.nativeSessionId}`;
 }
