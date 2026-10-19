@@ -48,6 +48,11 @@ export function codexAccessOverrides(level: string, current: SandboxPolicy): Cod
   return { approvalPolicy: spec.approvalPolicy, approvalsReviewer: spec.approvalsReviewer, sandboxPolicy: sandboxFor(spec.sandbox, current) };
 }
 
+// A side chat can't answer an approval prompt, so it runs read-only with approvals off: a command the sandbox blocks fails instead of asking.
+export function codexReadOnlyOverrides(current: SandboxPolicy): CodexAccessOverrides {
+  return { ...codexAccessOverrides('read-only', current), approvalPolicy: 'never' };
+}
+
 function approvalLabel(policy: AskForApproval): string {
   if (typeof policy === 'object') return 'granular';
   return { 'on-request': 'ask on request', never: 'never ask', untrusted: 'untrusted' }[policy];

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { parseAccessState } from '@/shared/conversation-ipc';
 import type { SandboxPolicy } from '@/main/harness/codex/generated/v2/SandboxPolicy';
-import { codexAccessOverrides, codexAccessState } from './codex-access';
+import { codexAccessOverrides, codexAccessState, codexReadOnlyOverrides } from './codex-access';
 
 const ws: SandboxPolicy = { type: 'workspaceWrite', writableRoots: ['/extra'], networkAccess: true, excludeTmpdirEnvVar: true, excludeSlashTmp: false };
 
@@ -54,5 +54,12 @@ describe('codexAccessState', () => {
     const state = codexAccessState({ approvalPolicy: 'never', approvalsReviewer: 'guardian_subagent', sandbox: ws });
     expect(parseAccessState(state)).toEqual(state);
     expect(state).not.toHaveProperty('mode');
+  });
+});
+
+describe('codexReadOnlyOverrides', () => {
+  test('is the read-only level with approvals turned off, keeping the current network access', () => {
+    expect(codexReadOnlyOverrides(ws)).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true } });
+    expect(codexReadOnlyOverrides({ type: 'dangerFullAccess' })).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
   });
 });

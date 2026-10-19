@@ -6,16 +6,17 @@ import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconcil
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
 import type { AccessState, AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
-import type { AgentPrompt, ConversationRun, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
-import { codexAccessOverrides, codexAccessState } from '@/main/harness/codex/codex-access';
+import type { AgentPrompt, ConversationRun, ForkOptions, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
+import { codexAccessOverrides, codexAccessState, codexReadOnlyOverrides } from '@/main/harness/codex/codex-access';
 import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
+import type { SandboxMode } from '@/main/harness/codex/generated/v2/SandboxMode';
 import type { ThreadResumeResponse as CodexResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
 
 type CodexServer = Pick<CodexAppServer, 'request' | 'onNotification' | 'onServerRequest' | 'respond' | 'respondError' | 'status'> & Partial<Pick<CodexAppServer, 'onStatus'>>;
 type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: string; text: string } };
 
 const CAPABILITIES: HarnessCapabilities = {
-  create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: false,
+  create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: true,
 };
 
 function codexTurnInput(prompt: AgentPrompt): UserInput[] {
@@ -140,6 +141,20 @@ export class CodexAdapter implements HarnessAdapter {
     return { provider: 'codex', nativeSessionId: response.thread.id, projectPath: canonical };
   }
 
+  async forkConversation(source: ConversationRef, afterTurnId: string, options: ForkOptions): Promise<ConversationRef> {
+    if (source.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    const projectPath = await this.canonicalPath(source.projectPath);
+    const base = { threadId: source.nativeSessionId, lastTurnId: afterTurnId, cwd: projectPath };
+    const note = options.note ? { developerInstructions: options.note } : {};
+    // A full fork starts with the parent's own model and access; a side chat is pinned read-only with approvals off.
+    const settings = options.readOnly
+      ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const }
+      : forkSettingsFrom(await this.resumeThread(source));
+    const response = await this.server.request('thread/fork', { ...base, ...settings, ...note });
+    if (await this.canonicalPath(response.thread.cwd) !== projectPath) throw new Error('Forked Codex project does not match the selected project');
+    return { provider: 'codex', nativeSessionId: response.thread.id, projectPath };
+  }
+
   async renameConversation(ref: ConversationRef, title: string): Promise<void> {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
     await this.server.request('thread/name/set', { threadId: ref.nativeSessionId, name: title });
@@ -247,9 +262,12 @@ export class CodexAdapter implements HarnessAdapter {
       for (const event of normalizeCodexNotification(notification, live)) queue.push(event);
       if (completed) { completeTurn(); queue.close(); }
     };
+    const readOnly = prompt.branch?.readOnly === true;
     const receiveRequest = (request: Parameters<typeof normalizeCodexServerRequest>[0]): void => {
       if (!turnId) { bufferedTraffic.push({ kind: 'request', value: request }); return; }
       if (!matchesRun(request, ref.nativeSessionId, turnId)) return;
+      // A read-only run has no one to ask: the sandbox is the answer, so every request is refused.
+      if (readOnly) { this.denyRequestSafely(request.id, request); return; }
       if (!queue.isOpen()) { this.denyRequestSafely(request.id, request); return; }
       if (request.method !== 'item/commandExecution/requestApproval' && request.method !== 'item/fileChange/requestApproval' && request.method !== 'item/permissions/requestApproval' && request.method !== 'item/tool/requestUserInput') {
         this.server.respondError(request.id, -32601, 'Unsupported Codex request');
@@ -309,7 +327,8 @@ export class CodexAdapter implements HarnessAdapter {
         // Codex applies both to this turn and the thread's later turns.
         ...(prompt.model ? { model: prompt.model } : {}),
         ...(prompt.effort ? { effort: prompt.effort } : {}),
-        ...(prompt.access?.picked && prompt.access.state.kind === 'level' ? codexAccessOverrides(prompt.access.state.level, resumed.sandbox) : {}),
+        ...(readOnly ? codexReadOnlyOverrides(resumed.sandbox)
+          : prompt.access?.picked && prompt.access.state.kind === 'level' ? codexAccessOverrides(prompt.access.state.level, resumed.sandbox) : {}),
       });
       turnId = started.turn.id;
       for (const traffic of bufferedTraffic.splice(0)) {
@@ -406,6 +425,18 @@ export class CodexAdapter implements HarnessAdapter {
   private async summaryFromThread(thread: Awaited<CodexRequestMap['thread/read']['result']>['thread'], captureCompleteness: ConversationSummary['captureCompleteness']): Promise<ConversationSummary> {
     return summaryFromThread(thread, captureCompleteness, await this.canonicalPath(thread.cwd));
   }
+}
+
+const SANDBOX_MODES: Partial<Record<CodexResumeResponse['sandbox']['type'], SandboxMode>> = {
+  readOnly: 'read-only', workspaceWrite: 'workspace-write', dangerFullAccess: 'danger-full-access',
+};
+
+function forkSettingsFrom(parent: CodexResumeResponse) {
+  const sandbox = SANDBOX_MODES[parent.sandbox.type];
+  return {
+    approvalPolicy: parent.approvalPolicy, approvalsReviewer: parent.approvalsReviewer, ...(parent.model ? { model: parent.model } : {}),
+    ...(sandbox ? { sandbox } : {}),
+  };
 }
 
 function summaryFromThread(thread: Awaited<CodexRequestMap['thread/read']['result']>['thread'], captureCompleteness: ConversationSummary['captureCompleteness'], projectPath: string): ConversationSummary {

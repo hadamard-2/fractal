@@ -27,6 +27,19 @@ export interface ResolvedAttachment {
   image?: ConversationImageType;
 }
 
+/** How a side chat or fork runs. */
+export interface BranchRun {
+  /** True for a side chat: the agent must be unable to change anything, enforced by its own machinery. */
+  readOnly: boolean;
+  note?: string;
+}
+
+export interface ForkOptions {
+  readOnly: boolean;
+  note?: string;
+  title: string;
+}
+
 export interface AgentPrompt {
   text: string;
   attachments?: ResolvedAttachment[];
@@ -35,6 +48,8 @@ export interface AgentPrompt {
   effort?: string;
   /** Absent means the conversation sends no access setting. */
   access?: TurnAccess;
+  /** Set by the service on every turn of a side chat or fork. */
+  branch?: BranchRun;
 }
 
 export interface ConversationRun {
@@ -53,6 +68,8 @@ export interface HarnessAdapter {
   watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe>;
   createConversation(projectPath: string): Promise<ConversationRef>;
   continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;
+  /** Copies history through `afterTurnId` (a ConversationTurn.id, inclusive) into a new session. Absent when the agent cannot fork. */
+  forkConversation?(source: ConversationRef, afterTurnId: string, options: ForkOptions): Promise<ConversationRef>;
   /** Stores a user-chosen title in the agent's own history. Absent when the agent has no rename. */
   renameConversation?(ref: ConversationRef, title: string): Promise<void>;
   /** The models this agent offers. Absent when it has no way to list them. */

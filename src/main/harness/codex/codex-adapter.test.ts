@@ -30,6 +30,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
   const requests: Array<{ method: string; params: unknown }> = [];
   const responses: Array<{ id: string | number; result: unknown }> = [];
   let duringTurnStart: (() => void) | undefined;
+  let forkCwd: string | undefined;
   const resumeAccess = { approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: workspaceWrite };
   return {
     status: { availability: 'available' as const }, requests, responses,
@@ -53,6 +54,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       if (method === 'model/list') return params.cursor === 'models-2'
         ? { data: [codexModel('gpt-5.5', ['low', 'medium', 'high', 'xhigh'])], nextCursor: null }
         : { data: [codexModel('gpt-5.6-terra', ['low', 'medium', 'ultra']), { ...codexModel('codex-auto-review', ['low']), hidden: true }], nextCursor: 'models-2' };
+      if (method === 'thread/fork') return { thread: { ...threadRead.thread, id: 'forked-thread', cwd: forkCwd ?? params.cwd }, ...resumeAccess };
       if (method === 'turn/start') { duringTurnStart?.(); return { turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'inProgress' } }; }
       if (method === 'turn/interrupt') return {};
       if (method === 'thread/name/set') return {};
@@ -79,6 +81,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
       Object.assign(this.status, status); statusListeners.forEach((listener) => listener(status));
     },
     duringTurnStart(callback: () => void) { duringTurnStart = callback; },
+    setForkCwd(cwd: string) { forkCwd = cwd; },
     setResumeAccess(access: Record<string, unknown>) { Object.assign(resumeAccess, access); },
   };
 }
@@ -642,3 +645,93 @@ function permissionParams() {
     permissions: { network: { enabled: true }, fileSystem: { read: ['/repo'], write: ['/repo'], globScanMaxDepth: 4 } },
   };
 }
+
+describe('Codex fork and read-only runs', () => {
+  const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+  const adapterFor = (server: ReturnType<typeof createFakeAppServer>) => new CodexAdapter(server as never, { realpath: async (value) => value });
+  const forkParams = (server: ReturnType<typeof createFakeAppServer>) => server.requests.find((request) => request.method === 'thread/fork')?.params;
+
+  test('reports that it can fork', () => {
+    expect(adapterFor(createFakeAppServer()).capabilities().fork).toBe(true);
+  });
+
+  test('forks a read-only side chat through the turn, with approvals off and the note as developer instructions', async () => {
+    const server = createFakeAppServer();
+    const forked = await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, note: 'Side chat note', title: 'Side' });
+    expect(forkParams(server)).toEqual({
+      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: 'Side chat note',
+    });
+    expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
+    expect(server.requests.map((request) => request.method)).not.toContain('thread/resume');
+  });
+
+  test('forks a side chat without developer instructions when there is no note', async () => {
+    const server = createFakeAppServer();
+    await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+    expect(forkParams(server)).not.toHaveProperty('developerInstructions');
+  });
+
+  test('forks a full fork with the parent\'s model and access, and no developer instructions without a note', async () => {
+    const server = createFakeAppServer();
+    const forked = await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: false, title: 'Fork' });
+    expect(server.requests.map((request) => request.method)).toEqual(['thread/resume', 'thread/fork']);
+    expect(forkParams(server)).toEqual({
+      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', model: 'gpt-5.6-terra', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
+    });
+    expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
+  });
+
+  test.each([
+    [{ type: 'readOnly', networkAccess: false }, 'read-only'],
+    [{ type: 'dangerFullAccess' }, 'danger-full-access'],
+    [{ type: 'externalSandbox', networkAccess: 'restricted' }, undefined],
+  ])('maps the parent sandbox %j to %s for a full fork', async (sandbox, mapped) => {
+    const server = createFakeAppServer();
+    server.setResumeAccess({ sandbox });
+    await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: false, note: 'Fork note', title: 'Fork' });
+    const params = forkParams(server) as Record<string, unknown>;
+    if (mapped) expect(params.sandbox).toBe(mapped); else expect(params).not.toHaveProperty('sandbox');
+    expect(params.developerInstructions).toBe('Fork note');
+  });
+
+  test('rejects a fork that landed in another project', async () => {
+    const server = createFakeAppServer();
+    server.setForkCwd('/work/other');
+    await expect(adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' })).rejects.toThrow('does not match the selected project');
+  });
+
+  test('runs a side chat turn read-only even when the prompt picks full access', async () => {
+    const server = createFakeAppServer();
+    const run = await adapterFor(server).continueConversation(ref, { text: 'Look', branch: { readOnly: true }, access: { state: { kind: 'level', level: 'full-access' }, picked: true } });
+    expect(server.requests.findLast((request) => request.method === 'turn/start')?.params).toMatchObject({
+      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: true },
+    });
+    await run.dispose();
+  });
+
+  test('does not apply read-only overrides to a full fork run', async () => {
+    const server = createFakeAppServer();
+    const run = await adapterFor(server).continueConversation(ref, { text: 'Go', branch: { readOnly: false } });
+    expect(server.requests.findLast((request) => request.method === 'turn/start')?.params).not.toHaveProperty('sandboxPolicy');
+    await run.dispose();
+  });
+
+  test('declines every approval and question during a read-only run without opening a request', async () => {
+    const server = createFakeAppServer();
+    const run = await adapterFor(server).continueConversation(ref, { text: 'Look', branch: { readOnly: true } });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emitRequest({ id: 61, method: 'item/commandExecution/requestApproval', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'command', startedAtMs: 1, environmentId: null, command: 'rm -rf x', cwd: '/repo',
+    } });
+    server.emitRequest({ id: 62, method: 'item/tool/requestUserInput', params: {
+      threadId: 'thread-1', turnId: 'turn-live', itemId: 'question-item', isBlocking: true, autoResolutionMs: null,
+      questions: [{ id: 'answer', header: 'Choice', question: 'Which?', isOther: true, isSecret: false, options: null }],
+    } });
+    expect(server.responses).toEqual([{ id: 61, result: { decision: 'decline' } }]);
+    expect(server.respondError).toHaveBeenCalledWith(62, expect.any(Number), expect.any(String));
+    server.emit({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { ...threadRead.thread.turns[0], id: 'turn-live', status: 'completed' } } });
+    const events = []; for await (const event of { [Symbol.asyncIterator]: () => iterator }) events.push(event);
+    expect(events.filter((event) => event.payload.kind === 'request-opened')).toEqual([]);
+    await run.dispose();
+  });
+});
