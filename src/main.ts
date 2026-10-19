@@ -21,6 +21,8 @@ import { registerFilesIpc } from '@/main/files/files-ipc';
 import { AccessChoiceStore } from '@/main/access-choice-store';
 import { AccessChoices } from '@/main/access-choices';
 import { registerAccessIpc } from '@/main/access-ipc';
+import { MapLayoutStore } from '@/main/map-layout-store';
+import { registerMapIpc } from '@/main/map-ipc';
 import { ModelChoiceStore } from '@/main/model-choice-store';
 import { ModelChoices } from '@/main/model-choices';
 import { registerModelIpc } from '@/main/model-ipc';
@@ -141,6 +143,7 @@ let terminalService: TerminalService | undefined;
 let terminalRegistration: { dispose(): void } | undefined;
 let modelRegistration: { dispose(): void } | undefined;
 let accessRegistration: { dispose(): void } | undefined;
+let mapRegistration: { dispose(): void } | undefined;
 let fileWatches: FileWatchService | undefined;
 let filesRegistration: { dispose(): void } | undefined;
 let changesRegistration: { dispose(): void } | undefined;
@@ -260,6 +263,7 @@ app.on('ready', () => {
     modelRegistration = registerModelIpc(modelChoices, () => mainWindowRef);
     const accessChoices = new AccessChoices([codexAdapter, claudeAdapter], new AccessChoiceStore(app.getPath('userData')), (provider) => settingsStore.load().allowDangerousAccess[provider] === true);
     accessRegistration = registerAccessIpc(accessChoices, () => mainWindowRef);
+    mapRegistration = registerMapIpc(new MapLayoutStore(app.getPath('userData')), () => mainWindowRef);
     conversationService = new ConversationService(registry, (event) => registration.emit(event), { branches });
     const registration = registerConversationIpc(conversationService, () => mainWindowRef, { attachmentsRoot: path.join(app.getPath('userData'), 'attachments'), modelChoices, accessChoices });
     // Editors are found on first use, by which point the login shell's PATH has been merged above.
@@ -294,6 +298,7 @@ app.on('before-quit', (event) => {
     fileWatches?.dispose();
     modelRegistration?.dispose();
     accessRegistration?.dispose();
+    mapRegistration?.dispose();
     await conversationStartup.catch((): void => undefined);
     await disposeConversationIpc();
     await conversationService?.dispose();

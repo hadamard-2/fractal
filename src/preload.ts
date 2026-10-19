@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AccessApi, AttachmentsApi, ConversationApi, ModelsApi } from '@/shared/conversation-contract';
 import { CHANGES_CHANNELS, type ChangesApi } from '@/shared/changes-contract';
 import { FILES_CHANNELS, parseFilesEvent, type FilesApi } from '@/shared/files-contract';
+import { MAP_CHANNELS, type MapApi } from '@/shared/map-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
 import { ACCESS_CHANNELS, CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent, parseSideChatSummaries } from '@/shared/conversation-ipc';
 import {
@@ -43,6 +44,11 @@ const conversations: ConversationApi = {
 const access: AccessApi = {
   list: (ref) => ipcRenderer.invoke(ACCESS_CHANNELS.list, ref),
   choose: (ref, level) => ipcRenderer.invoke(ACCESS_CHANNELS.choose, ref, level),
+};
+
+const map: MapApi = {
+  layout: (ref) => ipcRenderer.invoke(MAP_CHANNELS.layout, ref),
+  saveLayout: (ref, layout) => ipcRenderer.invoke(MAP_CHANNELS.saveLayout, ref, layout),
 };
 
 const models: ModelsApi = {
@@ -98,4 +104,4 @@ const changes: ChangesApi = {
   read: (root, fingerprint) => ipcRenderer.invoke(CHANGES_CHANNELS.invoke, { method: 'read', root, ...(fingerprint === undefined ? {} : { fingerprint }) }),
 };
 
-contextBridge.exposeInMainWorld('fractal', { conversations, models, access, settings, terminals, attachments, files, changes });
+contextBridge.exposeInMainWorld('fractal', { conversations, models, access, map, settings, terminals, attachments, files, changes });
