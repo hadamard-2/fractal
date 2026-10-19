@@ -197,6 +197,25 @@ describe('buildMapGraph auto layout', () => {
     expect(at(graph, userId(other, 'o1')).y).toBe(firstBottom + MAP.gapY);
   });
 
+  test('stacks a column by automatic slots only, so a dragged node never shifts another chain', () => {
+    const other = sideRef('side-2');
+    const sideChats = [
+      { summary: summary('side-1', 't1', { createdAt: 2 }), state: state(side, [turn('s1'), turn('s2')]) },
+      { summary: summary('side-2', 't1', { createdAt: 5 }), state: state(other, [turn('o1')]) },
+    ];
+    const before = build({ sideChats, drafts: [{ id: 'd1', parent: root, afterTurnId: 't1', text: '' }] });
+    const dragged = build({
+      sideChats, drafts: [{ id: 'd1', parent: root, afterTurnId: 't1', text: '' }],
+      layout: layoutOf({ [replyId(side, 's1')]: { x: 5000, y: 2000 }, [userId(side, 's2')]: { x: 600, y: 4000 } }),
+    });
+    const positions = (graph: typeof before, ids: string[]) => ids.map((id) => at(graph, id));
+
+    expect(at(dragged, replyId(side, 's1'))).toEqual({ x: 5000, y: 2000 });
+    expect(positions(dragged, [userId(other, 'o1'), replyId(other, 'o1'), 'composer|d1']))
+      .toEqual(positions(before, [userId(other, 'o1'), replyId(other, 'o1'), 'composer|d1']));
+    expect(at(dragged, userId(side, 's2'))).toEqual({ x: 600, y: 4000 });
+  });
+
   test('puts a side chat of a side chat one column further right', () => {
     const inner = sideRef('inner');
     const graph = build({

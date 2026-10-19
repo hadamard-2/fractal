@@ -57,6 +57,9 @@ function hasUserContent(turn: ConversationTurn): boolean {
 interface Column { x: number; startY: number }
 
 interface DrawnLine {
+  /** The column the line's automatic positions run down, and where its last automatic slot ends. */
+  columnX: number;
+  autoBottom: number;
   history: ConversationState['history'];
   nodes: MapNode[];
   /** The line's last reply node, which a continuing draft hangs off. */
@@ -78,7 +81,7 @@ export function buildMapGraph(input: {
   const nodes: MapNode[] = [];
   const edges: Edge[] = [];
   const lines = new Map<string, DrawnLine>();
-  /** The lowest edge of everything drawn in a column, so a later chain can start below it. */
+  /** The lowest automatic slot taken in a column, so a later chain can start below it. A node the user has moved never counts, so moving one never shifts another. */
   const columnBottoms = new Map<number, number>();
 
   const heightOf = (id: string) => heights.get(id) ?? UNMEASURED_HEIGHT;
@@ -95,9 +98,8 @@ export function buildMapGraph(input: {
     });
   }
 
-  function noteColumn(x: number, nodesInColumn: readonly MapNode[]) {
-    const bottom = Math.max(columnBottoms.get(x) ?? -Infinity, ...nodesInColumn.map(bottomOf));
-    if (Number.isFinite(bottom)) columnBottoms.set(x, bottom);
+  function noteColumn(x: number, autoBottom: number) {
+    columnBottoms.set(x, Math.max(columnBottoms.get(x) ?? -Infinity, autoBottom));
   }
 
   /** Where a chain branching off `anchor` starts: right of it, at its height, below whatever the column already holds. */
@@ -119,7 +121,7 @@ export function buildMapGraph(input: {
   }
 
   function drawLine(owner: ConversationRef, state: ConversationState, turns: readonly ConversationTurn[], line: 'main' | 'side', column: Column, from?: { id: string; handle?: string }): DrawnLine {
-    const drawn: DrawnLine = { history: state.history, nodes: [], replies: new Map() };
+    const drawn: DrawnLine = { columnX: column.x, autoBottom: column.startY, history: state.history, nodes: [], replies: new Map() };
     let cursor = column.startY;
     let previous = from;
 
@@ -145,7 +147,10 @@ export function buildMapGraph(input: {
       drawn.lastReply = reply;
     });
 
-    noteColumn(column.x, drawn.nodes);
+    if (drawn.nodes.length > 0) {
+      drawn.autoBottom = cursor - MAP.gapY;
+      noteColumn(column.x, drawn.autoBottom);
+    }
     lines.set(conversationKey(owner), drawn);
     return drawn;
   }
@@ -190,15 +195,15 @@ export function buildMapGraph(input: {
     const marker = place(id, { kind: 'detached', sideChat: summary }, { x: column.x, y: column.startY });
     addNode(marker);
     const firstY = snap(column.startY + heightOf(id) + MAP.gapY);
-    const chain = drawLine(summary.ref, state, ownTurns, 'side', { x: column.x, startY: firstY });
-    noteColumn(column.x, [marker, ...chain.nodes]);
+    drawLine(summary.ref, state, ownTurns, 'side', { x: column.x, startY: firstY });
   }
 
   for (const draft of input.drafts) drawDraft(draft);
 
   function drawDraft(draft: SideChatDraft) {
     const id = composerNodeId(draft);
-    const continued = draft.continues ? lines.get(conversationKey(draft.continues))?.lastReply : undefined;
+    const continuedLine = draft.continues ? lines.get(conversationKey(draft.continues)) : undefined;
+    const continued = continuedLine?.lastReply;
     const branchFrom = lines.get(conversationKey(draft.parent))?.replies.get(draft.afterTurnId);
     const source = continued ?? branchFrom;
     if (!source) return;
@@ -213,7 +218,9 @@ export function buildMapGraph(input: {
     };
     addNode(composer);
     addEdge(source.id, id, 'side', column && 'branch');
-    if (column) noteColumn(column.x, [composer]);
+    // Recorded at its automatic spot even when the user has moved it.
+    if (column) noteColumn(column.x, column.startY + heightOf(id));
+    else if (continuedLine) noteColumn(continuedLine.columnX, snap(continuedLine.autoBottom + MAP.gapY) + heightOf(id));
   }
 
   return { nodes, edges };
