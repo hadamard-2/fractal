@@ -638,23 +638,38 @@ describe('ConversationService branches', () => {
   const forkedRef = { ...ref, nativeSessionId: 'forked' };
   const forkCapabilities: HarnessCapabilities = { ...capabilities, fork: true };
   function branchFixture(history: NativeEvent[] = [start('t1'), finish('t1'), start('t2'), finish('t2')]) {
+    const extra: ConversationSummary[] = [];
+    const deleteConversation = vi.fn<NonNullable<HarnessAdapter['deleteConversation']>>(async () => undefined);
     const source: ConversationSummary = { ...summary, title: 'Chat' };
     const forked: ConversationSummary = { ...summary, ref: forkedRef, title: 'Chat (fork)', updatedAt: 0 };
     const adapter: HarnessAdapter = {
       provider: 'codex', capabilities: () => forkCapabilities,
       probe: vi.fn(async () => ({ provider: 'codex' as const, availability: 'available' as const, capabilities: forkCapabilities })),
-      listConversations: vi.fn(async () => [source, forked]),
-      loadConversation: vi.fn(async (loaded) => ({ summary: loaded.nativeSessionId === 'forked' ? forked : source, events: iterable(history) })),
+      listConversations: vi.fn(async () => [source, forked, ...extra]),
+      loadConversation: vi.fn(async (loaded) => ({ summary: [forked, ...extra].find((item) => item.ref.nativeSessionId === loaded.nativeSessionId) ?? source, events: iterable(history) })),
       watchConversation: vi.fn(async () => vi.fn()),
       createConversation: vi.fn(async () => forkedRef), continueConversation: vi.fn(async () => runFixture()),
       forkConversation: vi.fn(async () => forkedRef),
+      deleteConversation,
     };
     const records = new Map<string, BranchRecord>();
-    const branches = { get: (key: string) => records.get(key), set: (key: string, record: BranchRecord) => { records.set(key, record); }, sideChatKeys: () => new Set([...records].filter(([, record]) => record.kind === 'side-chat').map(([key]) => key)) };
+    const branches = {
+      get: (key: string) => records.get(key), set: (key: string, record: BranchRecord) => { records.set(key, record); },
+      delete: (key: string) => { records.delete(key); },
+      sideChatKeys: () => new Set([...records].filter(([, record]) => record.kind === 'side-chat').map(([key]) => key)),
+      descendants: (root: string) => {
+        const found: Array<[string, BranchRecord]> = [];
+        const queue = [root];
+        for (const key of queue) {
+          for (const entry of [...records].filter(([, record]) => record.parentKey === key).sort((a, b) => a[1].createdAt - b[1].createdAt)) { found.push(entry); queue.push(entry[0]); }
+        }
+        return found;
+      },
+    };
     const events: ConversationStreamEvent[] = [];
     const registry = new ConversationRegistry([adapter], async (path) => path);
     const service = new ConversationService(registry, (value) => { events.push(parseConversationStreamEvent(value)); }, { branches });
-    return { adapter, service, records, events };
+    return { adapter, service, records, events, branches, extra, deleteConversation };
   }
   const record = (kind: 'side-chat' | 'fork', note?: string): BranchRecord => ({ kind, parentKey: 'codex:session', afterTurnId: 't1', inheritedTurnCount: 1, ...(note ? { note } : {}), createdAt: 1 });
 
@@ -770,5 +785,152 @@ describe('ConversationService branches', () => {
     expect((await f.service.list()).projects[0].conversations.map((item) => item.ref.nativeSessionId)).toEqual(['session', 'forked']);
     f.records.set('codex:forked', record('side-chat'));
     expect((await f.service.list()).projects[0].conversations.map((item) => item.ref.nativeSessionId)).toEqual(['session']);
+  });
+
+  describe('side chats', () => {
+    const at = (id: string) => ({ ...ref, nativeSessionId: id });
+    const entry = (kind: 'side-chat' | 'fork', parent: string, createdAt: number, more: Partial<BranchRecord> = {}): BranchRecord => ({ kind, parentKey: `codex:${parent}`, afterTurnId: 't1', inheritedTurnCount: 1, createdAt, ...more });
+    // session -> sc1 -> sc2 -> sc3, with a fork of sc2 that has a side chat of its own.
+    function tree() {
+      const f = branchFixture();
+      f.records.set('codex:sc1', entry('side-chat', 'session', 1, { branchPointText: 'Branch point' }));
+      f.records.set('codex:sc2', entry('side-chat', 'sc1', 2));
+      f.records.set('codex:sc3', entry('side-chat', 'sc2', 3));
+      f.records.set('codex:fk', entry('fork', 'sc2', 4));
+      f.records.set('codex:fk-sc', entry('side-chat', 'fk', 5));
+      for (const id of ['sc1', 'sc2', 'sc3', 'fk', 'fk-sc']) f.extra.push({ ...summary, ref: at(id), title: id });
+      return f;
+    }
+
+    test('lists the side chats reachable through side chats, parents first, and leaves out a fork and what is below it', () => {
+      const f = tree();
+      const listed = f.service.sideChats(ref);
+      expect(listed).toEqual([
+        { ref: at('sc1'), parentKey: 'codex:session', afterTurnId: 't1', inheritedTurnCount: 1, branchPointText: 'Branch point', createdAt: 1 },
+        { ref: at('sc2'), parentKey: 'codex:sc1', afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 2 },
+        { ref: at('sc3'), parentKey: 'codex:sc2', afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 3 },
+      ]);
+      expect(listed[1]).not.toHaveProperty('branchPointText');
+      expect(f.service.sideChats(at('fk')).map((item) => item.ref.nativeSessionId)).toEqual(['fk-sc']);
+    });
+
+    test('leaves out a side chat that has no branch point', () => {
+      const f = tree();
+      f.records.set('codex:sc3', entry('side-chat', 'sc2', 3, { afterTurnId: null }));
+      expect(f.service.sideChats(ref).map((item) => item.ref.nativeSessionId)).toEqual(['sc1', 'sc2']);
+    });
+
+    test('lists nothing when no branch store is wired', () => {
+      const f = fixture();
+      expect(f.service.sideChats(ref)).toEqual([]);
+    });
+
+    test('records the start of the reply a side chat is cut after, at most 500 characters, and none for a fork', async () => {
+      const long = 'x'.repeat(600);
+      const f = branchFixture([start('t1'), prose('First part', false, 't1'), event('prose2:t1', { kind: 'assistant-text', turnId: 't1', blockId: 'block2:t1', text: long, final: true }), finish('t1'), start('t2'), finish('t2')]);
+      await f.service.open(ref, loadId);
+      await f.service.fork(ref, { turnId: 't1', position: 'after' }, 'side-chat');
+      const stored = f.records.get('codex:forked')?.branchPointText;
+      expect(stored).toBe(`First part\n\n${long}`.slice(0, 500));
+      expect(stored).toHaveLength(500);
+      f.records.clear();
+      await f.service.fork(ref, { turnId: 't1', position: 'after' }, 'fork');
+      expect(f.records.get('codex:forked')).not.toHaveProperty('branchPointText');
+      await f.service.dispose();
+    });
+
+    test('records no branch point text for a reply without prose', async () => {
+      const f = branchFixture();
+      await f.service.open(ref, loadId);
+      await f.service.fork(ref, { turnId: 't1', position: 'after' }, 'side-chat');
+      expect(f.records.get('codex:forked')).not.toHaveProperty('branchPointText');
+      await f.service.dispose();
+    });
+
+    test('rolls the native fork back when the record cannot be stored, and rethrows', async () => {
+      const f = branchFixture();
+      await f.service.open(ref, loadId);
+      f.branches.set = () => { throw new Error('disk full'); };
+      await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'side-chat')).rejects.toThrow('disk full');
+      expect(f.deleteConversation).toHaveBeenCalledWith(forkedRef);
+      f.deleteConversation.mockRejectedValue(new Error('cannot delete'));
+      await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'side-chat')).rejects.toThrow('disk full');
+      await f.service.dispose();
+    });
+
+    test('deletes a side chat and the side chats below it, deepest first, native sessions before records, and keeps the fork', async () => {
+      const f = tree();
+      const order: string[] = [];
+      f.deleteConversation.mockImplementation(async (deleted) => { order.push(`native:${deleted.nativeSessionId}`); expect(f.records.has(`codex:${deleted.nativeSessionId}`)).toBe(true); });
+      f.branches.delete = (key: string) => { order.push(`record:${key}`); f.records.delete(key); };
+      await expect(f.service.deleteSideChat(at('sc1'))).resolves.toEqual([at('sc3'), at('sc2'), at('sc1')]);
+      expect(order).toEqual(['native:sc3', 'record:codex:sc3', 'native:sc2', 'record:codex:sc2', 'native:sc1', 'record:codex:sc1']);
+      expect([...f.records.keys()]).toEqual(['codex:fk', 'codex:fk-sc']);
+      await f.service.dispose();
+    });
+
+    test('releases the open load of a deleted side chat', async () => {
+      const f = tree();
+      await f.service.open(at('sc2'), loadId);
+      f.events.length = 0;
+      await f.service.deleteSideChat(at('sc1'));
+      await expect(f.service.continue(at('sc2'), { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation is not open');
+      await f.service.dispose();
+    });
+
+    test('only deletes side chats', async () => {
+      const f = tree();
+      await expect(f.service.deleteSideChat(ref)).rejects.toThrow('Only side chats can be deleted');
+      await expect(f.service.deleteSideChat(at('fk'))).rejects.toThrow('Only side chats can be deleted');
+      expect(f.deleteConversation).not.toHaveBeenCalled();
+    });
+
+    test('deletes nothing while any side chat in the subtree is busy', async () => {
+      const f = tree();
+      const busy = (runtime: ConversationSummary['runtime']) => { f.extra.splice(0, f.extra.length, ...f.extra.map((item) => item.ref.nativeSessionId === 'sc3' ? { ...item, runtime } : item)); };
+      for (const runtime of ['active-in-fractal', 'active-externally', 'waiting-for-user'] as const) {
+        busy(runtime);
+        await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('Side chat is busy');
+      }
+      busy('idle');
+      // A run Fractal owns, or is starting, counts even though the agent's own listing says idle.
+      await f.service.open(at('sc3'), loadId);
+      const gate = deferred<ConversationRun>();
+      vi.mocked(f.adapter.continueConversation).mockReturnValue(gate.promise);
+      const starting = f.service.continue(at('sc3'), { text: 'Go' }, 'renderer');
+      await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('Side chat is busy');
+      const run = runFixture();
+      const end = deferred<IteratorResult<NativeEvent>>();
+      run.events[Symbol.asyncIterator].mockReturnValue({ next: () => end.promise });
+      gate.resolve(run);
+      await starting;
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('Side chat is busy');
+      expect(f.deleteConversation).not.toHaveBeenCalled();
+      expect(f.records.size).toBe(5);
+      end.resolve({ done: true, value: undefined });
+      await f.service.dispose();
+    });
+
+    test('a busy fork below the side chat does not block the deletion', async () => {
+      const f = tree();
+      f.extra.splice(0, f.extra.length, ...f.extra.map((item) => item.ref.nativeSessionId === 'fk' ? { ...item, runtime: 'active-in-fractal' as const } : item));
+      await expect(f.service.deleteSideChat(at('sc1'))).resolves.toHaveLength(3);
+      await f.service.dispose();
+    });
+
+    test('stops at a native delete that fails, keeping its record and those above it', async () => {
+      const f = tree();
+      f.deleteConversation.mockImplementation(async (deleted) => { if (deleted.nativeSessionId === 'sc2') throw new Error('refused'); });
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('refused');
+      expect([...f.records.keys()]).toEqual(['codex:sc1', 'codex:sc2', 'codex:fk', 'codex:fk-sc']);
+      expect(f.deleteConversation).toHaveBeenCalledTimes(2);
+      await f.service.dispose();
+    });
+
+    test('is not available without a branch store', async () => {
+      const f = fixture();
+      await expect(f.service.deleteSideChat(ref)).rejects.toThrow('Side chat deletion is not available');
+    });
   });
 });

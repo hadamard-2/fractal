@@ -18,7 +18,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   const api: ConversationApi = {
     list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Review native history', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }] }], providers: [{ provider: 'claude', availability: 'unavailable', capabilities, message: 'CLI executable not found' }] }),
     open: vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Native panel title', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities })),
-    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, onEvent: () => () => undefined,
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   const onProjectPathChange = vi.fn();
@@ -45,7 +45,7 @@ test('refreshes breadcrumb metadata when the same native ref is selected again',
   const api: ConversationApi = {
     list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: project, conversations: [{ ref, title, updatedAt: 1, runtime, captureCompleteness: 'partial' }] }], providers: [] }),
     open: async () => ({ summary: { ref, title: 'Native details', updatedAt: 1, runtime: 'unknown', captureCompleteness: 'partial' }, capabilities }),
-    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); },
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
@@ -76,7 +76,7 @@ test('labels the open conversation with the runtime it loads, not the one listed
     // Listed while idle; a separately launched claude takes the session before it is opened.
     list: async () => ({ projects: [{ projectPath: claude.projectPath, displayName: 'Fractal', conversations: [{ ref: claude, title: 'Run elsewhere', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [{ provider: 'claude', availability: 'available', capabilities }] }),
     open: async (selected, id) => { loadId = id; return { summary: { ref: selected, title: 'Run elsewhere', updatedAt: 1, runtime: 'active-externally', captureCompleteness: 'complete' }, capabilities }; },
-    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); },
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
@@ -100,7 +100,7 @@ test('Mod+R reopens the open conversation, so a session whose external run ended
   const listeners = new Set<(event: ConversationStreamEvent) => void>();
   const api: ConversationApi = {
     list: async () => ({ projects: [{ projectPath: claude.projectPath, displayName: 'Fractal', conversations: [{ ref: claude, title: 'Ran elsewhere', updatedAt: 1, runtime, captureCompleteness: 'complete' }] }], providers: [{ provider: 'claude', availability: 'available', capabilities }] }),
-    open, close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); },
+    open, close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
@@ -126,7 +126,7 @@ test('creates a chat from a project row and opens its native reference', async (
   const open = vi.fn<ConversationApi['open']>(async () => ({ summary: { ref, title: 'New chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }));
   const api: ConversationApi = {
     list: async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [{ provider: 'codex', availability: 'available', capabilities: { ...capabilities, create: true } }] }),
-    open, create, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, onEvent: () => () => undefined,
+    open, create, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   render(<AppShell onOpenSettings={() => undefined}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
@@ -151,7 +151,7 @@ describe('home screen actions', () => {
         providers: [{ provider: 'codex', availability: 'available', capabilities: creatable }],
       }),
       open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
-      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, onEvent: () => () => undefined,
+      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
     };
     const codexDefault = { get: async () => ({ theme: 'system' as const, defaultCodingAgent: 'codex' as const, sidebarOrder: emptyOrder }), set: settings.set };
     Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings: codexDefault } });
@@ -248,7 +248,7 @@ describe('project status', () => {
         providers: [{ provider: 'codex', availability: 'available', capabilities: creatable }],
       }),
       open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
-      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, onEvent: () => () => undefined,
+      close: async () => undefined, create, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
     };
     let stored: FractalSettings = { theme: 'system', defaultCodingAgent: 'codex', sidebarOrder: emptyOrder, projectVisibility: { archived: [], removed: [] }, projectFilter: 'active', archivedChats: [], hiddenAgents: [], showAgentColorTags: true, agentExecutables: { claude: '', codex: '' }, fileOpener: null, allowDangerousAccess: {}, ...initial };
     const set = vi.fn(async (patch: Partial<FractalSettings>) => { stored = { ...stored, ...patch }; return stored; });
@@ -426,7 +426,7 @@ test('shows placeholder rows and a busy button only until history first loads', 
     // refresh never settles, so a returning placeholder would stay visible.
     list: () => pendingRefresh ? new Promise(() => undefined) : new Promise((resolve) => { first.push(resolve); }),
     open: async (selected) => ({ summary: { ref: selected, title: 'Chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }),
-    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); },
+    close: async () => undefined, create: async () => null, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined,
     onEvent: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });

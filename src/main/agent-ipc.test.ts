@@ -51,7 +51,7 @@ function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, acces
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
     create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
-    fork: vi.fn(async () => ({ ...ref, nativeSessionId: 'forked' })), branchKind: vi.fn((): 'side-chat' | 'fork' | undefined => undefined),
+    fork: vi.fn(async () => ({ ...ref, nativeSessionId: 'forked' })), sideChats: vi.fn((): unknown[] => []), deleteSideChat: vi.fn(async (): Promise<unknown[]> => []), branchKind: vi.fn((): 'side-chat' | 'fork' | undefined => undefined),
     resolveRequest: vi.fn(async () => undefined), denyRequestsForOwner: vi.fn(async () => undefined),
     attachmentAllowed: vi.fn((_ref: unknown, path: string) => path === '/repo/notes.md'),
   };
@@ -93,6 +93,12 @@ describe('conversation IPC', () => {
     ['fork', [ref, { turnId: 't1', position: 'beside' }, 'fork'], 'Invalid fork point'],
     ['fork', [ref, { turnId: 't1', position: 'after' }, 'branch'], 'Invalid branch kind'],
     ['fork', [ref, { turnId: 't1', position: 'after' }], 'Invalid conversation arguments'],
+    ['side-chats', [{ ...ref, projectPath: 'relative' }], 'Invalid conversation reference'],
+    ['side-chats', [ref, ref], 'Invalid conversation arguments'],
+    ['side-chats', [], 'Invalid conversation arguments'],
+    ['delete-side-chat', [{ ...ref, projectPath: 'relative' }], 'Invalid conversation reference'],
+    ['delete-side-chat', [ref, ref], 'Invalid conversation arguments'],
+    ['delete-side-chat', [], 'Invalid conversation arguments'],
   ])('rejects invalid %s inputs before dispatch', async (channel, args, message) => {
     const f = fixture();
     await expect(f.invoke(channel, ...args)).rejects.toThrow(message);
@@ -104,7 +110,7 @@ describe('conversation IPC', () => {
     const unrelated = vi.fn(); electron.handlers.set('unrelated', unrelated);
     const f = fixture();
     expect(f.register()).toBe(f.registration);
-    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment', 'rename', 'fork'].map((name) => `fractal:conversations:${name}`)].sort());
+    expect([...electron.handlers.keys()].sort()).toEqual(['unrelated', ...['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolve-request', 'preview-attachment', 'open-attachment', 'rename', 'fork', 'side-chats', 'delete-side-chat'].map((name) => `fractal:conversations:${name}`)].sort());
     await f.invoke('list');
     await boundary.disposeConversationIpc(); await boundary.disposeConversationIpc();
     expect([...electron.handlers.keys()]).toEqual(['unrelated']);
@@ -360,6 +366,69 @@ describe('conversation IPC', () => {
       f.service.fork.mockRejectedValue(new Error('/private/path'));
       await f.invoke('open', ref, loadId);
       await expect(f.invoke('fork', ref, point, 'fork')).rejects.toThrow('Conversation operation failed');
+    });
+  });
+
+  describe('side chats', () => {
+    const child = { ...ref, nativeSessionId: 'side-chat' };
+    const grandchild = { ...ref, nativeSessionId: 'nested' };
+    const summaries = [{ ref: child, parentKey: 'codex:session', afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 1 }];
+
+    test('lists the side chats of a conversation without it being loaded', async () => {
+      const f = fixture();
+      f.service.sideChats.mockReturnValue(summaries);
+      await expect(f.invoke('side-chats', ref)).resolves.toEqual(summaries);
+      expect(f.service.sideChats).toHaveBeenCalledWith(ref);
+    });
+
+    test('deletes a side chat without it being loaded', async () => {
+      const f = fixture();
+      await expect(f.invoke('delete-side-chat', child)).resolves.toBeUndefined();
+      expect(f.service.deleteSideChat).toHaveBeenCalledWith(child);
+    });
+
+    test('forgets this renderer\'s loads of the deleted side chats and keeps its other loads', async () => {
+      const f = fixture();
+      await f.invoke('open', child, loadId); await f.invoke('open', grandchild, nextId); await f.invoke('open', ref, '00000000-0000-4000-8000-000000000003');
+      f.service.deleteSideChat.mockResolvedValue([grandchild, child]);
+      await f.invoke('delete-side-chat', child);
+      f.sender.send.mockClear();
+      f.registration.emit({ ...complete, ref: child });
+      f.registration.emit({ ...complete, ref: grandchild, loadId: nextId });
+      expect(f.sender.send).not.toHaveBeenCalled();
+      await expect(f.invoke('close', child)).rejects.toThrow('Conversation is not owned by this renderer');
+      await expect(f.invoke('close', grandchild)).rejects.toThrow('Conversation is not owned by this renderer');
+      await expect(f.invoke('close', ref)).resolves.toBeUndefined();
+    });
+
+    test('does not forget a load another renderer holds', async () => {
+      const f = fixture();
+      await f.invoke('open', child, loadId);
+      const other = new Sender(); other.id = 42; f.useSender(other);
+      f.service.deleteSideChat.mockResolvedValue([child]);
+      await f.invokeAs(other, 'delete-side-chat', child);
+      f.useSender(f.sender);
+      await expect(f.invoke('close', child)).resolves.toBeUndefined();
+    });
+
+    test('rejects a subframe or foreign sender on both channels', async () => {
+      const f = fixture();
+      for (const [channel, arg] of [['side-chats', ref], ['delete-side-chat', child]] as const) {
+        await expect(f.invokeAs(new Sender(), channel, arg)).rejects.toThrow('Unauthorized conversation sender');
+        const handler = electron.handlers.get(`fractal:conversations:${channel}`);
+        if (!handler) throw new Error('Missing handler');
+        await expect(handler({ sender: f.sender, senderFrame: {} } as unknown as IpcMainInvokeEvent, arg)).rejects.toThrow('Unauthorized conversation sender');
+      }
+      expect(f.service.sideChats).not.toHaveBeenCalled();
+      expect(f.service.deleteSideChat).not.toHaveBeenCalled();
+    });
+
+    test('hides why a listing or deletion failed', async () => {
+      const f = fixture();
+      f.service.sideChats.mockImplementation(() => { throw new Error('/private/path'); });
+      f.service.deleteSideChat.mockRejectedValue(new Error('Side chat is busy'));
+      await expect(f.invoke('side-chats', ref)).rejects.toThrow('Conversation operation failed');
+      await expect(f.invoke('delete-side-chat', child)).rejects.toThrow('Conversation operation failed');
     });
   });
 

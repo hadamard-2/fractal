@@ -21,7 +21,7 @@ describe('preload conversation surface', () => {
     const { surface } = await preload();
     expect(mocks.expose.mock.calls[0][0]).toBe('fractal');
     expect(Object.keys(surface).sort()).toEqual(['access', 'attachments', 'changes', 'conversations', 'files', 'models', 'settings', 'terminals']);
-    expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'previewAttachment', 'openAttachment', 'rename', 'fork', 'onEvent'].sort());
+    expect(Object.keys(surface.conversations).sort()).toEqual(['list', 'open', 'close', 'create', 'continue', 'interrupt', 'resolveRequest', 'previewAttachment', 'openAttachment', 'rename', 'fork', 'sideChats', 'deleteSideChat', 'onEvent'].sort());
     await surface.conversations.list(); await surface.conversations.open(ref, loadId); await surface.conversations.close(ref);
     await surface.conversations.create({ provider: 'claude' }); await surface.conversations.continue(ref, { text: 'hi' });
     await surface.conversations.interrupt(ref); await surface.conversations.resolveRequest('request', { kind: 'deny' });
@@ -33,6 +33,19 @@ describe('preload conversation surface', () => {
     expect(surface.attachments.pathFor({} as File)).toBe('/tmp/pasted.png');
     expect(mocks.getPathForFile).toHaveBeenCalledWith({});
   });
+  test('lists side chats through a validating channel and deletes one by reference', async () => {
+    const { surface } = await preload();
+    const summary = { ref: { ...ref, nativeSessionId: 'side' }, parentKey: 'codex:session', afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 3 };
+    mocks.invoke.mockResolvedValueOnce([{ ...summary, nativeFile: '/private' }]);
+    await expect(surface.conversations.sideChats(ref)).resolves.toEqual([summary]);
+    await surface.conversations.deleteSideChat(summary.ref);
+    expect(mocks.invoke.mock.calls).toEqual([['fractal:conversations:side-chats', ref], ['fractal:conversations:delete-side-chat', summary.ref]]);
+    mocks.invoke.mockResolvedValueOnce([{ ...summary, createdAt: 'now' }]);
+    await expect(surface.conversations.sideChats(ref)).rejects.toThrow('Invalid side chat');
+    mocks.invoke.mockResolvedValueOnce('not a list');
+    await expect(surface.conversations.sideChats(ref)).rejects.toThrow('Invalid side chat');
+  });
+
   test('validates and strips event payloads, hides Electron events, and removes only its own listener', async () => {
     const { surface, events } = await preload();
     const one = vi.fn(), two = vi.fn(); const off = surface.conversations.onEvent(one); surface.conversations.onEvent(two);

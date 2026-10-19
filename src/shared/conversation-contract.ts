@@ -283,6 +283,19 @@ export interface ForkPoint {
   position: 'after' | 'before';
 }
 
+/** A side chat as the map shows it: where it branched from and how much of its history is the parent's. */
+export interface SideChatSummary {
+  ref: ConversationRef;
+  /** conversationKey() of the conversation or side chat it branched from. */
+  parentKey: string;
+  /** The parent's ConversationTurn.id it was cut after. */
+  afterTurnId: string;
+  /** How many of its leading turns came from the parent; the map shows only the rest. */
+  inheritedTurnCount: number;
+  branchPointText?: string;
+  createdAt: number;
+}
+
 export interface ConversationApi {
   list(): Promise<{ projects: ProjectConversationGroup[]; providers: HarnessStatus[] }>;
   open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities }>;
@@ -296,6 +309,10 @@ export interface ConversationApi {
   /** Renames the conversation in its agent's own history; resolves once the agent has it. */
   rename(ref: ConversationRef, title: string): Promise<void>;
   fork(ref: ConversationRef, point: ForkPoint, kind: BranchKind): Promise<ConversationRef>;
+  /** Every side chat below this conversation, at any depth, parents before children. */
+  sideChats(ref: ConversationRef): Promise<SideChatSummary[]>;
+  /** Deletes the side chat and the side chats below it, from Fractal and from the agent's own history. */
+  deleteSideChat(ref: ConversationRef): Promise<void>;
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 

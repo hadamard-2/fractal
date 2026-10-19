@@ -193,6 +193,20 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       const ref = parseConversationRef(input), point = parseForkPoint(pointInput), kind = parseBranchKind(kindInput); requireLoad(owner, ref);
       return async () => parseConversationRef(await service.fork(ref, point, kind));
     });
+    // Not tied to an open load: the map lists and deletes the side chats of a conversation it has not opened.
+    invoke(CHANNELS.sideChats, 1, ([input]) => {
+      const ref = parseConversationRef(input);
+      return async () => service.sideChats(ref);
+    });
+    invoke(CHANNELS.deleteSideChat, 1, ([input], owner) => {
+      const ref = parseConversationRef(input);
+      return async () => {
+        for (const deleted of await service.deleteSideChat(ref)) {
+          const load = loads.get(conversationKey(deleted));
+          if (load?.owner === owner && load.ref.projectPath === deleted.projectPath) forget(load);
+        }
+      };
+    });
     invoke(CHANNELS.interrupt, 1, ([input], owner) => {
       const ref = parseConversationRef(input); requireLoad(owner, ref);
       return () => service.interrupt(ref);

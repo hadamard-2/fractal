@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ACCESS_CHANNELS, CONVERSATION_CHANNELS, isSendableAccessMode, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseForkPoint, parseBranchKind, parseLoadId, parsePromptInput, parseTurnAccess } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, CONVERSATION_CHANNELS, isSendableAccessMode, MAX_CONVERSATION_TITLE_LENGTH, parseAccessLevelId, parseAccessState, parseConversationStreamEvent, parseConversationTitle, parseForkPoint, parseBranchKind, parseLoadId, parsePromptInput, parseSideChatSummaries, parseSideChatSummary, parseTurnAccess } from '@/shared/conversation-ipc';
 
 const loadId = 'abcdef12-3456-4abc-8def-1234567890ab';
 const ref = { provider: 'codex' as const, nativeSessionId: 'session-1', projectPath: '/work/fractal' };
@@ -256,4 +256,45 @@ test('parses a branch kind', () => {
   expect(parseBranchKind('side-chat')).toBe('side-chat');
   expect(parseBranchKind('fork')).toBe('fork');
   for (const bad of ['branch', 1]) expect(() => parseBranchKind(bad)).toThrow('Invalid branch kind');
+});
+
+test('names the side chat channels', () => {
+  expect(CONVERSATION_CHANNELS.sideChats).toBe('fractal:conversations:side-chats');
+  expect(CONVERSATION_CHANNELS.deleteSideChat).toBe('fractal:conversations:delete-side-chat');
+});
+
+describe('side chat summaries', () => {
+  const summary = { ref, parentKey: 'codex:main', afterTurnId: 't1', inheritedTurnCount: 2, branchPointText: 'Where it began', createdAt: 5 };
+
+  test('parses a side chat summary, dropping unknown fields', () => {
+    expect(parseSideChatSummary({ ...summary, nativeFile: '/private' })).toEqual(summary);
+    const bare: Partial<typeof summary> = { ...summary };
+    delete bare.branchPointText;
+    expect(parseSideChatSummary(bare)).toEqual(bare);
+    expect(parseSideChatSummary(bare)).not.toHaveProperty('branchPointText');
+    expect(parseSideChatSummary({ ...summary, ref: { ...ref, nativeFile: '/private' } }).ref).toEqual(ref);
+  });
+
+  test('rejects a malformed side chat summary', () => {
+    const bad: unknown[] = [
+      null, [], 'side',
+      { ...summary, ref: { ...ref, projectPath: 'relative' } },
+      { ...summary, parentKey: '' },
+      { ...summary, afterTurnId: '' },
+      { ...summary, afterTurnId: null },
+      { ...summary, inheritedTurnCount: -1 },
+      { ...summary, inheritedTurnCount: 1.5 },
+      { ...summary, createdAt: Number.NaN },
+      { ...summary, branchPointText: 7 },
+      { ...summary, branchPointText: 'x'.repeat(501) },
+    ];
+    for (const value of bad) expect(() => parseSideChatSummary(value)).toThrow();
+    expect(parseSideChatSummary({ ...summary, branchPointText: 'x'.repeat(500) }).branchPointText).toHaveLength(500);
+  });
+
+  test('parses a list and rejects anything that is not a dense array of summaries', () => {
+    expect(parseSideChatSummaries([summary, summary])).toEqual([summary, summary]);
+    expect(parseSideChatSummaries([])).toEqual([]);
+    for (const value of [undefined, {}, [summary, { ...summary, createdAt: 'now' }], new Array(1)]) expect(() => parseSideChatSummaries(value)).toThrow('Invalid side chat');
+  });
 });

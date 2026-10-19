@@ -24,6 +24,7 @@ import {
   type PromptInput,
   type ProviderId,
   type QuestionField,
+  type SideChatSummary,
   type TurnAccess,
   type TurnBlock,
   type UserDecision,
@@ -37,6 +38,7 @@ export const CONVERSATION_CHANNELS = {
   resolveRequest: 'fractal:conversations:resolve-request', event: 'fractal:conversations:event',
   previewAttachment: 'fractal:conversations:preview-attachment', openAttachment: 'fractal:conversations:open-attachment',
   rename: 'fractal:conversations:rename', fork: 'fractal:conversations:fork',
+  sideChats: 'fractal:conversations:side-chats', deleteSideChat: 'fractal:conversations:delete-side-chat',
 } as const;
 
 export const MODEL_CHANNELS = { list: 'fractal:models:list', choose: 'fractal:models:choose' } as const;
@@ -46,6 +48,8 @@ export const ACCESS_CHANNELS = { list: 'fractal:access:list', choose: 'fractal:a
 const MAX_TEXT_LENGTH = 1_000_000;
 const MAX_DECISION_TEXT_LENGTH = 100_000;
 const MAX_SESSION_ID_LENGTH = 512;
+// A conversationKey(): a provider id, a colon, and a session id.
+const MAX_PARENT_KEY_LENGTH = MAX_SESSION_ID_LENGTH + 16;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_HISTORY_TURNS = 50;
 const MAX_ATTACHMENT_NAME_LENGTH = 1_024;
@@ -171,6 +175,31 @@ export function parseForkPoint(value: unknown): ForkPoint {
 export function parseBranchKind(value: unknown): BranchKind {
   if (value !== 'side-chat' && value !== 'fork') throw new Error('Invalid branch kind');
   return value;
+}
+
+/** The most a branch point's text may run to; the producer cuts it to this. */
+export const MAX_BRANCH_POINT_TEXT_LENGTH = 500;
+
+export function parseSideChatSummary(value: unknown): SideChatSummary {
+  if (!plainObject(value) || !nonblankText(value.parentKey, MAX_PARENT_KEY_LENGTH) || !nonblankText(value.afterTurnId, MAX_SESSION_ID_LENGTH) || !nonnegativeInteger(value.inheritedTurnCount) || !finiteNumber(value.createdAt)) throw new Error('Invalid side chat');
+  let branchPointText: string | undefined;
+  if (value.branchPointText !== undefined) {
+    if (!text(value.branchPointText, MAX_BRANCH_POINT_TEXT_LENGTH)) throw new Error('Invalid side chat');
+    branchPointText = value.branchPointText;
+  }
+  return {
+    ref: parseConversationRef(value.ref),
+    parentKey: value.parentKey,
+    afterTurnId: value.afterTurnId,
+    inheritedTurnCount: value.inheritedTurnCount,
+    ...(branchPointText === undefined ? {} : { branchPointText }),
+    createdAt: value.createdAt,
+  };
+}
+
+export function parseSideChatSummaries(value: unknown): SideChatSummary[] {
+  if (!denseArray(value)) throw new Error('Invalid side chat');
+  return value.map(parseSideChatSummary);
 }
 
 export function parseLoadId(value: unknown): string {

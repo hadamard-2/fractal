@@ -1,14 +1,14 @@
 import { setImmediate } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
-import type { BranchStore } from '@/main/branch-store';
+import type { BranchRecord, BranchStore } from '@/main/branch-store';
 import { FORK_NOTE, SIDE_CHAT_NOTE } from '@/main/branch-notes';
 import type { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
-import { conversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type UserDecision } from '@/shared/conversation-contract';
-import { parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
+import { conversationKey, parseConversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type SideChatSummary, type UserDecision } from '@/shared/conversation-contract';
+import { MAX_BRANCH_POINT_TEXT_LENGTH, parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
 type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities };
 type StreamPayload = ConversationStreamEvent extends infer Event ? Event extends ConversationStreamEvent ? Omit<Event, 'loadId' | 'seq' | 'ref'> : never : never;
@@ -36,6 +36,8 @@ type Load = {
 type OwnedRun = { ref: ConversationRef; id: string; rendererId: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']>; revokedReason?: string; revokedRequests: Set<string> };
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
 
+type Branches = Pick<BranchStore, 'get' | 'set' | 'delete' | 'descendants' | 'sideChatKeys'>;
+
 const BUSY_RUNTIMES: ReadonlySet<ConversationSummary['runtime']> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
 
 export class ConversationService {
@@ -47,10 +49,10 @@ export class ConversationService {
   private readonly startingRuns = new Map<string, StartingRun>();
   private readonly drafts = new Map<string, ConversationSummary>();
   private readonly chunkSize: number;
-  private readonly branches: Pick<BranchStore, 'get' | 'set' | 'sideChatKeys'> | undefined;
+  private readonly branches: Branches | undefined;
   private disposed = false;
 
-  constructor(private readonly registry: ConversationRegistry, private readonly emit: (event: ConversationStreamEvent) => void, options: { historyChunkSize?: number; branches?: Pick<BranchStore, 'get' | 'set' | 'sideChatKeys'> } = {}) {
+  constructor(private readonly registry: ConversationRegistry, private readonly emit: (event: ConversationStreamEvent) => void, options: { historyChunkSize?: number; branches?: Branches } = {}) {
     this.branches = options.branches;
     this.chunkSize = options.historyChunkSize ?? 50;
     if (!Number.isInteger(this.chunkSize) || this.chunkSize < 1 || this.chunkSize > 50) throw new Error('History chunk size must be between 1 and 50');
@@ -167,8 +169,72 @@ export class ConversationService {
     const ref = afterTurn
       ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), title })
       : await this.create(source.provider, source.projectPath);
-    branches.set(conversationKey(ref), { kind, parentKey: conversationKey(source), afterTurnId: afterTurn?.id ?? null, inheritedTurnCount: afterIndex + 1, ...(note === undefined ? {} : { note }), createdAt: Date.now() });
+    const branchPointText = kind === 'side-chat' && afterTurn ? branchPointOf(afterTurn) : undefined;
+    try {
+      branches.set(conversationKey(ref), { kind, parentKey: conversationKey(source), afterTurnId: afterTurn?.id ?? null, inheritedTurnCount: afterIndex + 1, ...(note === undefined ? {} : { note }), createdAt: Date.now(), ...(branchPointText ? { branchPointText } : {}) });
+    } catch (error) {
+      // Without its record the new session would show up as an ordinary conversation, and a side chat would not be read-only.
+      this.drafts.delete(conversationKey(ref));
+      await this.registry.delete(ref).catch((): void => undefined);
+      throw error;
+    }
     return ref;
+  }
+
+  /** The side chats below a conversation, parents before children. A fork ends the walk: its own side chats belong to its own map. */
+  sideChats(input: ConversationRef): SideChatSummary[] {
+    this.assertAvailable();
+    const root = parseConversationRef(input);
+    const summaries: SideChatSummary[] = [];
+    for (const [key, record] of this.sideChatsBelow(conversationKey(root))) {
+      if (record.afterTurnId === null) continue;
+      summaries.push({ ref: { ...parseConversationKey(key), projectPath: root.projectPath }, parentKey: record.parentKey, afterTurnId: record.afterTurnId, inheritedTurnCount: record.inheritedTurnCount, ...(record.branchPointText === undefined ? {} : { branchPointText: record.branchPointText }), createdAt: record.createdAt });
+    }
+    return summaries;
+  }
+
+  /**
+   * Deletes a side chat and the side chats reachable from it through side chats, from the agent's history and then from Fractal's records,
+   * deepest first, so that stopping part-way never leaves a recorded side chat whose parent's record is gone.
+   * Returns the deleted references in the order they were deleted.
+   */
+  async deleteSideChat(input: ConversationRef): Promise<ConversationRef[]> {
+    this.assertAvailable();
+    const branches = this.branches;
+    if (!branches) throw new Error('Side chat deletion is not available');
+    const root = parseConversationRef(input);
+    const rootKey = conversationKey(root);
+    if (branches.get(rootKey)?.kind !== 'side-chat') throw new Error('Only side chats can be deleted');
+    const refs = [rootKey, ...this.sideChatsBelow(rootKey).map(([key]) => key)].reverse()
+      .map((key): ConversationRef => ({ ...parseConversationKey(key), projectPath: root.projectPath }));
+    // A turn in flight may be writing the history that is about to go; refuse before anything is deleted.
+    const busy = await Promise.all(refs.map(async (ref) => {
+      const key = conversationKey(ref);
+      if (this.ownedRuns.has(key) || this.startingRuns.has(key)) return true;
+      // A session the agent no longer lists has no run to wait for.
+      const listed = await this.registry.validate(ref).catch((): undefined => undefined);
+      return listed !== undefined && BUSY_RUNTIMES.has(listed.runtime);
+    }));
+    if (busy.some(Boolean)) throw new Error('Side chat is busy');
+    for (const ref of refs) {
+      const key = conversationKey(ref);
+      await this.registry.delete(ref);
+      branches.delete(key);
+      const load = this.loads.get(key);
+      if (load?.ref.projectPath === ref.projectPath) this.release(load);
+      this.drafts.delete(key);
+      this.runtimes.delete(key);
+    }
+    return refs;
+  }
+
+  private sideChatsBelow(rootKey: string): Array<[string, BranchRecord]> {
+    const reachable = new Set([rootKey]);
+    return (this.branches?.descendants(rootKey) ?? []).filter(([key, record]) => {
+      if (record.kind !== 'side-chat' || !reachable.has(record.parentKey)) return false;
+      reachable.add(key);
+      return true;
+    });
   }
 
   async continue(input: ConversationRef, inputPrompt: AgentPrompt, rendererId: string): Promise<void> {
@@ -624,6 +690,11 @@ export class ConversationService {
   private assertAvailable(): void {
     if (this.disposed) throw new Error('Conversation service is disposed');
   }
+}
+
+/** The prose of a reply, cut to what a side chat remembers of the place it branched from. */
+function branchPointOf(turn: ConversationTurn): string {
+  return turn.blocks.flatMap((block) => block.kind === 'assistant-prose' ? [block.text] : []).join('\n\n').slice(0, MAX_BRANCH_POINT_TEXT_LENGTH);
 }
 
 function isRegression(prior: NativeEvent, incoming: NativeEvent): boolean {

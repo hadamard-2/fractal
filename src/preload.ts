@@ -6,7 +6,7 @@ import type { AccessApi, AttachmentsApi, ConversationApi, ModelsApi } from '@/sh
 import { CHANGES_CHANNELS, type ChangesApi } from '@/shared/changes-contract';
 import { FILES_CHANNELS, parseFilesEvent, type FilesApi } from '@/shared/files-contract';
 import { TERMINAL_CHANNELS, parseTerminalEvent, type TerminalApi } from '@/shared/terminal-contract';
-import { ACCESS_CHANNELS, CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent } from '@/shared/conversation-ipc';
+import { ACCESS_CHANNELS, CONVERSATION_CHANNELS as CHANNELS, MODEL_CHANNELS, parseConversationStreamEvent, parseSideChatSummaries } from '@/shared/conversation-ipc';
 import {
   SETTINGS_INVOKE_CHANNEL,
   type FractalSettingsApi,
@@ -27,6 +27,8 @@ const conversations: ConversationApi = {
   openAttachment: (ref, path, action) => ipcRenderer.invoke(CHANNELS.openAttachment, ref, path, action),
   rename: (ref, title) => ipcRenderer.invoke(CHANNELS.rename, ref, title),
   fork: (ref, point, kind) => ipcRenderer.invoke(CHANNELS.fork, ref, point, kind),
+  sideChats: async (ref) => parseSideChatSummaries(await ipcRenderer.invoke(CHANNELS.sideChats, ref)),
+  deleteSideChat: (ref) => ipcRenderer.invoke(CHANNELS.deleteSideChat, ref),
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       let event;
