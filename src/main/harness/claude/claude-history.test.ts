@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { describe, expect, test } from 'vitest';
-import { discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, watchClaudeConversation } from '@/main/harness/claude/claude-history';
+import { discoverClaudeConversations, readClaudeConversation, readClaudeLastPermissionMode, readClaudeLastRun, readClaudeTurnEnd, watchClaudeConversation } from '@/main/harness/claude/claude-history';
 import type { NativeEvent } from '@/main/harness/reconciler';
 
 const fixtureRoot = path.join(import.meta.dirname, '__fixtures__');
@@ -33,6 +33,27 @@ describe('Claude native history', () => {
     await expect(readClaudeLastRun(file)).resolves.toEqual({ model: 'claude-haiku-4-5-20251001' });
     await writeFile(file, `${JSON.stringify({ type: 'user', message: { content: 'only' } })}\n`);
     await expect(readClaudeLastRun(file)).resolves.toBeUndefined();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('finds the last transcript record of a turn', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-turn-end-'));
+    const file = path.join(directory, 'session.jsonl');
+    const records: unknown[] = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'first' } },
+      { type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] } },
+      { type: 'user', uuid: 'r1', parentUuid: 'a1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+      { type: 'assistant', uuid: 'a2', parentUuid: 'r1', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+      { type: 'user', uuid: 'u2', parentUuid: 'a2', message: { role: 'user', content: 'second' } },
+      { type: 'assistant', uuid: 'a3', parentUuid: 'u2', message: { id: 'm3', role: 'assistant', content: [{ type: 'text', text: 'ok' }] } },
+    ];
+    const write = (extra: unknown[] = []) => writeFile(file, `${[...records, ...extra].map((record) => JSON.stringify(record)).join('\n')}\n`);
+    await write();
+    await expect(readClaudeTurnEnd(file, 'u1')).resolves.toBe('a2');
+    await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
+    await write([{ type: 'custom-title', customTitle: 'Renamed', sessionId: 's' }]);
+    await expect(readClaudeTurnEnd(file, 'u2')).resolves.toBe('a3');
+    await expect(readClaudeTurnEnd(file, 'nope')).rejects.toThrow('Claude turn is not in this conversation');
     await rm(directory, { recursive: true, force: true });
   });
 

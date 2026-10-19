@@ -92,6 +92,19 @@ export function normalizeClaudeStreamRecord(input: unknown, ordinal: number, con
   return [event(nativeId, 'text', ordinal, { kind: 'assistant-text', turnId, blockId: nativeId, text, final: false })];
 }
 
+/** The id a record is known by: its uuid, else its message id, else its position. */
+export function claudeRecordNativeId(record: ClaudeHistoryRecord, ordinal: number): string {
+  return stringValue(record.uuid) ?? stringValue(objectValue(record.message)?.id) ?? `record:${ordinal}`;
+}
+
+/**
+ * The turn a record belongs to. Advances the context, so call it once per record, in file order.
+ * History reads and fork lookups share this so they can't disagree about where a turn ends.
+ */
+export function claudeRecordTurnId(record: ClaudeHistoryRecord, nativeId: string, context: ClaudeNormalizationContext): string {
+  return context.recordTurn(record, nativeId) ?? stringValue(record.parentUuid) ?? nativeId;
+}
+
 export function normalizeClaudeRecord(
   input: unknown,
   ordinal: number,
@@ -101,10 +114,10 @@ export function normalizeClaudeRecord(
   if (!record) return [unsupportedClaudeRecord(ordinal, 'invalid-record')];
   const nativeType = stringValue(record.type) ?? 'unknown';
   const message = objectValue(record.message);
-  const uuid = stringValue(record.uuid) ?? stringValue(message?.id) ?? `record:${ordinal}`;
+  const uuid = claudeRecordNativeId(record, ordinal);
   const contentId = nativeType === 'assistant' ? stringValue(message?.id) ?? uuid : uuid;
   const observedAt = timestampValue(record.timestamp, ordinal);
-  const turnId = context.recordTurn(record, uuid) ?? stringValue(record.parentUuid) ?? uuid;
+  const turnId = claudeRecordTurnId(record, uuid, context);
 
   // After recordTurn: later records can name a bookkeeping record as their parent.
   if (isClaudeBookkeepingRecord(record)) return [];

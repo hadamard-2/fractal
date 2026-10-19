@@ -7,6 +7,8 @@ import type { CaptureCompleteness, ConversationRef, ConversationSummary, ModelCh
 import type { NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import {
   createClaudeNormalizationContext,
+  claudeRecordNativeId,
+  claudeRecordTurnId,
   classifyClaudeRecord,
   normalizeClaudeRecord,
   unsupportedClaudeRecord,
@@ -308,6 +310,37 @@ export async function readClaudeLastRun(filePath: string): Promise<ModelChoice |
     try { take(JSON.parse(tail.raw)); } catch { /* A half-written final record is not a run yet. */ }
   }
   return last;
+}
+
+/**
+ * The uuid of the last transcript record that belongs to a turn, which is where a fork
+ * has to cut to keep the whole turn. A turn's id is its prompt record's uuid.
+ */
+export async function readClaudeTurnEnd(filePath: string, turnId: string): Promise<string> {
+  const decoder = new NdjsonDecoder<unknown>();
+  const context = createClaudeNormalizationContext();
+  let ordinal = 0;
+  let end: string | undefined;
+  const take = (value: unknown): void => {
+    const record = objectValue(value);
+    const currentOrdinal = ordinal++;
+    if (!record) return;
+    const turn = claudeRecordTurnId(record, claudeRecordNativeId(record, currentOrdinal), context);
+    // Only a record with a uuid of its own can be named as a cut point.
+    if (turn === turnId && typeof record.uuid === 'string' && record.uuid) end = record.uuid;
+  };
+  for await (const chunk of createReadStream(filePath)) {
+    for (const line of decoder.push(chunk as Buffer)) {
+      if (line.ok) take(line.value);
+      else ordinal++;
+    }
+  }
+  const tail = decoder.finish();
+  if (tail.kind === 'incomplete') {
+    try { take(JSON.parse(tail.raw)); } catch { /* A half-written final record is not part of a turn yet. */ }
+  }
+  if (end === undefined) throw new Error('Claude turn is not in this conversation');
+  return end;
 }
 
 export async function readClaudeLastPermissionMode(filePath: string): Promise<string | undefined> {
