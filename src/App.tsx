@@ -4,7 +4,7 @@ import { PanelRight } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import { ExecuteMode } from '@/components/execute-mode';
 import { ExplainMode } from '@/components/explain-mode';
-import { MapMode } from '@/components/map-mode';
+import { MapMode } from '@/components/map/map-mode';
 import { MODE_ORDER, ModeToggle, type Mode } from '@/components/mode-toggle';
 import { RightWorkspace } from '@/components/right-workspace';
 import { SettingsDialog } from '@/components/settings-dialog';
@@ -170,7 +170,7 @@ export default function App() {
             {(shell) => (
               <>
                 <ExecuteMode active={mode === 'execute'} {...shell} />
-                {mode === 'map' && <MapMode />}
+                {mode === 'map' && <MapMode {...shell} />}
                 {mode === 'explain' && <ExplainMode />}
               </>
             )}

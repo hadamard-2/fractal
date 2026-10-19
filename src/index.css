@@ -314,3 +314,53 @@
     transition: none;
   }
 }
+
+/*
+ * Map mode's canvas. React Flow's base.css does the layout; the look is the
+ * app's own, on theme tokens only: dots derived from --border on --background,
+ * the main line in --primary, side chats in --muted-foreground at reduced
+ * strength. The canvas controls are our own components, not React Flow's.
+ */
+.react-flow {
+  --xy-background-color: var(--background);
+  --xy-background-pattern-color: color-mix(in oklch, var(--border), var(--foreground) 15%);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--muted-foreground);
+  --xy-connectionline-stroke-width: 1.5;
+}
+.react-flow__edge.map-edge-main .react-flow__edge-path {
+  stroke: var(--primary);
+}
+.react-flow__edge.map-edge-side .react-flow__edge-path {
+  stroke: var(--muted-foreground);
+  stroke-opacity: 0.5;
+}
+/* Edges attach to these; they stay measurable but out of sight and out of reach. */
+.react-flow__handle.map-handle-anchor {
+  min-width: 1px;
+  min-height: 1px;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+/* The one handle a drag starts from: a side chat branches out of a reply's right edge. */
+.react-flow__handle.map-branch-handle {
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 9999px;
+  background-color: var(--card);
+}
+.react-flow__handle.map-branch-handle:hover,
+.react-flow__handle.map-branch-handle.connectingfrom {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+/* A width resize grabs anywhere along a node's side edges; the border itself stays the node's own. */
+.react-flow__resize-control.line.map-node-resize {
+  width: 9px;
+  border-color: transparent;
+}

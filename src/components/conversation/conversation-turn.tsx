@@ -48,7 +48,7 @@ export function splitTurnWork(turn: ConversationTurnData): { lead: TurnBlock[]; 
 }
 
 // A URL, path, or hash with no spaces would otherwise keep its full width and push the transcript sideways.
-const MESSAGE_TEXT = 'max-w-none text-sm leading-6 wrap-anywhere';
+export const MESSAGE_TEXT = 'max-w-none text-sm leading-6 wrap-anywhere';
 
 function TurnBlockView({ block, onResolve }: { block: TurnBlock; onResolve: ResolveRequest }) {
   switch (block.kind) {
@@ -103,32 +103,45 @@ function CopyMessage({ className, label, text }: { className?: string; label: st
   );
 }
 
-export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
-  const { lead, plans, questions, work, answer } = splitTurnWork(turn);
+/** The user's side of a turn as execute shows it, or nothing when the message has no content. */
+export function UserMessageBody({ turn }: { turn: ConversationTurnData }) {
   const { images, attachments, text } = turn.userMessage;
+  if (!images && !attachments && !text) return null;
+  return (
+    <Message className="group/copy" from="user">
+      {images && <ConversationImages className="justify-end" images={images} />}
+      {attachments && <MessageAttachments attachments={attachments} sentAt={turn.userMessage.createdAt} />}
+      {text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
+      {text && <CopyMessage className="justify-end" label="Copy message" text={text} />}
+    </Message>
+  );
+}
+
+/** The agent's side of a turn as execute shows it: its prose, with the work before the answer folded away. */
+export function AgentReplyBody({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
+  const { lead, plans, questions, work, answer } = splitTurnWork(turn);
   // The recorded answer's markdown source, even while the turn still reads as active (a transcript
   // never records a turn ending); without an answer, a finished turn copies all of its prose.
   const start = answerStart(turn.blocks);
   const copied = start !== -1 ? turn.blocks.slice(start) : turn.status === 'active' ? [] : turn.blocks;
   const responseText = copied.flatMap((block) => block.kind === 'assistant-prose' ? [block.text] : []).join('\n\n');
   return (
+    <div className="group/copy space-y-4" aria-label="Agent response">
+      {lead.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
+      {plans.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
+      {questions.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
+      {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
+      {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
+      {responseText && <CopyMessage label="Copy response" text={responseText} />}
+    </div>
+  );
+}
+
+export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
+  return (
     <article aria-label="Conversation turn" className="space-y-4">
-      {(images || attachments || text) && (
-        <Message className="group/copy" from="user">
-          {images && <ConversationImages className="justify-end" images={images} />}
-          {attachments && <MessageAttachments attachments={attachments} sentAt={turn.userMessage.createdAt} />}
-          {text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
-          {text && <CopyMessage className="justify-end" label="Copy message" text={text} />}
-        </Message>
-      )}
-      <div className="group/copy space-y-4" aria-label="Agent response">
-        {lead.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-        {plans.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-        {questions.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-        {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
-        {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-        {responseText && <CopyMessage label="Copy response" text={responseText} />}
-      </div>
+      <UserMessageBody turn={turn} />
+      <AgentReplyBody onResolve={onResolve} turn={turn} />
     </article>
   );
 }
