@@ -149,7 +149,8 @@ export class ConversationService {
     if (!branches) throw new Error('Conversation forking is not available');
     const source = parseConversationRef(input);
     const load = this.currentLoad(source);
-    if (!load) throw new Error('Conversation is not open');
+    // The turns are only the whole history once the load has finished.
+    if (load?.phase !== 'live') throw new Error('Conversation is not open');
     // Map insertion order is history order: turns are projected in the order the agent's history yields them, and a replaced turn keeps its place.
     const turns = [...load.turns.values()];
     const index = turns.findIndex((turn) => turn.id === point.turnId);

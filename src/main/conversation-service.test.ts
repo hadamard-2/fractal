@@ -709,6 +709,21 @@ describe('ConversationService branches', () => {
     await f.service.dispose();
   });
 
+  test('does not fork a conversation that is still loading', async () => {
+    const f = branchFixture();
+    const gate = deferred<void>();
+    const loading = vi.mocked(f.adapter.loadConversation);
+    const loadHistory = loading.getMockImplementation();
+    loading.mockImplementation(async (loaded) => { await gate.promise; return loadHistory?.(loaded) ?? Promise.reject(new Error('no history')); });
+    const opening = f.service.open(ref, loadId);
+    await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'fork')).rejects.toThrow('Conversation is not open');
+    expect(f.adapter.forkConversation).not.toHaveBeenCalled();
+    gate.resolve();
+    await opening;
+    await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'fork')).resolves.toEqual(forkedRef);
+    await f.service.dispose();
+  });
+
   test('rejects forks that cannot be made', async () => {
     const f = branchFixture([start('t1'), finish('t1'), start('t2')]);
     await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'fork')).rejects.toThrow('Conversation is not open');
