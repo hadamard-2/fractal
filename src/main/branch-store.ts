@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { BranchKind } from '@/shared/conversation-contract';
 import { parseBranchKind } from '@/shared/conversation-ipc';
@@ -21,11 +21,17 @@ interface StoredBranches { conversations: Record<string, BranchRecord> }
 /**
  * Which conversations are side chats or forks, and what each branched from.
  * Fractal's own record in userData, since neither agent's session files say so.
- * An unreadable file or invalid entry reads as absent and is replaced on the
- * next write rather than blocking a conversation.
+ * That record is what keeps a side chat read-only after a restart, so it fails closed:
+ * only a missing file reads as empty, and any other read error throws. A file that
+ * does not parse is moved aside to `branches.json.corrupt-<timestamp>` rather than
+ * overwritten, then reads as empty. The records are loaded once and kept in memory,
+ * and every write goes through to disk, so a file that becomes unreadable later
+ * cannot drop what this process already knows. An invalid entry is dropped while
+ * its valid siblings are kept.
  */
 export class BranchStore {
   private readonly filePath: string;
+  private stored: StoredBranches | undefined;
 
   constructor(rootDir: string) {
     this.filePath = path.join(rootDir, 'branches.json');
@@ -49,15 +55,24 @@ export class BranchStore {
   }
 
   private load(): StoredBranches {
+    if (this.stored) return this.stored;
     const stored: StoredBranches = { conversations: {} };
-    if (!existsSync(this.filePath)) return stored;
-    let parsed: unknown;
-    try { parsed = JSON.parse(readFileSync(this.filePath, 'utf8')); } catch { return stored; }
-    for (const [key, value] of Object.entries(objectValue(objectValue(parsed)?.conversations) ?? {})) {
+    let text: string;
+    try { text = readFileSync(this.filePath, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this.stored = stored;
+      throw error;
+    }
+    let conversations: Record<string, unknown> | undefined;
+    try { conversations = objectValue(objectValue(JSON.parse(text))?.conversations); } catch { /* moved aside below */ }
+    if (!conversations) {
+      renameSync(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
+      return this.stored = stored;
+    }
+    for (const [key, value] of Object.entries(conversations)) {
       const entry = coerceEntry(value);
       if (entry) stored.conversations[key] = entry;
     }
-    return stored;
+    return this.stored = stored;
   }
 
   private save(stored: StoredBranches): void {
@@ -65,6 +80,14 @@ export class BranchStore {
     writeFileSync(tmpPath, JSON.stringify(stored, null, 2));
     renameSync(tmpPath, this.filePath);
   }
+}
+
+/**
+ * Whether a conversation must run read-only. A store that cannot be read cannot say it is not a side chat,
+ * so an error counts as one: the agents ask this before every run and fail closed.
+ */
+export function isSideChat(branches: Pick<BranchStore, 'get'>, conversationKey: string): boolean {
+  try { return branches.get(conversationKey)?.kind === 'side-chat'; } catch { return true; }
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

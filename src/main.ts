@@ -4,7 +4,7 @@ import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import started from 'electron-squirrel-startup';
 import { registerConversationIpc, disposeConversationIpc } from '@/main/agent-ipc';
-import { BranchStore } from '@/main/branch-store';
+import { BranchStore, isSideChat } from '@/main/branch-store';
 import { ConversationService } from '@/main/conversation-service';
 import { ConversationRegistry } from '@/main/conversation-registry';
 import { CodexAppServer, codexSpawner, type CodexCommandReaper } from '@/main/harness/codex/codex-app-server';
@@ -226,11 +226,11 @@ app.on('ready', () => {
     const claudeOwnedProcesses = new ClaudeOwnedProcessRegistry();
     // Before the adapters: they ask it whether a session is a side chat on every run, and must know before the first resume.
     const branches = new BranchStore(app.getPath('userData'));
-    const isSideChat = (provider: ProviderId, nativeSessionId: string) => branches.get(conversationKey({ provider, nativeSessionId }))?.kind === 'side-chat';
-    const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath, isReadOnlyThread: (id) => isSideChat('codex', id) });
+    const isReadOnly = (provider: ProviderId, nativeSessionId: string) => isSideChat(branches, conversationKey({ provider, nativeSessionId }));
+    const codexAdapter = new CodexAdapter(codexServer, { realpath: canonicalPath, isReadOnlyThread: (id) => isReadOnly('codex', id) });
     const claudeAdapter = new ClaudeAdapter(path.join(homedir(), '.claude', 'projects'), {
       realpath: canonicalPath,
-      isReadOnlySession: (id) => isSideChat('claude', id),
+      isReadOnlySession: (id) => isReadOnly('claude', id),
       ownedProcesses: claudeOwnedProcesses,
       executable: claudeExecutable,
       ...(watchdog ? { watchdog } : {}),

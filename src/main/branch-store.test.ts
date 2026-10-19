@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { BranchStore, type BranchRecord } from './branch-store';
+import { BranchStore, isSideChat, type BranchRecord } from './branch-store';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -32,15 +32,55 @@ test('lists only side chat keys', () => {
   expect(store.sideChatKeys()).toEqual(new Set(['claude:side']));
 });
 
-test('reads an unparseable file as empty and replaces it on the next write', () => {
+test('moves an unparseable file aside, reads as empty, and writes a fresh file without touching the moved one', () => {
   const dir = tempDir();
   const file = path.join(dir, 'branches.json');
   writeFileSync(file, '{ not json');
   const store = new BranchStore(dir);
   expect(store.get('claude:side')).toBeUndefined();
   expect(store.sideChatKeys()).toEqual(new Set());
+  const moved = readdirSync(dir).filter((name) => name.startsWith('branches.json.corrupt-'));
+  expect(moved).toHaveLength(1);
+  expect(existsSync(file)).toBe(false);
   store.set('claude:side', sideChat);
   expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ conversations: { 'claude:side': sideChat } });
+  expect(readFileSync(path.join(dir, moved[0]), 'utf8')).toBe('{ not json');
+});
+
+test('moves aside a file that parses but is not a branch record', () => {
+  const dir = tempDir();
+  writeFileSync(path.join(dir, 'branches.json'), '[1]');
+  expect(new BranchStore(dir).sideChatKeys()).toEqual(new Set());
+  expect(readdirSync(dir).some((name) => name.startsWith('branches.json.corrupt-'))).toBe(true);
+});
+
+test('throws on a read error other than a missing file, so callers fail closed', () => {
+  const dir = tempDir();
+  mkdirSync(path.join(dir, 'branches.json'));
+  const store = new BranchStore(dir);
+  expect(() => store.get('claude:side')).toThrow();
+  expect(() => store.sideChatKeys()).toThrow();
+  expect(() => store.set('claude:side', sideChat)).toThrow();
+});
+
+test('keeps its records in memory when the file becomes unreadable after loading', () => {
+  const dir = tempDir();
+  const file = path.join(dir, 'branches.json');
+  const store = new BranchStore(dir);
+  store.set('claude:side', sideChat);
+  rmSync(file);
+  mkdirSync(file);
+  expect(store.get('claude:side')).toEqual(sideChat);
+  expect(store.sideChatKeys()).toEqual(new Set(['claude:side']));
+});
+
+test('writes through, so a second set keeps the first record', () => {
+  const dir = tempDir();
+  const store = new BranchStore(dir);
+  store.set('claude:side', sideChat);
+  store.set('codex:fork', fork);
+  expect(store.sideChatKeys()).toEqual(new Set(['claude:side']));
+  expect(new BranchStore(dir).get('codex:fork')).toEqual(fork);
 });
 
 test('drops malformed entries and keeps valid siblings', () => {
@@ -63,4 +103,17 @@ test('drops malformed entries and keeps valid siblings', () => {
     expect(store.get(key)).toBeUndefined();
   }
   expect(store.sideChatKeys()).toEqual(new Set(['claude:ok']));
+});
+
+test('treats a conversation as a side chat when the store cannot be read', () => {
+  const dir = tempDir();
+  const store = new BranchStore(dir);
+  store.set('claude:side', sideChat);
+  store.set('codex:fork', fork);
+  expect(isSideChat(store, 'claude:side')).toBe(true);
+  expect(isSideChat(store, 'codex:fork')).toBe(false);
+  expect(isSideChat(store, 'claude:missing')).toBe(false);
+  const unreadable = tempDir();
+  mkdirSync(path.join(unreadable, 'branches.json'));
+  expect(isSideChat(new BranchStore(unreadable), 'claude:anything')).toBe(true);
 });
