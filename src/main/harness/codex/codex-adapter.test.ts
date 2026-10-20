@@ -211,7 +211,7 @@ describe('Codex read adapter', () => {
     await expect(adapter.loadConversation({ provider: 'codex', nativeSessionId: 'thread-1', projectPath: '/links/fractal' })).resolves.toBeDefined();
   });
 
-  test('maps native active, waiting, error, and fallback titles into summaries', async () => {
+  test('maps native active, waiting, error, and fallback titles into summaries, with a failed last turn as idle', async () => {
     const waiting = thread('waiting');
     waiting.name = null;
     waiting.preview = '';
@@ -223,7 +223,7 @@ describe('Codex read adapter', () => {
     const summaries = await new CodexAdapter(createFakeAppServer([[waiting, failed, active], []]) as never).listConversations();
 
     expect(summaries.map((summary) => [summary.ref.nativeSessionId, summary.runtime])).toEqual([
-      ['waiting', 'waiting-for-user'], ['failed', 'failed'], ['active', 'active-externally'],
+      ['waiting', 'waiting-for-user'], ['failed', 'idle'], ['active', 'active-externally'],
     ]);
     expect(summaries[0]?.title).toBe('Trace the history adapter');
   });
@@ -1042,6 +1042,29 @@ describe('Codex failed turns', () => {
     expect(server.listenerCount()).toBe(0);
   });
 
+  test('says why the turn failed, once, before it finishes', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emit({ method: 'error', params: { threadId: 'thread-1', turnId: 'turn-live', willRetry: false, error: failedCompletion.params.turn.error } });
+    server.emit(failedCompletion);
+    const events = []; for await (const event of run.events) events.push(event);
+    expect(events.map((event) => [event.nativeId, event.payload])).toEqual([
+      ['turn-live:error', { kind: 'system-notice', turnId: 'turn-live', message: 'The model is not available for this account.', tone: 'error' }],
+      ['turn-live:error', { kind: 'system-notice', turnId: 'turn-live', message: 'The model is not available for this account.', tone: 'error' }],
+      ['turn-live:status', { kind: 'turn-finished', turnId: 'turn-live', status: 'failed' }],
+    ]);
+  });
+
+  test('loads a thread whose last turn failed as idle, so it can take the next message', async () => {
+    const server = createFakeAppServer();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => method === 'thread/read'
+      ? { thread: { ...threadRead.thread, status: { type: 'systemError' } } }
+      : request(method, params));
+    const loaded = await new CodexAdapter(server as never, { realpath: async (value) => value }).loadConversation(ref);
+    expect(loaded.summary.runtime).toBe('idle');
+  });
+
   test('settles a stop requested before the failed completion arrives', async () => {
     const server = createFakeAppServer();
     const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
@@ -1057,6 +1080,7 @@ describe('Codex failed turns', () => {
     server.emit({ ...failedCompletion, params: { ...failedCompletion.params, turn: { ...failedCompletion.params.turn, items: null } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'unsupported' } } });
     server.emit(failedCompletion);
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'system-notice', tone: 'error' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-finished', status: 'failed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ done: true });
   });

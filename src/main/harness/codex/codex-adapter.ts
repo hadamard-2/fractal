@@ -558,7 +558,8 @@ function firstUserText(thread: Awaited<CodexRequestMap['thread/read']['result']>
 
 function runtimeFor(status: Awaited<CodexRequestMap['thread/read']['result']>['thread']['status']): ConversationRuntime {
   if (status.type === 'idle') return 'idle';
-  if (status.type === 'systemError') return 'failed';
+  // A thread whose last turn failed reports systemError until its next turn, and Codex accepts that turn, so nothing is running.
+  if (status.type === 'systemError') return 'idle';
   if (status.type === 'active') return status.activeFlags.length > 0 ? 'waiting-for-user' : 'active-externally';
   return 'unknown';
 }

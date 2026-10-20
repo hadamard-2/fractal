@@ -61,9 +61,13 @@ export function normalizeCodexNotification(notification: ServerNotification, con
     case 'turn/completed':
       if (!hasStrings(notification.params, 'threadId') || !isCompleteTurn(notification.params.turn)) return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnIdFromTurn(notification))];
       context.clearTurn(notification.params.threadId, notification.params.turn.id);
-      return [event(`${notification.params.turn.id}:status`, notification.method, 0, {
+      return [...turnErrorNotice(notification.params.turn.id, notification.params.turn.error, notification.method, 0, 'error'), event(`${notification.params.turn.id}:status`, notification.method, 0, {
         kind: 'turn-finished', turnId: notification.params.turn.id, status: turnStatus(notification.params.turn.status),
       })];
+    case 'error':
+      // turn/completed repeats a final error on its turn, under the same notice; one Codex will retry is only a warning until then.
+      if (!hasStrings(notification.params, 'threadId', 'turnId') || !isObject(notification.params.error) || typeof notification.params.willRetry !== 'boolean') return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnId(notification))];
+      return turnErrorNotice(notification.params.turnId, notification.params.error, notification.method, 0, notification.params.willRetry ? 'warning' : 'error');
     case 'thread/status/changed':
       if (!hasStrings(notification.params, 'threadId') || !isObject(notification.params.status) || typeof notification.params.status.type !== 'string') return [unsupported(notificationId(notification, context), notification.method, 0)];
       return [event(`${notification.params.threadId}:status`, notification.method, 0, {
@@ -146,6 +150,7 @@ function normalizeTurn(turn: unknown, ordinal: number): NativeEvent[] {
     events.unshift(event(`${turnId}:started`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.startedAt)), { kind: 'turn-started', turnId, userMessageId: `${turnId}:missing-user`, text: '' }));
   }
   if (turn.status !== 'inProgress') {
+    events.push(...turnErrorNotice(turn.id, turn.error, 'turn-error', secondsToMilliseconds(numberOrNull(turn.completedAt)) ?? secondsToMilliseconds(numberOrNull(turn.startedAt)), 'error'));
     events.push(event(`${turn.id}:status`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.completedAt)) ?? secondsToMilliseconds(numberOrNull(turn.startedAt)), {
       kind: 'turn-finished', turnId: turn.id, status: turnStatus(turn.status),
     }));
@@ -222,6 +227,25 @@ function subagentStatus(status: string): 'running' | 'interrupted' {
 
 function turnStatus(status: string): 'completed' | 'interrupted' | 'failed' {
   return status === 'failed' ? 'failed' : status === 'interrupted' ? 'interrupted' : 'completed';
+}
+
+/** Why a turn failed, as a notice on that turn. One id per turn, so the live error, the completion and the history show one notice. */
+function turnErrorNotice(turnId: string, error: unknown, nativeType: string, observedAt: number | undefined, tone: 'warning' | 'error'): NativeEvent[] {
+  if (!isObject(error) || typeof error.message !== 'string' || !error.message.trim()) return [];
+  return [event(`${turnId}:error`, nativeType, observedAt, { kind: 'system-notice', turnId, message: turnErrorMessage(error.message), tone })];
+}
+
+/**
+ * codex-cli 0.162.1 has been seen to put a whole JSON error response in the message, e.g.
+ * `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"…"}}`; its inner message is the readable part.
+ * Any other message is shown as it is.
+ */
+function turnErrorMessage(message: string): string {
+  try {
+    const parsed: unknown = JSON.parse(message);
+    if (isObject(parsed) && isObject(parsed.error) && typeof parsed.error.message === 'string' && parsed.error.message.trim()) return parsed.error.message.trim();
+  } catch { /* not JSON */ }
+  return message.trim();
 }
 
 function threadStatusMessage(type: string, flags: string[]): string {

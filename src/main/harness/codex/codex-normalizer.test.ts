@@ -168,7 +168,47 @@ describe('Codex native normalization', () => {
     const events = normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
       id: 'turn-1', items: [], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null, additionalDetails: null }, startedAt: 1, completedAt: 2, durationMs: 1_000,
     } } } as never, createCodexLiveNormalizationContext());
-    expect(events.map((event) => event.payload)).toEqual([{ kind: 'turn-finished', turnId: 'turn-1', status: 'failed' }]);
+    expect(events.map((event) => event.payload)).toEqual([
+      { kind: 'system-notice', turnId: 'turn-1', message: 'The model is not available for this account.', tone: 'error' },
+      { kind: 'turn-finished', turnId: 'turn-1', status: 'failed' },
+    ]);
+  });
+
+  describe('a failed turn\'s error', () => {
+    const upstream = JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error', message: "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account." } });
+    const turnError = (message: string) => ({ message, codexErrorInfo: 'other', additionalDetails: null as string | null });
+    const notice = (message: string, tone: 'warning' | 'error') => ({ kind: 'system-notice', turnId: 'turn-1', message, tone });
+    const errorNotification = (message: string, willRetry: boolean) => normalizeCodexNotification({ method: 'error', params: { threadId: 'thread-1', turnId: 'turn-1', willRetry, error: turnError(message) } } as never, createCodexLiveNormalizationContext());
+
+    test('shows the readable message inside a JSON error response', () => {
+      expect(errorNotification(upstream, false).map((event) => [event.nativeId, event.payload])).toEqual([
+        ['turn-1:error', notice("The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account.", 'error')],
+      ]);
+    });
+
+    test('shows any other message as it is', () => {
+      expect(errorNotification('  stream disconnected  ', false).map((event) => event.payload)).toEqual([notice('stream disconnected', 'error')]);
+      expect(errorNotification('{"error":"not the shape"}', false).map((event) => event.payload)).toEqual([notice('{"error":"not the shape"}', 'error')]);
+    });
+
+    test('is a warning while Codex will retry, under the id the final error replaces', () => {
+      expect(errorNotification('Reconnecting…', true).map((event) => [event.nativeId, event.payload])).toEqual([['turn-1:error', notice('Reconnecting…', 'warning')]]);
+    });
+
+    test('shows nothing for an empty message, and marks a malformed notification unsupported', () => {
+      expect(errorNotification('  ', false)).toEqual([]);
+      const malformed = normalizeCodexNotification({ method: 'error', params: { threadId: 'thread-1', turnId: 'turn-1', error: turnError('x') } } as never, createCodexLiveNormalizationContext());
+      expect(malformed.map((event) => event.payload.kind)).toEqual(['unsupported']);
+    });
+
+    test('is read back from history before the turn finishes', () => {
+      const thread = structuredClone(threadRead.thread) as unknown as { turns: Array<Record<string, unknown>> };
+      const [first] = thread.turns;
+      if (!first) throw new Error('fixture is incomplete');
+      thread.turns = [{ ...first, status: 'failed', error: turnError(upstream) }];
+      const kinds = normalizeCodexThread(thread as never).map((event) => [event.nativeId, event.payload.kind]);
+      expect(kinds.slice(-2)).toEqual([[`${String(first.id)}:error`, 'system-notice'], [`${String(first.id)}:status`, 'turn-finished']]);
+    });
   });
 
   test('validates malformed live envelopes and requests without blocking later valid activity', () => {
