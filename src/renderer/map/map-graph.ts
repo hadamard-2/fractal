@@ -122,26 +122,33 @@ export function buildMapGraph(input: {
 
   function drawLine(owner: ConversationRef, state: ConversationState, turns: readonly ConversationTurn[], line: 'main' | 'side', column: Column, from?: { id: string; handle?: string }): DrawnLine {
     const drawn: DrawnLine = { columnX: column.x, autoBottom: column.startY, history: state.history, nodes: [], replies: new Map() };
+    /** Where the line's automatic slots have reached, for the column record; placement follows the nodes' actual spots. */
     let cursor = column.startY;
     let previous = from;
+    let above: MapNode | undefined;
 
     const push = (node: MapNode) => {
       drawn.nodes.push(node);
       addNode(node);
       if (previous) addEdge(previous.id, node.id, line, previous.handle);
       previous = { id: node.id };
+      above = node;
       cursor = snap(snap(cursor) + heightOf(node.id) + MAP.gapY);
     };
+    // The line's first node starts the column; each later one sits below the node above it, wherever that node is.
+    const next = (): XYPosition => above
+      ? { x: above.position.x, y: snap(bottomOf(above) + MAP.gapY) }
+      : { x: column.x, y: snap(cursor) };
 
     turns.forEach((turn, index) => {
       if (hasUserContent(turn)) {
         const id = mapNodeId(owner, turn.id, 'user');
-        push(place(id, { kind: 'user', owner, line, turn }, { x: column.x, y: snap(cursor) }));
+        push(place(id, { kind: 'user', owner, line, turn }, next()));
       }
       const id = mapNodeId(owner, turn.id, 'reply');
       const reply = place(id, {
         kind: 'reply', owner, line, turn, latest: index === turns.length - 1, canBranch: turn.status !== 'active' && !readOnly,
-      }, { x: column.x, y: snap(cursor) });
+      }, next());
       push(reply);
       drawn.replies.set(turn.id, reply);
       drawn.lastReply = reply;

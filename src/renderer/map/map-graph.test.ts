@@ -231,6 +231,26 @@ describe('buildMapGraph auto layout', () => {
     expect(column).toBeGreaterThan(0);
   });
 
+  test('stacks a side chat\'s later nodes below its first node where the user has put it', () => {
+    const graph = build({
+      sideChats: [{ summary: summary('side-1', 't1'), state: state(side, [turn('s1'), turn('s2')]) }],
+      layout: layoutOf({ [userId(side, 's1')]: { x: 2000, y: 3000 } }),
+    });
+
+    expect(at(graph, userId(side, 's1'))).toEqual({ x: 2000, y: 3000 });
+    expect(at(graph, replyId(side, 's1'))).toEqual({ x: 2000, y: 3000 + 120 + MAP.gapY });
+    expect(at(graph, userId(side, 's2'))).toEqual({ x: 2000, y: 3000 + 2 * (120 + MAP.gapY) });
+    expect(at(graph, replyId(side, 's2'))).toEqual({ x: 2000, y: 3000 + 3 * (120 + MAP.gapY) });
+  });
+
+  test('main-line nodes after a moved one follow it', () => {
+    const graph = build({ layout: layoutOf({ [replyId(root, 't1')]: { x: 500, y: 700 } }) });
+
+    expect(at(graph, userId(root, 't1'))).toEqual({ x: 0, y: 0 });
+    expect(at(graph, userId(root, 't2'))).toEqual({ x: 500, y: 700 + 120 + MAP.gapY });
+    expect(at(graph, replyId(root, 't2'))).toEqual({ x: 500, y: 700 + 2 * (120 + MAP.gapY) });
+  });
+
   test('uses a saved position and width where the user has moved a node, and snaps the rest to the grid', () => {
     const saved = userId(root, 't1');
     const graph = build({
@@ -240,11 +260,12 @@ describe('buildMapGraph auto layout', () => {
 
     expect(at(graph, saved)).toEqual({ x: 13, y: 17 });
     expect(find(graph, saved)?.width).toBe(400);
+    // The rest stay in line below it, at its x, with their heights snapped to the grid.
     for (const node of graph.nodes.filter((item) => item.id !== saved)) {
-      expect(node.position.x % MAP.grid).toBe(0);
+      expect(node.position.x).toBe(13);
       expect(node.position.y % MAP.grid).toBe(0);
     }
-    expect(at(graph, replyId(root, 't1')).y).toBe(160);
+    expect(at(graph, replyId(root, 't1')).y).toBe(180);
   });
 });
 
