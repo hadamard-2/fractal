@@ -8,13 +8,15 @@ import { conversationHub, useConversationStates } from '@/renderer/conversation-
 import { initialConversationState } from '@/renderer/conversation-reducer';
 import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
 import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, type HandOff } from '@/renderer/map/side-chat-drafts';
+import { announceSideChats } from '@/renderer/side-chat-events';
 import { modelChoiceOf, submitDraft } from '@/renderer/side-chat-start';
 import { useMapLayout } from '@/renderer/map/use-map-layout';
 import { sideChatsBelow, useSideChats } from '@/renderer/map/use-side-chats';
+import { useSideChatLauncher } from '@/components/right-panel/side-chat-launcher';
 import { DeleteSideChatDialog } from './delete-side-chat-dialog';
 import { ComposerEnvironmentContext, type ComposerEnvironment } from './composer-node';
 import { MapControls } from './map-controls';
-import { MAP_NODE_TYPES, MapNodeEnvironmentContext, type MapNodeEnvironment, type SideChatDeletion } from './map-nodes';
+import { MAP_NODE_TYPES, MapNodeEnvironmentContext, type MapNodeEnvironment, type SideChatActions } from './map-nodes';
 
 type MapNode = Node<MapNodeData>;
 
@@ -177,32 +179,37 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
   }, [handOffs, states, sideChats, moveNode]);
 
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null);
-  const deletions = useMemo(() => {
-    const offered = new Map<string, SideChatDeletion>();
+  const launcher = useSideChatLauncher();
+  const sideChatActions = useMemo(() => {
+    const offered = new Map<string, SideChatActions>();
     for (const { summary, state } of sideChatStates) {
       const below = sideChatsBelow(sideChats, summary.ref);
       const busy = [state, ...below.map((nested) => states.get(conversationKey(nested.ref)))].some((own) => own !== undefined && BUSY_RUNTIMES.has(own.runtime));
-      if (busy) continue;
       const firstTurnId = state.turns.slice(summary.inheritedTurnCount).find(hasUserContent)?.id;
-      offered.set(conversationKey(summary.ref), { firstTurnId, request: () => setPendingDeletion({ sideChat: summary, below }) });
+      offered.set(conversationKey(summary.ref), {
+        firstTurnId,
+        ...(launcher ? { open: () => launcher.open({ root, sideChat: summary.ref, branchPointText: summary.branchPointText }) } : {}),
+        ...(busy ? {} : { requestDelete: () => setPendingDeletion({ sideChat: summary, below }) }),
+      });
     }
     return offered;
-  }, [sideChatStates, sideChats, states]);
+  }, [sideChatStates, sideChats, states, launcher, root]);
+  // Announcing lists this map's side chats again too, and tells the right panel's views of them.
   const deleted = async ({ sideChat, below }: PendingDeletion) => {
     dropNodesOf([sideChat, ...below].map((gone) => conversationKey(gone.ref)));
-    await refreshSideChats();
+    announceSideChats(conversationKey(root));
   };
 
   const environment = useMemo((): MapNodeEnvironment => ({
     view: layout.view,
-    deletions,
+    sideChats: sideChatActions,
     onResizeEnd: (id, { x, y, width }, edge) => {
       // A resize from the right keeps the node where it was placed, automatically or not; one from the left has moved it, so that spot is kept.
       if (edge === 'left') moveNode(id, { x, y });
       resizeNode(id, width);
       setOverrides((prior) => withoutEntry(prior, id));
     },
-  }), [layout.view, deletions, moveNode, resizeNode]);
+  }), [layout.view, sideChatActions, moveNode, resizeNode]);
 
   // Fit once per root, when its history first finishes loading; later rebuilds keep the user's viewport.
   const fitted = useRef(false);

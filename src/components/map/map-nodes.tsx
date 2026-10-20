@@ -1,5 +1,5 @@
 import { Handle, NodeResizeControl, Position, ResizeControlVariant, type Node, type NodeProps, type NodeTypes, type ResizeParams } from '@xyflow/react';
-import { Trash2 } from 'lucide-react';
+import { PanelRight, Trash2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from 'react';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -15,23 +15,26 @@ import { conversationKey, type ConversationRef, type TurnBlock } from '@/shared/
 import type { MapView } from '@/shared/map-contract';
 import { ComposerNode } from './composer-node';
 
-/** A side chat the canvas can delete now, with the node that offers the action. */
-export interface SideChatDeletion {
-  /** The user node of the side chat's first own message, which carries the action beside its detached marker. */
+/** What the canvas offers for one side chat, on the node that carries its actions. */
+export interface SideChatActions {
+  /** The user node of the side chat's first own message, which carries the actions beside its detached marker. */
   firstTurnId: string | undefined;
-  request(): void;
+  /** Set when the right panel can show side chats. */
+  open?: () => void;
+  /** Set when the side chat, and none inside it, is running. */
+  requestDelete?: () => void;
 }
 
 /** What every node on the canvas reads from the canvas around it. */
 export interface MapNodeEnvironment {
   view: MapView;
-  /** By conversationKey() of the side chat; a side chat that can't be deleted right now isn't listed. */
-  deletions: ReadonlyMap<string, SideChatDeletion>;
+  /** By conversationKey() of the side chat. */
+  sideChats: ReadonlyMap<string, SideChatActions>;
   /** A width resize from this edge ended; only a resize from the left edge moves the node's position too. */
   onResizeEnd(id: string, frame: { x: number; y: number; width: number }, edge: 'left' | 'right'): void;
 }
 
-export const MapNodeEnvironmentContext = createContext<MapNodeEnvironment>({ view: 'preview', deletions: new Map(), onResizeEnd: () => undefined });
+export const MapNodeEnvironmentContext = createContext<MapNodeEnvironment>({ view: 'preview', sideChats: new Map(), onResizeEnd: () => undefined });
 
 type DataOf<K extends MapNodeData['kind']> = Extract<MapNodeData, { kind: K }>;
 type MapNodeProps<K extends MapNodeData['kind']> = NodeProps<Node<DataOf<K>>>;
@@ -41,6 +44,21 @@ const proseOf = (blocks: TurnBlock[]) => blocks.flatMap((block) => block.kind ==
 /** Preview's cut: the start of a message, clamped to three lines. */
 function Clamped({ text }: { text: string }) {
   return <div className="line-clamp-3"><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></div>;
+}
+
+function OpenAction({ onOpen }: { onOpen: () => void }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button aria-label="Open in panel" className="nodrag nopan mt-1 text-muted-foreground" onClick={onOpen} size="icon-xs" type="button" variant="ghost">
+            <PanelRight aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Open in panel</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 function DeleteAction({ onDelete }: { onDelete: () => void }) {
@@ -58,10 +76,12 @@ function DeleteAction({ onDelete }: { onDelete: () => void }) {
   );
 }
 
-function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
+function NodeFrame({ id, line, label, branch, onOpen, onDelete, className, children }: {
   id: string;
   line: 'main' | 'side';
   label: string;
+  /** Set on the nodes that offer opening their side chat in the panel. */
+  onOpen?: () => void;
   /** Set on the nodes that offer deleting their side chat. */
   onDelete?: () => void;
   /** Replies only. A reply that can't branch still has the handle, closed, because its side-chat edges leave from it. */
@@ -86,6 +106,7 @@ function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
       ))}
       <div className="flex items-start">
         <div className="map-node-drag flex-1 cursor-grab px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">{label}</div>
+        {onOpen && <OpenAction onOpen={onOpen} />}
         {onDelete && <DeleteAction onDelete={onDelete} />}
       </div>
       {/* The message itself: text selected in here can start a side chat. */}
@@ -99,11 +120,12 @@ function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
 }
 
 export function UserNode({ id, data }: MapNodeProps<'user'>) {
-  const { view, deletions } = useContext(MapNodeEnvironmentContext);
+  const { view, sideChats } = useContext(MapNodeEnvironmentContext);
   const { text } = data.turn.userMessage;
-  const deletion = data.line === 'side' ? deletions.get(conversationKey(data.owner)) : undefined;
+  const actions = data.line === 'side' ? sideChats.get(conversationKey(data.owner)) : undefined;
+  const carries = actions?.firstTurnId === data.turn.id;
   return (
-    <NodeFrame id={id} label="You" line={data.line} onDelete={deletion?.firstTurnId === data.turn.id ? deletion.request : undefined}>
+    <NodeFrame id={id} label="You" line={data.line} onDelete={carries ? actions.requestDelete : undefined} onOpen={carries ? actions.open : undefined}>
       <AttachmentPreviewProvider conversationRef={data.owner}>
         {view === 'preview' && text ? <Clamped text={text} /> : <UserMessageBody turn={data.turn} />}
       </AttachmentPreviewProvider>
@@ -140,9 +162,10 @@ export function ReplyNode({ id, data }: MapNodeProps<'reply'>) {
 /** Stands in for a side chat's branch point once the parent no longer has that turn. */
 export function DetachedNode({ id, data }: MapNodeProps<'detached'>) {
   const { branchPointText } = data.sideChat;
-  const { deletions } = useContext(MapNodeEnvironmentContext);
+  const { sideChats } = useContext(MapNodeEnvironmentContext);
+  const actions = sideChats.get(conversationKey(data.sideChat.ref));
   return (
-    <NodeFrame className="border-dashed" id={id} label="Branch point no longer in the conversation" line="side" onDelete={deletions.get(conversationKey(data.sideChat.ref))?.request}>
+    <NodeFrame className="border-dashed" id={id} label="Branch point no longer in the conversation" line="side" onDelete={actions?.requestDelete} onOpen={actions?.open}>
       {branchPointText && <p className="line-clamp-3 text-sm leading-6 wrap-anywhere text-muted-foreground">{branchPointText}</p>}
     </NodeFrame>
   );

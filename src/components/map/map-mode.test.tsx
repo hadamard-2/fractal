@@ -3,7 +3,9 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { ShellContext } from '@/components/app-shell';
+import { SideChatLauncherContext, type SideChatLauncher } from '@/components/right-panel/side-chat-launcher';
 import { resetConversationHubForTests } from '@/renderer/conversation-hub';
+import { announceSideChats, onSideChatsChanged } from '@/renderer/side-chat-events';
 import { conversationKey, type ConversationApi, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type SideChatSummary } from '@/shared/conversation-contract';
 import { EMPTY_MAP_LAYOUT, type MapApi, type MapLayout } from '@/shared/map-contract';
 import { MapMode } from './map-mode';
@@ -454,4 +456,99 @@ test('a failed delete leaves the side chat on the map, and Cancel leaves it alon
   expect(fixture.conversations.deleteSideChat).toHaveBeenCalledTimes(1);
   expect(screen.getByText('More.')).toBeTruthy();
   expect(fixture.map.saveLayout).not.toHaveBeenCalled();
+});
+
+const openAction = (text: string) => within(nodeOf(text)).queryByLabelText('Open in panel');
+
+function launcherWith(open = vi.fn()): SideChatLauncher {
+  return { start: vi.fn(), open };
+}
+
+test('a side chat\'s first message opens it in the panel, even while it runs', async () => {
+  const stored: SideChatSummary = { ...sideChat, branchPointText: 'The old answer' };
+  const launcher = launcherWith();
+  const fixture = install({ sideChats: [stored] });
+  render(<SideChatLauncherContext.Provider value={launcher}><MapMode {...shell(root)} /></SideChatLauncherContext.Provider>);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.'), turn('s2', 'Again?', 'Again.')]);
+  await screen.findByText('Again.');
+
+  for (const text of ['Hello', 'Hi there.', 'More.', 'Again?', 'Again.']) expect(openAction(text)).toBeNull();
+  const button = openAction('And?');
+  if (!button) throw new Error('No open action');
+  expect(button.tagName).toBe('BUTTON');
+  expect(button.getAttribute('data-variant')).toBe('ghost');
+  // Open sits beside Delete when deleting is offered.
+  expect(deleteAction('And?')).not.toBeNull();
+  act(() => { button.focus(); });
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Open in panel');
+  act(() => { button.blur(); });
+  expect(document.querySelectorAll('[title]')).toHaveLength(0);
+
+  await userEvent.setup().click(button);
+  expect(launcher.open).toHaveBeenCalledWith({ root, sideChat: side, branchPointText: 'The old answer' });
+
+  // Running hides Delete but not Open.
+  setRuntime(fixture, side, 'active-in-fractal');
+  await waitFor(() => expect(deleteAction('And?')).toBeNull());
+  expect(openAction('And?')).not.toBeNull();
+});
+
+test('a side chat whose branch point is gone opens in the panel from its detached marker', async () => {
+  const launcher = launcherWith();
+  const fixture = install({ sideChats: [{ ...sideChat, afterTurnId: 'gone', branchPointText: 'The old answer' }] });
+  render(<SideChatLauncherContext.Provider value={launcher}><MapMode {...shell(root)} /></SideChatLauncherContext.Provider>);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('Branch point no longer in the conversation');
+  expect(openAction('And?')).not.toBeNull();
+  const marker = openAction('Branch point no longer in the conversation');
+  if (!marker) throw new Error('No open action on the detached marker');
+  await userEvent.setup().click(marker);
+  expect(launcher.open).toHaveBeenCalledWith({ root, sideChat: side, branchPointText: 'The old answer' });
+});
+
+test('with no launcher around the map, there is no Open in panel', async () => {
+  const fixture = install({ sideChats: [sideChat] });
+  render(<MapMode {...shell(root)} />);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('More.');
+  expect(deleteAction('And?')).not.toBeNull();
+  expect(openAction('And?')).toBeNull();
+});
+
+test('a side chat announced for the root while the map is open is listed and drawn', async () => {
+  let listed: SideChatSummary[] = [];
+  const fixture = install();
+  vi.mocked(fixture.conversations.sideChats).mockImplementation(async () => [...listed]);
+  render(<MapMode {...shell(root)} />);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await screen.findByText('Hi there.');
+  expect(screen.queryByText('More.')).toBeNull();
+
+  listed = [sideChat];
+  act(() => { announceSideChats(conversationKey(root)); });
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  expect(await screen.findByText('More.')).toBeTruthy();
+});
+
+test('a successful delete announces the root, so other views of its side chats list again', async () => {
+  let listed = [sideChat];
+  const fixture = install({ sideChats: listed });
+  vi.mocked(fixture.conversations.sideChats).mockImplementation(async () => [...listed]);
+  vi.mocked(fixture.conversations.deleteSideChat).mockImplementation(async () => { listed = []; });
+  const heard = vi.fn();
+  const stop = onSideChatsChanged(heard);
+  render(<MapMode {...shell(root)} />);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('More.');
+
+  const user = userEvent.setup();
+  await user.click(deleteAction('And?') ?? document.body);
+  await user.click(await screen.findByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(heard).toHaveBeenCalledWith(conversationKey(root)));
+  await waitFor(() => expect(screen.queryByText('More.')).toBeNull());
+  stop();
 });
