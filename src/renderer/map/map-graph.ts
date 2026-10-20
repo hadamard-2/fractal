@@ -1,6 +1,7 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import type { ConversationState } from '@/renderer/conversation-reducer';
-import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ConversationTurn, type SideChatSummary } from '@/shared/conversation-contract';
+import { canBranchTurn } from '@/renderer/side-chat-branching';
+import { conversationKey, type ConversationRef, type ConversationTurn, type SideChatSummary } from '@/shared/conversation-contract';
 import type { MapLayout } from '@/shared/map-contract';
 
 export const MAP = {
@@ -146,8 +147,7 @@ export function buildMapGraph(input: {
       : { x: column.x, y: snap(cursor) };
 
     turns.forEach((turn, index) => {
-      // A history may never record a turn's end, so an active turn is only in progress while its conversation is busy.
-      const canBranch = !readOnly && !(turn.status === 'active' && BUSY_RUNTIMES.has(state.runtime));
+      const canBranch = canBranchTurn(turn, state.runtime, readOnly);
       if (hasUserContent(turn)) {
         const id = mapNodeId(owner, turn.id, 'user');
         push(place(id, { kind: 'user', owner, line, turn, canBranch }, next()));

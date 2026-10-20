@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onSideChatsChanged } from '@/renderer/side-chat-events';
 import { conversationKey, type ConversationRef, type SideChatSummary } from '@/shared/conversation-contract';
 
 const NONE: SideChatSummary[] = [];
@@ -18,10 +19,12 @@ export function sideChatsBelow(sideChats: readonly SideChatSummary[], ref: Conve
 
 /**
  * The side chats under `root`, parents before children. Listed when the root
- * changes and again on `refresh()`; a later listing always wins over an earlier
- * one, and a failed listing keeps what's shown.
+ * changes, on `refresh()` and when `announceSideChats` names the root; a later
+ * listing always wins over an earlier one, and a failed listing keeps what's
+ * shown. `listed` is false until the first listing for the current root
+ * resolves, so an empty `sideChats` before then isn't taken for none.
  */
-export function useSideChats(root: ConversationRef | null): { sideChats: SideChatSummary[]; refresh(): Promise<void> } {
+export function useSideChats(root: ConversationRef | null): { sideChats: SideChatSummary[]; listed: boolean; refresh(): Promise<void> } {
   const key = root ? conversationKey(root) : null;
   const latestRoot = useRef(root);
   latestRoot.current = root;
@@ -44,5 +47,11 @@ export function useSideChats(root: ConversationRef | null): { sideChats: SideCha
     if (key !== null) void refresh();
   }, [key, refresh]);
 
-  return { sideChats: listed !== null && listed.key === key ? listed.sideChats : NONE, refresh };
+  useEffect(() => {
+    if (key === null) return undefined;
+    return onSideChatsChanged((rootKey) => { if (rootKey === key) void refresh(); });
+  }, [key, refresh]);
+
+  const current = listed !== null && listed.key === key;
+  return { sideChats: current ? listed.sideChats : NONE, listed: current, refresh };
 }

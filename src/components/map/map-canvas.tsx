@@ -6,7 +6,8 @@ import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ModelChoice,
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
 import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
-import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, submitDraft, type HandOff } from '@/renderer/map/side-chat-drafts';
+import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, type HandOff } from '@/renderer/map/side-chat-drafts';
+import { submitDraft } from '@/renderer/side-chat-start';
 import { useMapLayout } from '@/renderer/map/use-map-layout';
 import { sideChatsBelow, useSideChats } from '@/renderer/map/use-side-chats';
 import { DeleteSideChatDialog } from './delete-side-chat-dialog';
