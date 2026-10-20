@@ -359,6 +359,11 @@
   border-color: var(--primary);
   background-color: var(--primary);
 }
+/* A reply that can't branch keeps the handle its side-chat edges leave from, out of sight and out of reach. */
+.react-flow__handle.map-branch-handle[data-can-branch='false'] {
+  opacity: 0;
+  pointer-events: none;
+}
 /* A width resize grabs anywhere along a node's side edges; the border itself stays the node's own. */
 .react-flow__resize-control.line.map-node-resize {
   width: 9px;

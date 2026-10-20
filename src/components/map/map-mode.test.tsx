@@ -141,13 +141,16 @@ test('zoom and fit are buttons with tooltips, and nothing on the canvas has a na
   expect(document.querySelectorAll('[title]')).toHaveLength(0);
 });
 
+const branchHandle = (text: string) => nodeOf(text).querySelector('[data-handleid="branch"]');
+
 test('a reply offers the branch handle, except in a subagent conversation', async () => {
   const fixture = install();
   const view = render(<MapMode {...shell(root)} />);
   await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
   await screen.findByText('Hi there.');
-  expect(nodeOf('Hi there.').querySelector('[data-handleid="branch"]')).not.toBeNull();
-  expect(nodeOf('Hello').querySelector('[data-handleid="branch"]')).toBeNull();
+  expect(branchHandle('Hi there.')?.classList.contains('connectable')).toBe(true);
+  expect(branchHandle('Hi there.')?.getAttribute('data-can-branch')).toBe('true');
+  expect(branchHandle('Hello')).toBeNull();
   view.unmount();
 
   const subagent: ConversationSummary = { ref: root, title: 'Delegated', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete', parentId: 'parent' };
@@ -155,7 +158,21 @@ test('a reply offers the branch handle, except in a subagent conversation', asyn
   render(<MapMode {...shell(root, [subagent])} />);
   await loadHistory(again, root, [turn('t1', 'Hello', 'Hi there.')]);
   await screen.findByText('Hi there.');
-  expect(nodeOf('Hi there.').querySelector('[data-handleid="branch"]')).toBeNull();
+  expect(branchHandle('Hi there.')?.classList.contains('connectable')).toBe(false);
+  expect(branchHandle('Hi there.')?.getAttribute('data-can-branch')).toBe('false');
+});
+
+test('a reply that can\'t branch keeps a closed branch handle, so a side chat cut from it stays attached', async () => {
+  const fixture = install({ sideChats: [sideChat] });
+  render(<MapMode {...shell(root)} />);
+  // A reloaded transcript can leave the latest turn active, and that turn is where the side chat was cut.
+  await loadHistory(fixture, root, [{ ...turn('t1', 'Hello', 'Hi there.'), status: 'active' }]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('More.');
+  const handle = branchHandle('Hi there.');
+  expect(handle?.classList.contains('source')).toBe(true);
+  expect(handle?.classList.contains('connectable')).toBe(false);
+  expect(handle?.getAttribute('data-can-branch')).toBe('false');
 });
 
 test('a side chat whose branch point is gone hangs off a detached marker with the stored text', async () => {

@@ -34,11 +34,12 @@ function Clamped({ text }: { text: string }) {
   return <div className="line-clamp-3"><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></div>;
 }
 
-function NodeFrame({ id, line, label, canBranch = false, className, children }: {
+function NodeFrame({ id, line, label, branch, className, children }: {
   id: string;
   line: 'main' | 'side';
   label: string;
-  canBranch?: boolean;
+  /** Replies only. A reply that can't branch still has the handle, closed, because its side-chat edges leave from it. */
+  branch?: 'open' | 'closed';
   className?: string;
   children: ReactNode;
 }) {
@@ -63,7 +64,7 @@ function NodeFrame({ id, line, label, canBranch = false, className, children }: 
       {/* Main-line and side-chat edges attach here; only the branch handle starts a connection. */}
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Top} type="target" />
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Bottom} type="source" />
-      {canBranch && <Handle className="map-branch-handle" id="branch" position={Position.Right} type="source" />}
+      {branch && <Handle className="map-branch-handle" data-can-branch={branch === 'open'} id="branch" isConnectable={branch === 'open'} position={Position.Right} type="source" />}
     </div>
   );
 }
@@ -84,7 +85,7 @@ export function ReplyNode({ id, data }: MapNodeProps<'reply'>) {
   const { view } = useContext(MapNodeEnvironmentContext);
   const preview = view === 'preview' ? replyPreview(data.turn) : '';
   return (
-    <NodeFrame canBranch={data.canBranch} id={id} label={providerName(data.owner.provider)} line={data.line}>
+    <NodeFrame branch={data.canBranch ? 'open' : 'closed'} id={id} label={providerName(data.owner.provider)} line={data.line}>
       {preview
         ? <Clamped text={preview} />
         : <AgentReplyBody onResolve={(requestId, decision) => conversationHub().resolveRequest(data.owner, requestId, decision)} turn={data.turn} />}
