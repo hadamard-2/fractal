@@ -106,3 +106,15 @@ describe('ConversationTurn message text', () => {
     expect(screen.getByText(`agent ${run}`).closest('.wrap-anywhere')).not.toBeNull();
   });
 });
+
+describe('ConversationTurn spacing', () => {
+  // `space-y-*` spaces blocks with a margin on each one, which an element without its own box
+  // (`display: contents`) drops, so every block must render inside a box.
+  test('renders each block of the response in a box of its own', () => {
+    const unsupported: TurnBlock = { id: 'u1', kind: 'unsupported', provider: 'claude', nativeType: 'system', summary: 'Unsupported Claude activity: system', captureCompleteness: 'partial' };
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([prose('answer', true), unsupported])} />);
+    const blocks = [...screen.getByLabelText('Agent response').children];
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of blocks) expect(block.classList.contains('contents')).toBe(false);
+  });
+});

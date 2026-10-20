@@ -60,7 +60,9 @@ export const MESSAGE_TEXT = 'max-w-none text-sm leading-6 wrap-anywhere';
 function TurnBlockView({ block, onResolve }: { block: TurnBlock; onResolve: ResolveRequest }) {
   switch (block.kind) {
     case 'assistant-prose':
-      return <CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{block.text}</MessageResponse></CodeBlockTerminalActions>;
+      // The terminal actions wrapper has no box of its own (`contents`), so the margin that spaces
+      // blocks apart would be dropped without this one.
+      return <div><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{block.text}</MessageResponse></CodeBlockTerminalActions></div>;
     case 'work-packet':
       return <WorkPacket packet={block} />;
     case 'plan':
