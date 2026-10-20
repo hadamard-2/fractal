@@ -964,6 +964,55 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('refuses runs, forks and another deletion on the side chats it is deleting until it finishes', async () => {
+      const f = tree();
+      await f.service.open(at('sc1'), loadId);
+      const gate = deferred<void>();
+      f.deleteConversation.mockImplementation(async (deleted) => { if (deleted.nativeSessionId === 'sc3') await gate.promise; });
+      const deleting = f.service.deleteSideChat(at('sc1'));
+      await vi.waitFor(() => expect(f.deleteConversation).toHaveBeenCalledWith(at('sc3')));
+      await expect(f.service.continue(at('sc1'), { text: 'Go' }, 'renderer')).rejects.toThrow('Conversation is not idle');
+      await expect(f.service.fork(at('sc1'), { turnId: 't1', position: 'after' }, 'side-chat')).rejects.toThrow('Conversation is not idle');
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('Side chat is busy');
+      await expect(f.service.deleteSideChat(at('sc2'))).rejects.toThrow('Side chat is busy');
+      expect(f.adapter.continueConversation).not.toHaveBeenCalled();
+      expect(f.adapter.forkConversation).not.toHaveBeenCalled();
+      expect(f.deleteConversation).toHaveBeenCalledTimes(1);
+      gate.resolve();
+      await expect(deleting).resolves.toEqual([at('sc3'), at('sc2'), at('sc1')]);
+      // A new side chat under a key the deletion held is not refused once it has finished.
+      f.records.set('codex:sc1', entry('side-chat', 'session', 6));
+      await f.service.open(at('sc1'), nextLoadId);
+      await f.service.continue(at('sc1'), { text: 'Go' }, 'renderer');
+      expect(f.adapter.continueConversation).toHaveBeenCalledTimes(1);
+      await f.service.dispose();
+    });
+
+    test('refuses a run whose status check was still pending when the deletion started', async () => {
+      const f = tree();
+      await f.service.open(at('sc1'), loadId);
+      const listing = deferred<ConversationSummary[]>();
+      vi.mocked(f.adapter.listConversations).mockReturnValueOnce(listing.promise);
+      const continuing = f.service.continue(at('sc1'), { text: 'Go' }, 'renderer');
+      await vi.waitFor(() => expect(f.adapter.listConversations).toHaveBeenCalledTimes(2));
+      const deleting = f.service.deleteSideChat(at('sc1'));
+      listing.resolve([{ ...summary, title: 'Chat' }, ...f.extra]);
+      await expect(continuing).rejects.toThrow('Conversation is not idle');
+      await expect(deleting).resolves.toHaveLength(3);
+      expect(f.adapter.continueConversation).not.toHaveBeenCalled();
+      await f.service.dispose();
+    });
+
+    test('lets the side chats of a deletion that failed run again', async () => {
+      const f = tree();
+      await f.service.open(at('sc1'), loadId);
+      f.deleteConversation.mockRejectedValue(new Error('refused'));
+      await expect(f.service.deleteSideChat(at('sc1'))).rejects.toThrow('refused');
+      await f.service.continue(at('sc1'), { text: 'Go' }, 'renderer');
+      expect(f.adapter.continueConversation).toHaveBeenCalledTimes(1);
+      await f.service.dispose();
+    });
+
     test('deletes nothing when a side chat is named under a project it is not listed in', async () => {
       const f = tree();
       await expect(f.service.deleteSideChat({ ...at('sc1'), projectPath: '/other' })).rejects.toThrow('Conversation is not currently available in this project');

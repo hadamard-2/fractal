@@ -46,6 +46,8 @@ export class ConversationService {
   private readonly requestOwners = new Map<string, OwnedRun>();
   private readonly startingRuns = new Map<string, StartingRun>();
   private readonly drafts = new Map<string, ConversationSummary>();
+  /** Keys of the side chats a deletion in progress is removing; none of them may start a run or be forked until it ends. */
+  private readonly deleting = new Set<string>();
   private readonly chunkSize: number;
   private readonly branches: Branches | undefined;
   private disposed = false;
@@ -148,6 +150,8 @@ export class ConversationService {
     const branches = this.branches;
     if (!branches) throw new Error('Conversation forking is not available');
     const source = parseConversationRef(input);
+    const key = conversationKey(source);
+    if (this.deleting.has(key)) throw new Error('Conversation is not idle');
     const load = this.currentLoad(source);
     // The turns are only the whole history once the load has finished.
     if (load?.phase !== 'live') throw new Error('Conversation is not open');
@@ -160,8 +164,8 @@ export class ConversationService {
     const afterIndex = after ? index : index - 1;
     const afterTurn = turns[afterIndex] as ConversationTurn | undefined;
     const summary = await this.registry.validate(source);
+    if (this.deleting.has(key)) throw new Error('Conversation is not idle');
     // A history may never record a turn's end, so an active turn is only in progress while the conversation is busy.
-    const key = conversationKey(source);
     const busy = BUSY_RUNTIMES.has(summary.runtime) || this.ownedRuns.has(key) || this.startingRuns.has(key);
     if (afterTurn?.status === 'active' && busy) throw new Error('Cannot fork from a turn in progress');
     if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
@@ -206,27 +210,34 @@ export class ConversationService {
     const root = parseConversationRef(input);
     const rootKey = conversationKey(root);
     if (branches.get(rootKey)?.kind !== 'side-chat') throw new Error('Only side chats can be deleted');
-    const refs = [rootKey, ...this.sideChatsBelow(rootKey).map(([key]) => key)].reverse()
-      .map((key): ConversationRef => ({ ...parseConversationKey(key), projectPath: root.projectPath }));
-    // A turn in flight may be writing the history that is about to go; refuse before anything is deleted.
-    // A lookup that cannot vouch for a side chat either way aborts the whole deletion, since it could be running under a path we were not given.
-    const listed = await Promise.all(refs.map(async (ref) => {
-      const key = conversationKey(ref);
-      const summary = await this.registry.lookup(ref);
-      if (this.ownedRuns.has(key) || this.startingRuns.has(key) || (summary !== null && BUSY_RUNTIMES.has(summary.runtime))) throw new Error('Side chat is busy');
-      return summary;
-    }));
-    for (const [index, ref] of refs.entries()) {
-      const key = conversationKey(ref);
-      // The agent says it does not have it: already gone from its history, so only Fractal's record is left to remove.
-      if (listed[index] !== null) await this.registry.delete(ref);
-      branches.delete(key);
-      const load = this.loads.get(key);
-      if (load?.ref.projectPath === ref.projectPath) this.release(load);
-      this.drafts.delete(key);
-      this.runtimes.delete(key);
+    const keys = [rootKey, ...this.sideChatsBelow(rootKey).map(([key]) => key)].reverse();
+    if (keys.some((key) => this.deleting.has(key))) throw new Error('Side chat is busy');
+    const refs = keys.map((key): ConversationRef => ({ ...parseConversationKey(key), projectPath: root.projectPath }));
+    // Held from before the first await, so a run or fork that has not started by the busy check below can no longer start.
+    for (const key of keys) this.deleting.add(key);
+    try {
+      // A turn in flight may be writing the history that is about to go; refuse before anything is deleted.
+      // A lookup that cannot vouch for a side chat either way aborts the whole deletion, since it could be running under a path we were not given.
+      const listed = await Promise.all(refs.map(async (ref) => {
+        const key = conversationKey(ref);
+        const summary = await this.registry.lookup(ref);
+        if (this.ownedRuns.has(key) || this.startingRuns.has(key) || (summary !== null && BUSY_RUNTIMES.has(summary.runtime))) throw new Error('Side chat is busy');
+        return summary;
+      }));
+      for (const [index, ref] of refs.entries()) {
+        const key = conversationKey(ref);
+        // The agent says it does not have it: already gone from its history, so only Fractal's record is left to remove.
+        if (listed[index] !== null) await this.registry.delete(ref);
+        branches.delete(key);
+        const load = this.loads.get(key);
+        if (load?.ref.projectPath === ref.projectPath) this.release(load);
+        this.drafts.delete(key);
+        this.runtimes.delete(key);
+      }
+      return refs;
+    } finally {
+      for (const key of keys) this.deleting.delete(key);
     }
-    return refs;
   }
 
   private sideChatsBelow(rootKey: string): Array<[string, BranchRecord]> {
@@ -244,11 +255,11 @@ export class ConversationService {
     const key = conversationKey(ref);
     const load = this.loads.get(key);
     if (!load || load.ref.projectPath !== ref.projectPath) throw new Error('Conversation is not open');
-    if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
+    if (this.ownedRuns.has(key) || this.startingRuns.has(key) || this.deleting.has(key)) throw new Error('Conversation is not idle');
     const prompt = this.branchPrompt(key, inputPrompt);
     const draft = this.drafts.get(key);
     const summary = draft?.ref.projectPath === ref.projectPath ? draft : await this.registry.validate(ref);
-    if (this.ownedRuns.has(key) || this.startingRuns.has(key)) throw new Error('Conversation is not idle');
+    if (this.ownedRuns.has(key) || this.startingRuns.has(key) || this.deleting.has(key)) throw new Error('Conversation is not idle');
     const previous = this.runtimes.get(key);
     if (previous?.ownedRunId) {
       if (summary.runtime !== 'idle') throw new Error('Conversation is not idle');
