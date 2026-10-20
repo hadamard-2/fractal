@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { initialConversationState, type ConversationState } from '@/renderer/conversation-reducer';
 import { conversationKey, type ConversationRef, type ConversationRuntime, type ConversationTurn } from '@/shared/conversation-contract';
 import { useSideChatLauncher } from './right-panel/side-chat-launcher';
+import { useTerminalLauncher } from './right-panel/terminal-launcher';
 import { RightWorkspace } from './right-workspace';
 
 // The selected conversation's state, as Execute's lease keeps it in the hub.
@@ -54,17 +55,20 @@ vi.mock('./right-panel/changes/changes-pane', () => ({
 
 const boundRef: ConversationRef = { provider: 'claude', nativeSessionId: 'bound', projectPath: '/repo' };
 vi.mock('./right-panel/side-chat-pane', () => ({
-  SideChatPane: ({ root, draft, sideChat, branchPointText, onBound, onGone }: {
+  SideChatPane: ({ root, draft, sideChat, branchPointText, onBound, onGone, focusToken, visible }: {
     root: ConversationRef; draft?: { parent: ConversationRef; afterTurnId: string; text: string }; sideChat: ConversationRef | null; branchPointText?: string;
-    onBound: (ref: ConversationRef | null) => void; onGone: () => void;
+    onBound: (ref: ConversationRef | null) => void; onGone: () => void; focusToken?: number; visible: boolean;
   }) => (
     <div
       data-after-turn={draft?.afterTurnId}
       data-branch-point={branchPointText}
+      data-focus-token={focusToken ?? 0}
       data-launcher={useSideChatLauncher() ? 'yes' : 'no'}
       data-root={root.nativeSessionId}
       data-side-chat={sideChat?.nativeSessionId}
+      data-terminal-launcher={useTerminalLauncher() ? 'yes' : 'no'}
       data-testid="side-chat-pane"
+      data-visible={visible}
     >
       <textarea aria-label="Side question" defaultValue={draft?.text} />
       <button onClick={() => onBound(boundRef)} type="button">Bind</button>
@@ -425,6 +429,62 @@ describe('side chats', () => {
     expect(screen.getByRole('tab', { name: 'Side chat' }).getAttribute('aria-selected')).toBe('true');
     expect(pane().dataset).toMatchObject({ sideChat: 'bound', branchPoint: 'Earlier', root: 'root' });
     expect(pane().dataset.afterTurn).toBeUndefined();
+  });
+
+  test('a started or opened side chat asks its pane for focus, also when it lands on a tab already open', async () => {
+    setState([turn('t1', 'completed', 'First answer')]);
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    const token = () => Number(pane().dataset.focusToken);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    expect(pane().dataset.visible).toBe('true');
+    const started = token();
+    expect(started).toBeGreaterThan(0);
+
+    // From the tool list, onto a new tab; the earlier one keeps the token it had.
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(sideChatEntry());
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(2);
+    const fromTool = token();
+    expect(fromTool).toBeGreaterThan(started);
+    expect(panes().filter((each) => Number(each.dataset.focusToken) > 0)).toHaveLength(1);
+
+    // The same reply with nothing typed reselects that tab, and asks again.
+    await user.click(screen.getByRole('tab', { name: 'Side chat', selected: false }));
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(sideChatEntry());
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(2);
+    expect(token()).toBeGreaterThan(fromTool);
+
+    // Opening a bound side chat: a new tab, then the same tab again.
+    await user.click(screen.getByRole('button', { name: 'Open from child' }));
+    const opened = token();
+    expect(pane().dataset.sideChat).toBe('bound');
+    await user.click(screen.getAllByRole('tab', { name: 'Side chat' })[0]);
+    await user.click(screen.getByRole('button', { name: 'Open from child' }));
+    expect(pane().dataset.sideChat).toBe('bound');
+    expect(token()).toBeGreaterThan(opened);
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(3);
+  });
+
+  test('a side-chat pane is visible only while its tab is selected in the open panel', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    expect(panes()[0].dataset.visible).toBe('true');
+    await user.click(screen.getByRole('button', { name: 'Close panel' }));
+    expect(panes()[0].dataset.visible).toBe('false');
+    await user.click(screen.getByRole('button', { name: 'Open panel' }));
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+    expect(panes()[0].dataset.visible).toBe('false');
+  });
+
+  test('a side-chat pane can open terminals and start nested side chats', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    expect(pane().dataset).toMatchObject({ launcher: 'yes', terminalLauncher: 'yes' });
   });
 
   test('there is no launcher without a project', () => {

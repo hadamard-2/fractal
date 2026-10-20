@@ -23,23 +23,29 @@ export function sideChatsBelow(sideChats: readonly SideChatSummary[], ref: Conve
  * listing always wins over an earlier one, and a failed listing keeps what's
  * shown. `listed` is false until the first listing for the current root
  * resolves, so an empty `sideChats` before then isn't taken for none.
+ * `failed` is true while the latest listing for the current root has failed,
+ * until another starts.
  */
-export function useSideChats(root: ConversationRef | null): { sideChats: SideChatSummary[]; listed: boolean; refresh(): Promise<void> } {
+export function useSideChats(root: ConversationRef | null): { sideChats: SideChatSummary[]; listed: boolean; failed: boolean; refresh(): Promise<void> } {
   const key = root ? conversationKey(root) : null;
   const latestRoot = useRef(root);
   latestRoot.current = root;
   const requests = useRef(0);
   const [listed, setListed] = useState<{ key: string; sideChats: SideChatSummary[] } | null>(null);
+  // The root whose latest listing failed.
+  const [failedKey, setFailedKey] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const ref = latestRoot.current;
     if (!ref) return;
     const request = ++requests.current;
+    setFailedKey(null);
     try {
       const sideChats = await window.fractal.conversations.sideChats(ref);
       if (request === requests.current) setListed({ key: conversationKey(ref), sideChats });
     } catch {
       // Keep what's shown; the next refresh tries again.
+      if (request === requests.current) setFailedKey(conversationKey(ref));
     }
   }, []);
 
@@ -53,5 +59,5 @@ export function useSideChats(root: ConversationRef | null): { sideChats: SideCha
   }, [key, refresh]);
 
   const current = listed !== null && listed.key === key;
-  return { sideChats: current ? listed.sideChats : NONE, listed: current, refresh };
+  return { sideChats: current ? listed.sideChats : NONE, listed: current, failed: key !== null && failedKey === key, refresh };
 }

@@ -79,3 +79,27 @@ test('a hook stops listening to announcements once unmounted', async () => {
   announceSideChats(conversationKey(ref('one')));
   expect(sideChats).toHaveBeenCalledTimes(1);
 });
+
+test('failed is set when the latest listing fails, cleared when the next starts, and only for that root', async () => {
+  const sideChats = vi.fn<ConversationApi['sideChats']>().mockRejectedValueOnce(new Error('Listing failed'));
+  let release: (value: SideChatSummary[]) => void = () => undefined;
+  sideChats.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  sideChats.mockResolvedValue([]);
+  install(sideChats);
+  const { result, rerender } = renderHook(({ root }) => useSideChats(root), { initialProps: { root: ref('one') } });
+  await waitFor(() => expect(result.current.failed).toBe(true));
+  expect(result.current.listed).toBe(false);
+
+  act(() => { void result.current.refresh(); });
+  expect(result.current.failed).toBe(false);
+  await act(async () => { release([sideChat('a', 'one')]); });
+  expect(result.current).toMatchObject({ failed: false, listed: true });
+
+  sideChats.mockRejectedValueOnce(new Error('Listing failed'));
+  await act(async () => { await result.current.refresh(); });
+  // A failure keeps what's shown.
+  expect(result.current).toMatchObject({ failed: true, listed: true });
+  expect(ids(result.current.sideChats)).toEqual(['a']);
+  rerender({ root: ref('two') });
+  expect(result.current.failed).toBe(false);
+});

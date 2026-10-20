@@ -104,12 +104,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     setDockedTreeOpen(true);
   }, [selectedProject]);
 
-  const focusTerminal = (id: string) => setFocusRequest({ id, token: nextFocus.current++ });
+  // Asks a terminal or side-chat tab's pane for keyboard focus.
+  const requestFocus = (id: string | null) => { if (id !== null) setFocusRequest({ id, token: nextFocus.current++ }); };
   const addTerminal = (paste?: string) => {
     if (projectPath === null) return;
     const id = crypto.randomUUID();
     setPanelTabs((previous) => addTerminalTab(previous, id, projectPath, paste));
-    focusTerminal(id);
+    requestFocus(id);
   };
   // Read through a ref so the context value stays stable across renders.
   const openTerminalWith = useRef<OpenTerminalWith>(() => undefined);
@@ -121,21 +122,25 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const [launcher] = useState<OpenTerminalWith>(() => (text: string) => openTerminalWith.current(text));
   // Side chats belong to their root, like terminals to their directory, so
   // selecting another conversation leaves their tabs open. Read through a ref
-  // so the context value stays stable across renders.
+  // so the context value stays stable across renders. Either action may land
+  // on a tab that's already open rather than a new one; the tabs as rendered
+  // say which, and its composer is asked for focus.
   const sideChatActions = useRef<SideChatLauncher>({ start: () => undefined, open: () => undefined });
   sideChatActions.current = {
     start: ({ root, parent, turn, text }) => {
       if (projectPath === null) return;
       if (!open) onOpenChange(true);
       const id = crypto.randomUUID();
-      const branchPointText = replyPreview(turn) || undefined;
-      setPanelTabs((previous) => startSideChatTab(previous, { root, parent, afterTurnId: turn.id, text, branchPointText }, id));
+      const input = { root, parent, afterTurnId: turn.id, text, branchPointText: replyPreview(turn) || undefined };
+      setPanelTabs((previous) => startSideChatTab(previous, input, id));
+      requestFocus(startSideChatTab(panelTabs, input, id).selectedId);
     },
-    open: ({ root, sideChat, branchPointText }) => {
+    open: (input) => {
       if (projectPath === null) return;
       if (!open) onOpenChange(true);
       const id = crypto.randomUUID();
-      setPanelTabs((previous) => openSideChatTab(previous, { root, sideChat, branchPointText }, id));
+      setPanelTabs((previous) => openSideChatTab(previous, input, id));
+      requestFocus(openSideChatTab(panelTabs, input, id).selectedId);
     },
   };
   const [sideChatLauncher] = useState<SideChatLauncher>(() => ({
@@ -192,7 +197,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     const terminalId = activeTerminalId(panelTabs);
     if (terminalId) {
       setPanelTabs((previous) => selectTab(previous, terminalId));
-      focusTerminal(terminalId);
+      requestFocus(terminalId);
     } else addTerminal();
   };
   // Ctrl+Shift+F — opens the panel on the project's Files tool. Not a toggle:
@@ -232,163 +237,166 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
+  // The launchers reach the active mode and the panel's own side-chat panes alike.
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden" ref={rootRef}>
-      {/*
-        Content headers read --app-bar-reserve to keep their titles clear of
-        the mode and panel toggles, which float over the header row.
-      */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': layout.headerReserve } as CSSProperties}>
-        <TerminalLauncherContext.Provider value={projectPath === null ? null : launcher}>
-          <SideChatLauncherContext.Provider value={projectPath === null ? null : sideChatLauncher}>{children}</SideChatLauncherContext.Provider>
-        </TerminalLauncherContext.Provider>
-      </div>
-      {/*
-        The panel keeps its full width and slides; this in-flow gap is what
-        narrows the content beside it, like the left sidebar's gap. Motion
-        for both lives in index.css.
-      */}
-      <div aria-hidden className="shrink-0" data-slot="right-panel-gap" style={{ width: layout.split ? width : 0 }} />
-      {/*
-        The panel hangs straight from the app bar, with no top inset, like the
-        left sidebar: the bar is the window frame, and its right end holds the
-        panel toggle and the OS window controls.
-      */}
-      <aside
-        aria-hidden={!open}
-        aria-label="Right workspace"
-        className="absolute top-(--app-bar-height) right-0 bottom-0 z-20 px-2 pb-2"
-        data-open={open || undefined}
-        data-slot="right-panel"
-        inert={!open}
-        ref={panelRef}
-        role="complementary"
-        style={{ width, transform: open ? undefined : 'translateX(100%)', visibility: open ? 'visible' : 'hidden' }}
-      >
-        <TooltipProvider>
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
-            {/*
-              The tab row lines up with the left sidebar's header row. Both
-              panels hang straight from the app bar behind a 1px border, and
-              the sidebar's header (14px of top padding, then a 36px row)
-              centres 32px below that border — where this 48px bottom-aligned
-              row centres its 32px controls. Once there are tabs, its bottom
-              border is the rule the selected tab's underline sits on.
-            */}
-            <div className={cn('flex h-12 shrink-0 items-end gap-1 pr-2 pl-3.5', tabs.length > 0 && 'border-b border-sidebar-border')}>
-              {selectedFileTab && (
-                <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
-                  <List aria-hidden className="size-4" />
-                </Button>
-              )}
-              <PanelTabs
-                onClose={(id) => setPanelTabs((previous) => closeTab(previous, id))}
-                onPin={(id) => setPanelTabs((previous) => pinTab(previous, id))}
-                onSelect={(id) => setPanelTabs((previous) => selectTab(previous, id))}
-                selectedId={selectedId}
-                tabs={tabs}
-              />
-              {tabs.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} /></DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-            {tabs.length === 0 ? (
-              <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} />
-              </div>
-            ) : (
-              <div className="mx-2 mt-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
-                {terminalTabs.map((tab) => (
-                  <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel">
-                    <TerminalView
-                      cwd={tab.cwd}
-                      focusToken={focusRequest?.id === tab.id ? focusRequest.token : 0}
-                      id={tab.id}
-                      onPasted={() => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { paste: undefined }))}
-                      paste={tab.paste}
-                      onExitedChange={(exited) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { exited }))}
-                      onShellReady={({ shell, cwd }) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd }))}
-                      visible={open && selectedId === tab.id}
-                    />
-                  </div>
-                ))}
-                {changesTabs.map((tab) => (
-                  <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
-                    <ChangesPane
-                      active={open && selectedId === tab.id}
-                      onOpenFile={(path) => openProjectFile(tab.projectPath, path, false)}
-                      root={tab.projectPath}
-                    />
-                  </div>
-                ))}
+    <TerminalLauncherContext.Provider value={projectPath === null ? null : launcher}>
+      <SideChatLauncherContext.Provider value={projectPath === null ? null : sideChatLauncher}>
+        <div className="relative flex min-h-0 flex-1 overflow-hidden" ref={rootRef}>
+          {/*
+            Content headers read --app-bar-reserve to keep their titles clear of
+            the mode and panel toggles, which float over the header row.
+          */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': layout.headerReserve } as CSSProperties}>
+            {children}
+          </div>
+          {/*
+            The panel keeps its full width and slides; this in-flow gap is what
+            narrows the content beside it, like the left sidebar's gap. Motion
+            for both lives in index.css.
+          */}
+          <div aria-hidden className="shrink-0" data-slot="right-panel-gap" style={{ width: layout.split ? width : 0 }} />
+          {/*
+            The panel hangs straight from the app bar, with no top inset, like the
+            left sidebar: the bar is the window frame, and its right end holds the
+            panel toggle and the OS window controls.
+          */}
+          <aside
+            aria-hidden={!open}
+            aria-label="Right workspace"
+            className="absolute top-(--app-bar-height) right-0 bottom-0 z-20 px-2 pb-2"
+            data-open={open || undefined}
+            data-slot="right-panel"
+            inert={!open}
+            ref={panelRef}
+            role="complementary"
+            style={{ width, transform: open ? undefined : 'translateX(100%)', visibility: open ? 'visible' : 'hidden' }}
+          >
+            <TooltipProvider>
+              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
                 {/*
-                  Each pane holds its conversation and composer, so a hidden
-                  tab keeps its pane. A side chat's own selection menu starts
-                  nested side chats through the launcher.
+                  The tab row lines up with the left sidebar's header row. Both
+                  panels hang straight from the app bar behind a 1px border, and
+                  the sidebar's header (14px of top padding, then a 36px row)
+                  centres 32px below that border — where this 48px bottom-aligned
+                  row centres its 32px controls. Once there are tabs, its bottom
+                  border is the rule the selected tab's underline sits on.
                 */}
-                <SideChatLauncherContext.Provider value={projectPath === null ? null : sideChatLauncher}>
-                  {sideChatTabs.map((tab) => (
-                    <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
-                      <SideChatPane
-                        branchPointText={tab.branchPointText}
-                        draft={tab.draft}
-                        onBound={(sideChat) => setPanelTabs((previous) => bindSideChatTab(previous, tab.id, sideChat))}
-                        onGone={() => setPanelTabs((previous) => closeTab(previous, tab.id))}
-                        root={tab.root}
-                        sideChat={tab.sideChat}
-                      />
-                    </div>
-                  ))}
-                </SideChatLauncherContext.Provider>
-                {fileTabs.length > 0 && (
-                  <div className="h-full" hidden={!selectedFileTab}>
-                    <FilesPane
-                      docked={docked}
-                      dockedTreeOpen={dockedTreeOpen}
-                      onCloseOverlay={() => setOverlayOpen(false)}
-                      onOpenFile={openProjectFile}
-                      overlayOpen={overlayOpen}
-                      selected={selectedFileTab}
-                      tabs={fileTabs}
-                    />
+                <div className={cn('flex h-12 shrink-0 items-end gap-1 pr-2 pl-3.5', tabs.length > 0 && 'border-b border-sidebar-border')}>
+                  {selectedFileTab && (
+                    <Button aria-label={treeShown ? 'Hide file tree' : 'Show file tree'} aria-pressed={treeShown} className="size-8 shrink-0" onClick={toggleTree} size="icon" variant="ghost">
+                      <List aria-hidden className="size-4" />
+                    </Button>
+                  )}
+                  <PanelTabs
+                    onClose={(id) => setPanelTabs((previous) => closeTab(previous, id))}
+                    onPin={(id) => setPanelTabs((previous) => pinTab(previous, id))}
+                    onSelect={(id) => setPanelTabs((previous) => selectTab(previous, id))}
+                    selectedId={selectedId}
+                    tabs={tabs}
+                  />
+                  {tabs.length > 0 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} /></DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </div>
+                {tabs.length === 0 ? (
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+                    <ToolList onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} />
+                  </div>
+                ) : (
+                  <div className="mx-2 mt-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
+                    {terminalTabs.map((tab) => (
+                      <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`terminal-panel-${tab.id}`} key={tab.id} role="tabpanel">
+                        <TerminalView
+                          cwd={tab.cwd}
+                          focusToken={focusRequest?.id === tab.id ? focusRequest.token : 0}
+                          id={tab.id}
+                          onPasted={() => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { paste: undefined }))}
+                          paste={tab.paste}
+                          onExitedChange={(exited) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { exited }))}
+                          onShellReady={({ shell, cwd }) => setPanelTabs((previous) => updateTerminalTab(previous, tab.id, { shell: shell.split(/[\\/]/).pop() || undefined, startedIn: cwd }))}
+                          visible={open && selectedId === tab.id}
+                        />
+                      </div>
+                    ))}
+                    {changesTabs.map((tab) => (
+                      <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
+                        <ChangesPane
+                          active={open && selectedId === tab.id}
+                          onOpenFile={(path) => openProjectFile(tab.projectPath, path, false)}
+                          root={tab.projectPath}
+                        />
+                      </div>
+                    ))}
+                    {/*
+                      Each pane holds its conversation and composer, so a hidden
+                      tab keeps its pane. A side chat's own selection menu starts
+                      nested side chats through the launcher.
+                    */}
+                    {sideChatTabs.map((tab) => (
+                      <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
+                        <SideChatPane
+                          branchPointText={tab.branchPointText}
+                          draft={tab.draft}
+                          focusToken={focusRequest?.id === tab.id ? focusRequest.token : 0}
+                          onBound={(sideChat) => setPanelTabs((previous) => bindSideChatTab(previous, tab.id, sideChat))}
+                          onGone={() => setPanelTabs((previous) => closeTab(previous, tab.id))}
+                          root={tab.root}
+                          sideChat={tab.sideChat}
+                          visible={open && selectedId === tab.id}
+                        />
+                      </div>
+                    ))}
+                    {fileTabs.length > 0 && (
+                      <div className="h-full" hidden={!selectedFileTab}>
+                        <FilesPane
+                          docked={docked}
+                          dockedTreeOpen={dockedTreeOpen}
+                          onCloseOverlay={() => setOverlayOpen(false)}
+                          onOpenFile={openProjectFile}
+                          overlayOpen={overlayOpen}
+                          selected={selectedFileTab}
+                          tabs={fileTabs}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        </TooltipProvider>
-        <div
-          aria-label="Resize right panel"
-          aria-orientation="vertical"
-          aria-valuemax={Math.round(layout.maxWidth)}
-          aria-valuemin={PANEL_MIN_WIDTH}
-          aria-valuenow={Math.round(width)}
-          className="absolute inset-y-2 left-0 z-30 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 focus-visible:after:bg-ring"
-          data-dragging={dragging}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') { event.preventDefault(); resize(width + 16); }
-            if (event.key === 'ArrowRight') { event.preventDefault(); resize(width - 16); }
-          }}
-          onLostPointerCapture={endDrag}
-          onPointerCancel={endDrag}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            drag.current = { x: event.clientX, width };
-            setDragging(true);
-            onResizingChange(true);
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => { if (drag.current) resize(drag.current.width + drag.current.x - event.clientX); }}
-          onPointerUp={endDrag}
-          role="separator"
-          tabIndex={0}
-        />
-      </aside>
-    </div>
+            </TooltipProvider>
+            <div
+              aria-label="Resize right panel"
+              aria-orientation="vertical"
+              aria-valuemax={Math.round(layout.maxWidth)}
+              aria-valuemin={PANEL_MIN_WIDTH}
+              aria-valuenow={Math.round(width)}
+              className="absolute inset-y-2 left-0 z-30 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 focus-visible:after:bg-ring"
+              data-dragging={dragging}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft') { event.preventDefault(); resize(width + 16); }
+                if (event.key === 'ArrowRight') { event.preventDefault(); resize(width - 16); }
+              }}
+              onLostPointerCapture={endDrag}
+              onPointerCancel={endDrag}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                drag.current = { x: event.clientX, width };
+                setDragging(true);
+                onResizingChange(true);
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => { if (drag.current) resize(drag.current.width + drag.current.x - event.clientX); }}
+              onPointerUp={endDrag}
+              role="separator"
+              tabIndex={0}
+            />
+          </aside>
+        </div>
+      </SideChatLauncherContext.Provider>
+    </TerminalLauncherContext.Provider>
   );
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -81,16 +81,20 @@ async function loadHistory(fixture: Fixture, ref: ConversationRef, turns: Conver
 }
 
 /** Holds the binding the way a tab does; `keepBound` leaves it bound when the pane hands back null. */
-function Tab({ initial, onBound = () => undefined, onGone = () => undefined, keepBound = false, branchPointText }: { initial: ConversationRef | null; onBound?: (ref: ConversationRef | null) => void; onGone?: () => void; keepBound?: boolean; branchPointText?: string }) {
+function Tab({ initial, onBound = () => undefined, onGone = () => undefined, keepBound = false, branchPointText, focusToken, visible = true }: {
+  initial: ConversationRef | null; onBound?: (ref: ConversationRef | null) => void; onGone?: () => void; keepBound?: boolean; branchPointText?: string; focusToken?: number; visible?: boolean;
+}) {
   const [sideChat, setSideChat] = useState(initial);
   return (
     <SideChatPane
       branchPointText={branchPointText}
       draft={initial ? undefined : draft}
+      focusToken={focusToken}
       onBound={(ref) => { onBound(ref); if (ref || !keepBound) setSideChat(ref); }}
       onGone={onGone}
       root={root}
       sideChat={sideChat}
+      visible={visible}
     />
   );
 }
@@ -260,10 +264,29 @@ test('the tab is gone once a listing that started after binding no longer has th
   expect(onGone).toHaveBeenCalledTimes(1);
 });
 
+test('a side chat its first send created closes its tab once it is deleted', async () => {
+  const fixture = install({ listing: [summaryOf(forked)] });
+  const onGone = vi.fn();
+  render(<Tab initial={null} onGone={onGone} />);
+  const user = userEvent.setup();
+  await user.click(composer());
+  await user.keyboard('Why?{Enter}');
+  await loadHistory(fixture, forked, [inherited]);
+  await waitFor(() => expect(fixture.conversations.continue).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(composer().value).toBe(''));
+  expect(onGone).not.toHaveBeenCalled();
+
+  fixture.listing = [];
+  await act(async () => announceSideChats(conversationKey(root)));
+  await waitFor(() => expect(onGone).toHaveBeenCalledTimes(1));
+  await act(async () => announceSideChats(conversationKey(root)));
+  expect(onGone).toHaveBeenCalledTimes(1);
+});
+
 test('a listing from before the side chat was bound never counts', async () => {
   const fixture = install({ listing: [summaryOf(side)] });
   const onGone = vi.fn();
-  const pane = (sideChat: ConversationRef | null) => <SideChatPane branchPointText={undefined} draft={undefined} onBound={() => undefined} onGone={onGone} root={root} sideChat={sideChat} />;
+  const pane = (sideChat: ConversationRef | null) => <SideChatPane branchPointText={undefined} draft={undefined} onBound={() => undefined} onGone={onGone} root={root} sideChat={sideChat} visible />;
   const { rerender } = render(pane(side));
   await waitFor(() => expect(fixture.conversations.sideChats).toHaveBeenCalledTimes(1));
   await act(async () => undefined);
@@ -315,4 +338,118 @@ test('text selected in one of its own replies starts a nested side chat through 
     Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
     window.getSelection()?.removeAllRanges();
   }
+});
+
+test('a side chat whose history can\'t be read says so, and Reload reads it again', async () => {
+  const fixture = install({ listing: [summaryOf(side)] });
+  vi.mocked(fixture.conversations.open).mockRejectedValueOnce(new Error('No such session'));
+  render(<Tab initial={side} />);
+  expect(await screen.findByText('History unavailable')).toBeTruthy();
+  expect(screen.getByText('Reload to try reading this conversation again.')).toBeTruthy();
+  expect(screen.queryByText('Reading history…')).toBeNull();
+  expect(composer().disabled).toBe(true);
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+  await loadHistory(fixture, side, [inherited, own]);
+  expect(await screen.findByText('The lockfile.')).toBeTruthy();
+  expect(screen.queryByText('History unavailable')).toBeNull();
+  expect(composer().disabled).toBe(false);
+});
+
+test('a deleted side chat whose history fails closes its tab without saying it is unavailable', async () => {
+  const fixture = install();
+  const listing = deferred<SideChatSummary[]>();
+  fixture.held.push(listing);
+  vi.mocked(fixture.conversations.open).mockRejectedValueOnce(new Error('No such session'));
+  const onGone = vi.fn();
+  render(<Tab initial={side} onGone={onGone} />);
+  await waitFor(() => expect(fixture.conversations.open).toHaveBeenCalledTimes(1));
+  await act(async () => undefined);
+  expect(screen.queryByText('History unavailable')).toBeNull();
+  expect(screen.getByText('Reading history…')).toBeTruthy();
+
+  await act(async () => listing.resolve([]));
+  expect(onGone).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('History unavailable')).toBeNull();
+});
+
+test('a listing that fails doesn\'t leave the pane reading forever, and Reload lists again', async () => {
+  const fixture = install({ listing: [summaryOf(side)] });
+  vi.mocked(fixture.conversations.sideChats).mockRejectedValueOnce(new Error('Listing failed'));
+  const onGone = vi.fn();
+  render(<Tab initial={side} onGone={onGone} />);
+  await loadHistory(fixture, side, [inherited, own]);
+  expect(await screen.findByText('History unavailable')).toBeTruthy();
+  expect(screen.queryByText('Reading history…')).toBeNull();
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Reload' }));
+  expect(await screen.findByText('The lockfile.')).toBeTruthy();
+  expect(fixture.conversations.sideChats).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('History unavailable')).toBeNull();
+  expect(onGone).not.toHaveBeenCalled();
+});
+
+test('a focus request focuses the composer with the caret after the quote', () => {
+  install();
+  render(<Tab focusToken={1} initial={null} />);
+  expect(document.activeElement).toBe(composer());
+  expect([composer().selectionStart, composer().selectionEnd]).toEqual([draft.text.length, draft.text.length]);
+});
+
+test('a focus request waits until the pane is shown, and each one is honoured once', () => {
+  install();
+  const view = render(<Tab focusToken={1} initial={null} visible={false} />);
+  expect(document.activeElement).not.toBe(composer());
+  view.rerender(<Tab focusToken={1} initial={null} visible />);
+  expect(document.activeElement).toBe(composer());
+
+  act(() => composer().blur());
+  view.rerender(<Tab focusToken={1} initial={null} visible={false} />);
+  view.rerender(<Tab focusToken={1} initial={null} visible />);
+  expect(document.activeElement).not.toBe(composer());
+  view.rerender(<Tab focusToken={2} initial={null} visible />);
+  expect(document.activeElement).toBe(composer());
+});
+
+test('a focus request on a bound side chat waits for it to load, and lapses while it is running', async () => {
+  const fixture = install({ listing: [summaryOf(side)] });
+  render(<Tab focusToken={1} initial={side} />);
+  expect(document.activeElement).not.toBe(composer());
+  await loadHistory(fixture, side, [inherited, own]);
+  await waitFor(() => expect(document.activeElement).toBe(composer()));
+  expect(composer().selectionStart).toBe(0);
+  cleanup();
+
+  const running = install({ runtime: 'active-in-fractal', listing: [summaryOf(side)] });
+  render(<Tab focusToken={1} initial={side} />);
+  await loadHistory(running, side, [inherited, own]);
+  await screen.findByRole('button', { name: 'Interrupt session' });
+  expect(document.activeElement).not.toBe(composer());
+  // Once it finishes, the composer takes messages again, and the lapsed request stays lapsed.
+  const loadId = running.loads.get(conversationKey(side)) ?? '';
+  act(() => {
+    for (const listener of running.listeners) listener({ ref: side, loadId, seq: 2, type: 'summary.updated', summary: { ref: side, title: 'Side', updatedAt: 2, runtime: 'idle', captureCompleteness: 'complete' } });
+  });
+  await waitFor(() => expect(composer().disabled).toBe(false));
+  expect(document.activeElement).not.toBe(composer());
+});
+
+test('a pasted file isn\'t attached, and the pane says why', async () => {
+  install();
+  URL.createObjectURL = vi.fn(() => 'blob:shot');
+  render(<Tab initial={null} />);
+  const png = new File(['fake-png-bytes'], 'shot.png', { type: 'image/png' });
+  fireEvent.paste(composer(), { clipboardData: { items: [{ kind: 'file', getAsFile: () => png }] } as unknown as DataTransfer });
+  expect((await screen.findByRole('alert')).textContent).toBe('Too many files. Some were not added.');
+  expect(screen.queryByText('shot.png')).toBeNull();
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+});
+
+test('a dropped file isn\'t attached, and the pane says why', async () => {
+  install();
+  render(<Tab initial={null} />);
+  const file = new File(['# Notes'], 'notes.md', { type: 'text/markdown' });
+  fireEvent.drop(composer().closest('form') as HTMLFormElement, { dataTransfer: { types: ['Files'], files: [file] } as unknown as DataTransfer });
+  expect((await screen.findByRole('alert')).textContent).toBe('Too many files. Some were not added.');
+  expect(screen.queryByText('notes.md')).toBeNull();
 });
