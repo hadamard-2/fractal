@@ -438,6 +438,35 @@ test('Delete removes the side chat and the side chats inside it from the map and
   await waitFor(() => expect(fixture.map.saveLayout).toHaveBeenCalledWith(root, { view: 'preview', nodes: { 'claude:root|t1|user': { x: 0, y: 0 } } }));
 });
 
+test('the delete dialog stays until the map has listed again, so the deleted side chat is never left drawn', async () => {
+  let listed = [sideChat];
+  let release: () => void = () => undefined;
+  const relisted = new Promise<void>((resolve) => { release = resolve; });
+  let deleted = false;
+  const fixture = install({ sideChats: listed });
+  vi.mocked(fixture.conversations.sideChats).mockImplementation(async () => {
+    if (deleted) await relisted;
+    return [...listed];
+  });
+  vi.mocked(fixture.conversations.deleteSideChat).mockImplementation(async () => { listed = []; deleted = true; });
+  render(<MapMode {...shell(root)} />);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('More.');
+
+  const user = userEvent.setup();
+  await user.click(deleteAction('And?') ?? document.body);
+  await user.click(await screen.findByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(fixture.conversations.deleteSideChat).toHaveBeenCalledTimes(1));
+  await act(async () => undefined);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Delete' }).hasAttribute('disabled')).toBe(true);
+
+  await act(async () => release());
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.queryByText('More.')).toBeNull();
+});
+
 test('a failed delete leaves the side chat on the map, and Cancel leaves it alone', async () => {
   const fixture = install({ sideChats: [sideChat] });
   vi.mocked(fixture.conversations.deleteSideChat).mockRejectedValue(new Error('Error invoking remote method'));

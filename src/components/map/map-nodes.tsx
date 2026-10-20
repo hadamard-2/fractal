@@ -51,7 +51,7 @@ function OpenAction({ onOpen }: { onOpen: () => void }) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button aria-label="Open in panel" className="nodrag nopan mt-1 text-muted-foreground" onClick={onOpen} size="icon-xs" type="button" variant="ghost">
+          <Button aria-label="Open in panel" className="nodrag nopan text-muted-foreground" onClick={onOpen} size="icon-xs" type="button" variant="ghost">
             <PanelRight aria-hidden />
           </Button>
         </TooltipTrigger>
@@ -66,7 +66,7 @@ function DeleteAction({ onDelete }: { onDelete: () => void }) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button aria-label="Delete side chat" className="nodrag nopan mt-1 mr-1.5 text-muted-foreground" onClick={onDelete} size="icon-xs" type="button" variant="ghost">
+          <Button aria-label="Delete side chat" className="nodrag nopan text-muted-foreground" onClick={onDelete} size="icon-xs" type="button" variant="ghost">
             <Trash2 aria-hidden />
           </Button>
         </TooltipTrigger>
@@ -106,8 +106,12 @@ function NodeFrame({ id, line, label, branch, onOpen, onDelete, className, child
       ))}
       <div className="flex items-start">
         <div className="map-node-drag flex-1 cursor-grab px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">{label}</div>
-        {onOpen && <OpenAction onOpen={onOpen} />}
-        {onDelete && <DeleteAction onDelete={onDelete} />}
+        {(onOpen || onDelete) && (
+          <div className="mt-1 mr-1.5 flex gap-0.5">
+            {onOpen && <OpenAction onOpen={onOpen} />}
+            {onDelete && <DeleteAction onDelete={onDelete} />}
+          </div>
+        )}
       </div>
       {/* The message itself: text selected in here can start a side chat. */}
       <div className="nodrag nopan cursor-text px-3 pb-3 select-text" data-selection-source={id}>{children}</div>

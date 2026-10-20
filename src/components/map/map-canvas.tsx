@@ -194,10 +194,12 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
     }
     return offered;
   }, [sideChatStates, sideChats, states, launcher, root]);
-  // Announcing lists this map's side chats again too, and tells the right panel's views of them.
+  // Announcing tells the right panel's views of them. The map's own listing is awaited, so the dialog stays until the
+  // deleted side chats are off the canvas; it's the latest listing, so the one the announcement started never wins over it.
   const deleted = async ({ sideChat, below }: PendingDeletion) => {
     dropNodesOf([sideChat, ...below].map((gone) => conversationKey(gone.ref)));
     announceSideChats(conversationKey(root));
+    await refreshSideChats();
   };
 
   const environment = useMemo((): MapNodeEnvironment => ({
