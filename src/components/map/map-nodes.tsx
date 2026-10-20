@@ -1,14 +1,16 @@
 import { Handle, NodeResizeControl, Position, ResizeControlVariant, type Node, type NodeProps, type NodeTypes, type ResizeParams } from '@xyflow/react';
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from 'react';
 import { MessageResponse } from '@/components/ai-elements/message';
+import { Shimmer } from '@/components/ai-elements/shimmer';
 import { AttachmentPreviewProvider } from '@/components/conversation/attachment-preview-context';
 import { AgentReplyBody, MESSAGE_TEXT, splitTurnWork, UserMessageBody } from '@/components/conversation/conversation-turn';
 import { providerName } from '@/components/sidebar-03/nav-main';
 import { cn } from '@/lib/utils';
 import { conversationHub } from '@/renderer/conversation-hub';
 import { MAP, type MapNodeData } from '@/renderer/map/map-graph';
-import type { ConversationTurn, TurnBlock } from '@/shared/conversation-contract';
+import type { ConversationRef, ConversationTurn, TurnBlock } from '@/shared/conversation-contract';
 import type { MapView } from '@/shared/map-contract';
+import { ComposerNode } from './composer-node';
 
 /** What every node on the canvas reads from the canvas around it. */
 export interface MapNodeEnvironment {
@@ -60,7 +62,8 @@ function NodeFrame({ id, line, label, branch, className, children }: {
         />
       ))}
       <div className="map-node-drag cursor-grab px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">{label}</div>
-      <div className="nodrag nopan cursor-text px-3 pb-3 select-text">{children}</div>
+      {/* The message itself: text selected in here can start a side chat. */}
+      <div className="nodrag nopan cursor-text px-3 pb-3 select-text" data-map-message="">{children}</div>
       {/* Main-line and side-chat edges attach here; only the branch handle starts a connection. */}
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Top} type="target" />
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Bottom} type="source" />
@@ -81,14 +84,28 @@ export function UserNode({ id, data }: MapNodeProps<'user'>) {
   );
 }
 
+/** Whether the conversation is running a turn Fractal started, as the hub has it now. */
+function useRunningInFractal(owner: ConversationRef): boolean {
+  const hub = conversationHub();
+  const running = useCallback(() => hub.state(owner).runtime === 'active-in-fractal', [hub, owner]);
+  return useSyncExternalStore(hub.subscribe, running);
+}
+
 export function ReplyNode({ id, data }: MapNodeProps<'reply'>) {
   const { view } = useContext(MapNodeEnvironmentContext);
-  const preview = view === 'preview' ? replyPreview(data.turn) : '';
+  const { turn } = data;
+  const running = useRunningInFractal(data.owner);
+  const preview = view === 'preview' ? replyPreview(turn) : '';
+  // The reply being streamed, with no text yet; Full shows any work it has already done instead. A transcript
+  // never records a turn ending, so an active turn alone doesn't mean anything is on its way.
+  const waiting = running && data.latest && turn.status === 'active' && !proseOf(turn.blocks) && (view === 'preview' || turn.blocks.length === 0);
   return (
     <NodeFrame branch={data.canBranch ? 'open' : 'closed'} id={id} label={providerName(data.owner.provider)} line={data.line}>
-      {preview
-        ? <Clamped text={preview} />
-        : <AgentReplyBody onResolve={(requestId, decision) => conversationHub().resolveRequest(data.owner, requestId, decision)} turn={data.turn} />}
+      {waiting
+        ? <Shimmer className="text-sm">Thinking…</Shimmer>
+        : preview
+          ? <Clamped text={preview} />
+          : <AgentReplyBody onResolve={(requestId, decision) => conversationHub().resolveRequest(data.owner, requestId, decision)} turn={turn} />}
     </NodeFrame>
   );
 }
@@ -103,4 +120,4 @@ export function DetachedNode({ id, data }: MapNodeProps<'detached'>) {
   );
 }
 
-export const MAP_NODE_TYPES = { user: UserNode, reply: ReplyNode, detached: DetachedNode } satisfies NodeTypes;
+export const MAP_NODE_TYPES = { user: UserNode, reply: ReplyNode, composer: ComposerNode, detached: DetachedNode } satisfies NodeTypes;
