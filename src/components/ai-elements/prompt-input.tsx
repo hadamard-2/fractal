@@ -459,6 +459,8 @@ export type PromptInputProps = Omit<
   resolvePath?: (file: File) => string;
   /** An error message to reject a file as it is added, given its disk path ('' when it has none). */
   validateFile?: (file: File, path: string) => string | null;
+  /** Files the composer starts with, read once at mount; local mode only. */
+  initialFiles?: Array<Omit<PromptInputFile, "id">>;
 };
 
 export const PromptInput = ({
@@ -473,6 +475,7 @@ export const PromptInput = ({
   onSubmit,
   resolvePath,
   validateFile,
+  initialFiles,
   children,
   ...props
 }: PromptInputProps) => {
@@ -485,7 +488,9 @@ export const PromptInput = ({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // ----- Local attachments (only used when no provider)
-  const [items, setItems] = useState<(PromptInputFile)[]>([]);
+  const [items, setItems] = useState<(PromptInputFile)[]>(() =>
+    (initialFiles ?? []).map((file) => ({ ...file, id: nanoid() }))
+  );
   const files = usingProvider ? controller.attachments.files : items;
 
   // Keep a ref to files for cleanup on unmount (avoids stale closure)
