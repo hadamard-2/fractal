@@ -245,6 +245,11 @@ function ChatRowContent({
   );
 }
 
+/** Whether the chat is this row's or any of its forks'. */
+function holds(row: ChatRow, chatId: string): boolean {
+  return conversationKey(row.conversation.ref) === chatId || row.forks.some((fork) => holds(fork, chatId));
+}
+
 /** A row's forks, one indent in, each joined to the parent by a lineage line. */
 function ForkList({ row, renderChat }: { row: ChatRow; renderChat: (conversation: ConversationSummary) => ReactNode }) {
   if (row.forks.length === 0) return null;
@@ -384,7 +389,8 @@ export default function NavMain({
         const isOpen = openProjects.has(group.projectPath);
         const showAll = expandedProjects.has(group.projectPath);
         const rows = chatRows(group.conversations);
-        const visibleRows = showAll ? rows : rows.slice(0, 5);
+        // The first five, and the row holding the selected chat, so a chat just opened is never hidden behind Show more.
+        const visibleRows = rows.map((row, index) => ({ row, index })).filter(({ row, index }) => showAll || index < 5 || (selected !== null && holds(row, conversationKey(selected))));
         const chatRowProps = { section: group.displayName, ...chatRowContext };
         // Only reachable through the sidebar filter. Dimmed like a chat row at rest.
         const isArchived = projectMenu?.statusOf(group.projectPath) === 'archived';
@@ -442,7 +448,7 @@ export default function NavMain({
               </ContextMenu>
               <CollapsibleContent>
                 <SidebarMenuSub className="my-1 ml-3.5 mr-0 pr-0">
-                  {visibleRows.map((row, chatIndex) => {
+                  {visibleRows.map(({ row, index: chatIndex }) => {
                     const { conversation } = row;
                     const chatId = conversationKey(conversation.ref);
                     return (
@@ -463,7 +469,7 @@ export default function NavMain({
                       </SortableRow>
                     );
                   })}
-                  {!showAll && rows.length > 5 && (
+                  {visibleRows.length < rows.length && (
                     <SidebarMenuSubItem>
                       <SidebarMenuSubButton asChild className="hover:bg-transparent">
                         <button

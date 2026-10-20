@@ -411,6 +411,17 @@ describe('NavMain', () => {
       expect(screen.getByRole('button', { name: /Chat 6/ })).toBeTruthy();
     });
 
+    test('shows the row holding the selected fork past the first five, without Show more', () => {
+      const chats = Array.from({ length: 7 }, (_, index) => ({ ...fixParser, ref: { ...fixParser.ref, nativeSessionId: `session-${index + 1}` }, title: `Chat ${index + 1}` }));
+      const child = fork('fork-1', 'Fork of 7', chats[6]);
+      const grandchild = fork('fork-2', 'Fork of fork', child);
+      renderNav([{ ...fractalGroup, conversations: [...chats, child, grandchild] }], grandchild.ref);
+      expect(screen.getByRole('button', { name: /^Fork of fork,/ }).getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('button', { name: /^Chat 7,/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^Chat 6,/ })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy();
+    });
+
     test('maps sortable positions to top-level rows', () => {
       expect(sidebarMoveAtIndices([forked], 'chat:/work/fractal', 1, 0)).toEqual({
         kind: 'chat', projectPath: '/work/fractal', source: 'codex:codex-thread-1', target: 'claude:claude-session-1',

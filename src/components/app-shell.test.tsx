@@ -169,6 +169,25 @@ test('opens each new request once: selects the conversation and lists conversati
   expect(list).toHaveBeenCalledTimes(relisted);
 });
 
+test('shows the breadcrumb of a requested conversation once it is listed', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  window.ResizeObserver = class { observe(): void { return undefined; } unobserve(): void { return undefined; } disconnect(): void { return undefined; } };
+  const forked: ConversationRef = { ...ref, nativeSessionId: 'forked' };
+  const open = vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Opened title', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }));
+  const list = vi.fn<ConversationApi['list']>(async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, { ref: forked, title: 'Existing chat (fork)', updatedAt: 2, runtime: 'idle', captureCompleteness: 'complete', forkedFrom: { parentKey: 'codex:native-choice' } }] }], providers: [] }));
+  const api: ConversationApi = {
+    list, open, create: async () => null, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
+  const shell = (openRequest: { ref: ConversationRef; id: number } | null) => <AppShell onOpenSettings={() => undefined} openRequest={openRequest}>{(context) => <ExecuteMode {...context} />}</AppShell>;
+  const { rerender } = render(shell(null));
+  await screen.findByRole('button', { name: 'Fractal' });
+  rerender(shell({ ref: forked, id: 1 }));
+  expect(await screen.findByText('Fractal', { selector: '[data-slot="breadcrumb-item"]' })).toBeTruthy();
+  expect(screen.getByText('Existing chat (fork)', { selector: '[data-slot="breadcrumb-page"]' })).toBeTruthy();
+  expect(await screen.findByText('(Codex · Idle)')).toBeTruthy();
+});
+
 describe('home screen actions', () => {
   const creatable = { ...capabilities, create: true };
   const other: ConversationRef = { provider: 'codex', nativeSessionId: 'native-other', projectPath: '/work/other' };
