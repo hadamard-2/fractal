@@ -1,4 +1,4 @@
-import { conversationKey, type ProjectConversationGroup } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationSummary, type ProjectConversationGroup } from '@/shared/conversation-contract';
 import type { SidebarOrder } from '@/shared/settings-contract';
 
 function applySavedOrder<T>(items: T[], saved: string[], key: (item: T) => string): T[] {
@@ -18,6 +18,40 @@ export function topLevelConversations(groups: ProjectConversationGroup[]): Proje
   return groups
     .map((group) => ({ ...group, conversations: group.conversations.filter((item) => item.parentId === undefined) }))
     .filter((group) => group.conversations.length > 0);
+}
+
+export interface ChatRow { conversation: ConversationSummary; forks: ChatRow[] }
+
+/** A project's chats as a tree: a fork under its parent when the parent is among `conversations`, else at the top level in its own place. */
+export function chatRows(conversations: ConversationSummary[]): ChatRow[] {
+  const byKey = new Map(conversations.map((item) => [conversationKey(item.ref), item]));
+  const listedParent = (item: ConversationSummary) => {
+    const key = item.forkedFrom?.parentKey;
+    return key === undefined ? undefined : byKey.get(key);
+  };
+  // Forks whose lineage loops back to themselves have no parent to sit under.
+  const inLoop = (item: ConversationSummary) => {
+    const seen = new Set<ConversationSummary>();
+    for (let parent = listedParent(item); parent && !seen.has(parent); parent = listedParent(parent)) {
+      if (parent === item) return true;
+      seen.add(parent);
+    }
+    return false;
+  };
+
+  const forksOf = new Map<ConversationSummary, ConversationSummary[]>();
+  const topLevel: ConversationSummary[] = [];
+  for (const item of conversations) {
+    const parent = listedParent(item);
+    if (parent && !inLoop(item)) forksOf.set(parent, [...(forksOf.get(parent) ?? []), item]);
+    else topLevel.push(item);
+  }
+  const startedAt = (item: ConversationSummary) => item.createdAt ?? item.updatedAt;
+  const row = (conversation: ConversationSummary): ChatRow => ({
+    conversation,
+    forks: [...(forksOf.get(conversation) ?? [])].sort((a, b) => startedAt(a) - startedAt(b)).map(row),
+  });
+  return topLevel.map(row);
 }
 
 export function applySidebarOrder(groups: ProjectConversationGroup[], order: SidebarOrder): ProjectConversationGroup[] {

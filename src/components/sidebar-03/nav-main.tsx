@@ -4,7 +4,7 @@ import { PointerActivationConstraints, PointerSensor } from '@dnd-kit/dom';
 import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react';
 import { isSortable, useSortable, type UseSortableInput } from '@dnd-kit/react/sortable';
 import { Archive, ArchiveRestore, Folder, FolderOpen, FolderX, Pencil } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   Collapsible,
   CollapsibleContent,
@@ -26,6 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import type { ProjectStatus } from '@/renderer/project-visibility';
 import { cn } from '@/lib/utils';
+import { chatRows, type ChatRow } from './sidebar-order';
 
 /** The right-click actions on a project row. */
 export type ProjectMenuActions = {
@@ -128,6 +129,140 @@ function ChatTitleEditor({ title, onSave, onDone }: { title: string; onSave: (ti
   );
 }
 
+type ChatRowContentProps = {
+  conversation: ConversationSummary;
+  // The project's name, reported with the selection.
+  section: string;
+  providers: HarnessStatus[];
+  selected: ConversationRef | null;
+  selectedRuntime?: ConversationRuntime;
+  onSelect: (item: NavSelection) => void;
+  onRenameChat?: (ref: ConversationRef, title: string) => Promise<void>;
+  chatMenu?: ChatMenuActions;
+  showAgentColorTags: boolean;
+  menuRow: string | null;
+  trackMenu: (row: string) => (open: boolean) => void;
+  editingChat: string | null;
+  setEditingChat: (chatId: string | null) => void;
+  renamePicked: RefObject<boolean>;
+  // Only a top-level row is sortable; a fork moves with its parent.
+  sortable?: { handleRef: ReturnType<typeof useSortable>['handleRef']; isDragging: boolean; isDropTarget: boolean; draggable: boolean };
+};
+
+/** A chat row's button and right-click menu, or its title field while renaming. Top-level chats and forks alike. */
+function ChatRowContent({
+  conversation,
+  section,
+  providers,
+  selected,
+  selectedRuntime,
+  onSelect,
+  onRenameChat,
+  chatMenu,
+  showAgentColorTags,
+  menuRow,
+  trackMenu,
+  editingChat,
+  setEditingChat,
+  renamePicked,
+  sortable,
+}: ChatRowContentProps) {
+  const chatId = conversationKey(conversation.ref);
+  const isSelected = selected !== null && conversationKey(selected) === chatId;
+  const runtime = (isSelected && selectedRuntime) || conversation.runtime;
+  const isChatArchived = chatMenu?.isArchived(conversation.ref) ?? false;
+  const isChatDragging = sortable?.isDragging ?? false;
+  const isChatDropTarget = sortable?.isDropTarget ?? false;
+
+  return editingChat === chatId && onRenameChat ? (
+    <ChatTitleEditor
+      onDone={() => setEditingChat(null)}
+      onSave={(title) => onRenameChat(conversation.ref, title)}
+      title={conversation.title}
+    />
+  ) : (
+    <ContextMenu onOpenChange={trackMenu(`chat:${chatId}`)}>
+    <ContextMenuTrigger asChild disabled={!onRenameChat && !chatMenu}>
+    {/*
+      The row's classes go on SidebarMenuSubButton rather than
+      the button: Slot only concatenates the two class lists,
+      so the button's muted text would sit beside the base
+      sidebar colour and lose to it on stylesheet order. Here
+      cn() replaces the base colour instead.
+    */}
+    <SidebarMenuSubButton
+      asChild
+      className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', sortable?.draggable && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]', menuRow === `chat:${chatId}` && 'bg-sidebar-accent text-foreground')}
+      isActive={isSelected}
+    >
+      <button
+        aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, isChatArchived && 'Archived', runtimeLabel(runtime)].filter(Boolean).join(', ')}
+        aria-current={isSelected ? 'page' : undefined}
+        ref={sortable?.handleRef}
+        onClick={() => onSelect({
+          ref: conversation.ref,
+          title: conversation.title,
+          section,
+          runtime,
+        })}
+        type="button"
+      >
+        <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+        {isChatArchived && <Archive aria-hidden="true" className="size-3.5 shrink-0" />}
+        {showAgentColorTags && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', AGENT_DOT_CLASS[conversation.ref.provider])} />
+            </TooltipTrigger>
+            <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
+          </Tooltip>
+        )}
+      </button>
+    </SidebarMenuSubButton>
+    </ContextMenuTrigger>
+    <ContextMenuContent
+      className="min-w-44"
+      onCloseAutoFocus={(event) => {
+        if (renamePicked.current) event.preventDefault();
+        renamePicked.current = false;
+      }}
+    >
+      {onRenameChat && (
+        <ContextMenuItem
+          disabled={!canRename(conversation, providers)}
+          onSelect={() => { renamePicked.current = true; setEditingChat(chatId); }}
+        >
+          <Pencil />Rename
+        </ContextMenuItem>
+      )}
+      {chatMenu && (
+        <ContextMenuItem onSelect={() => chatMenu.onToggleArchive(conversation.ref)}>
+          {isChatArchived ? <><ArchiveRestore />Unarchive</> : <><Archive />Archive</>}
+        </ContextMenuItem>
+      )}
+    </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** A row's forks, one indent in, each joined to the parent by a lineage line. */
+function ForkList({ row, renderChat }: { row: ChatRow; renderChat: (conversation: ConversationSummary) => ReactNode }) {
+  if (row.forks.length === 0) return null;
+  return (
+    <ul aria-label={`Forks of ${row.conversation.title}`} className="mt-1 ml-3 flex flex-col gap-1" role="group">
+      {row.forks.map((fork) => (
+        <li
+          className="relative pl-2.5 before:absolute before:-top-1 before:bottom-0 before:left-0 before:w-px before:bg-sidebar-border after:absolute after:top-3.5 after:left-0 after:h-px after:w-2.5 after:bg-sidebar-border last:before:bottom-auto last:before:h-4.5"
+          key={conversationKey(fork.conversation.ref)}
+        >
+          {renderChat(fork.conversation)}
+          <ForkList renderChat={renderChat} row={fork} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function SortableRow({
   id,
   index,
@@ -153,9 +288,11 @@ export function sidebarMoveAtIndices(groups: ProjectConversationGroup[], groupId
     return from && to ? { kind: 'project' as const, source: from.projectPath, target: to.projectPath } : null;
   }
 
+  // Only top-level rows are sortable; forks move with their parent.
   const group = groups.find((item) => `chat:${item.projectPath}` === groupId);
-  const from = group?.conversations[fromIndex];
-  const to = group?.conversations[toIndex];
+  const rows = group ? chatRows(group.conversations) : [];
+  const from = rows[fromIndex]?.conversation;
+  const to = rows[toIndex]?.conversation;
   return group && from && to
     ? { kind: 'chat' as const, projectPath: group.projectPath, source: conversationKey(from.ref), target: conversationKey(to.ref) }
     : null;
@@ -207,6 +344,7 @@ export default function NavMain({
   const renamePicked = useRef(false);
   const trackMenu = (row: string) => (open: boolean) => setMenuRow((current) => open ? row : current === row ? null : current);
   const isCollapsed = state === 'collapsed';
+  const chatRowContext = { providers, selected, selectedRuntime, onSelect, onRenameChat, chatMenu, showAgentColorTags, menuRow, trackMenu, editingChat, setEditingChat, renamePicked };
 
   const handleDragEnd = ({ canceled, operation }: DragEndEvent) => {
     const source = operation.source;
@@ -245,7 +383,9 @@ export default function NavMain({
       {groups.map((group, projectIndex) => {
         const isOpen = openProjects.has(group.projectPath);
         const showAll = expandedProjects.has(group.projectPath);
-        const visibleConversations = showAll ? group.conversations : group.conversations.slice(0, 5);
+        const rows = chatRows(group.conversations);
+        const visibleRows = showAll ? rows : rows.slice(0, 5);
+        const chatRowProps = { section: group.displayName, ...chatRowContext };
         // Only reachable through the sidebar filter. Dimmed like a chat row at rest.
         const isArchived = projectMenu?.statusOf(group.projectPath) === 'archived';
 
@@ -302,94 +442,28 @@ export default function NavMain({
               </ContextMenu>
               <CollapsibleContent>
                 <SidebarMenuSub className="my-1 ml-3.5 mr-0 pr-0">
-                  {visibleConversations.map((conversation, chatIndex) => {
-                    const isSelected = selected !== null && conversationKey(selected) === conversationKey(conversation.ref);
+                  {visibleRows.map((row, chatIndex) => {
+                    const { conversation } = row;
                     const chatId = conversationKey(conversation.ref);
-                    const isEditing = editingChat === chatId;
-                    const runtime = (isSelected && selectedRuntime) || conversation.runtime;
-                    const isChatArchived = chatMenu?.isArchived(conversation.ref) ?? false;
                     return (
-                      <SortableRow disabled={!onMoveChat || isEditing} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
+                      <SortableRow disabled={!onMoveChat || editingChat === chatId} group={`chat:${group.projectPath}`} id={`chat:${group.projectPath}:${chatId}`} index={chatIndex} key={chatId}>
                       {({ ref: chatRef, handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget }) => (
                       <SidebarMenuSubItem
                         className={cn('h-auto', isChatDragging && 'z-20')}
                         ref={chatRef}
                       >
-                        {isEditing && onRenameChat ? (
-                          <ChatTitleEditor
-                            onDone={() => setEditingChat(null)}
-                            onSave={(title) => onRenameChat(conversation.ref, title)}
-                            title={conversation.title}
-                          />
-                        ) : (
-                        <ContextMenu onOpenChange={trackMenu(`chat:${chatId}`)}>
-                        <ContextMenuTrigger asChild disabled={!onRenameChat && !chatMenu}>
-                        {/*
-                          The row's classes go on SidebarMenuSubButton rather than
-                          the button: Slot only concatenates the two class lists,
-                          so the button's muted text would sit beside the base
-                          sidebar colour and lose to it on stylesheet order. Here
-                          cn() replaces the base colour instead.
-                        */}
-                        <SidebarMenuSubButton
-                          asChild
-                          className={cn('flex w-full items-center rounded-md py-1.5 pr-2.5 pl-4 text-left font-normal text-muted-foreground text-sm transition-[background-color,box-shadow,scale] duration-150 ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none', onMoveChat && 'touch-none', (isChatDragging || isChatDropTarget) && 'bg-sidebar-accent shadow-lg ring-1 ring-sidebar-ring', isChatDragging && 'scale-[1.02]', menuRow === `chat:${chatId}` && 'bg-sidebar-accent text-foreground')}
-                          isActive={isSelected}
-                        >
-                          <button
-                            aria-label={[conversation.title, `${providerName(conversation.ref.provider)} conversation`, isChatArchived && 'Archived', runtimeLabel(runtime)].filter(Boolean).join(', ')}
-                            aria-current={isSelected ? 'page' : undefined}
-                            ref={chatHandleRef}
-                            onClick={() => onSelect({
-                              ref: conversation.ref,
-                              title: conversation.title,
-                              section: group.displayName,
-                              runtime,
-                            })}
-                            type="button"
-                          >
-                            <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-                            {isChatArchived && <Archive aria-hidden="true" className="size-3.5 shrink-0" />}
-                            {showAgentColorTags && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', AGENT_DOT_CLASS[conversation.ref.provider])} />
-                                </TooltipTrigger>
-                                <TooltipContent side="right">{providerName(conversation.ref.provider)}</TooltipContent>
-                              </Tooltip>
-                            )}
-                          </button>
-                        </SidebarMenuSubButton>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent
-                          className="min-w-44"
-                          onCloseAutoFocus={(event) => {
-                            if (renamePicked.current) event.preventDefault();
-                            renamePicked.current = false;
-                          }}
-                        >
-                          {onRenameChat && (
-                            <ContextMenuItem
-                              disabled={!canRename(conversation, providers)}
-                              onSelect={() => { renamePicked.current = true; setEditingChat(chatId); }}
-                            >
-                              <Pencil />Rename
-                            </ContextMenuItem>
-                          )}
-                          {chatMenu && (
-                            <ContextMenuItem onSelect={() => chatMenu.onToggleArchive(conversation.ref)}>
-                              {isChatArchived ? <><ArchiveRestore />Unarchive</> : <><Archive />Archive</>}
-                            </ContextMenuItem>
-                          )}
-                        </ContextMenuContent>
-                        </ContextMenu>
-                        )}
+                        <ChatRowContent
+                          conversation={conversation}
+                          sortable={{ handleRef: chatHandleRef, isDragging: isChatDragging, isDropTarget: isChatDropTarget, draggable: Boolean(onMoveChat) }}
+                          {...chatRowProps}
+                        />
+                        <ForkList renderChat={(fork) => <ChatRowContent conversation={fork} {...chatRowProps} />} row={row} />
                       </SidebarMenuSubItem>
                       )}
                       </SortableRow>
                     );
                   })}
-                  {!showAll && group.conversations.length > 5 && (
+                  {!showAll && rows.length > 5 && (
                     <SidebarMenuSubItem>
                       <SidebarMenuSubButton asChild className="hover:bg-transparent">
                         <button
