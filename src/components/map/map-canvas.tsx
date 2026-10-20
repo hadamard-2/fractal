@@ -2,10 +2,13 @@ import { Background, BackgroundVariant, ReactFlow, useReactFlow, type Dimensions
 import '@xyflow/react/dist/base.css';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Shimmer } from '@/components/ai-elements/shimmer';
+import { useForkLauncher } from '@/components/conversation/fork-launcher';
 import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
+import { Button } from '@/components/ui/button';
 import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type SideChatSummary } from '@/shared/conversation-contract';
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
+import { canForkAt } from '@/renderer/forking';
 import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
 import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, type HandOff } from '@/renderer/map/side-chat-drafts';
 import { announceSideChats } from '@/renderer/side-chat-events';
@@ -202,16 +205,31 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
     await refreshSideChats();
   };
 
+  // A subagent conversation offers no forks; the side chats in any other can be forked like the root.
+  const forkLauncher = useForkLauncher();
+  const [forkError, setForkError] = useState<string | null>(null);
+  const fork = useMemo((): MapNodeEnvironment['fork'] => readOnly || !forkLauncher ? undefined : {
+    can: (owner, turn, position) => {
+      const state = states.get(conversationKey(owner));
+      return !forkLauncher.pending && state !== undefined && canForkAt(state, turn.id, position, false);
+    },
+    start: (owner, turn, position) => {
+      setForkError(null);
+      forkLauncher.fork(owner, turn, position).catch((cause: unknown) => setForkError(cause instanceof Error ? cause.message : String(cause)));
+    },
+  }, [readOnly, forkLauncher, states]);
+
   const environment = useMemo((): MapNodeEnvironment => ({
     view: layout.view,
     sideChats: sideChatActions,
+    ...(fork ? { fork } : {}),
     onResizeEnd: (id, { x, y, width }, edge) => {
       // A resize from the right keeps the node where it was placed, automatically or not; one from the left has moved it, so that spot is kept.
       if (edge === 'left') moveNode(id, { x, y });
       resizeNode(id, width);
       setOverrides((prior) => withoutEntry(prior, id));
     },
-  }), [layout.view, sideChatActions, moveNode, resizeNode]);
+  }), [layout.view, sideChatActions, fork, moveNode, resizeNode]);
 
   // Fit once per root, when its history first finishes loading; later rebuilds keep the user's viewport.
   const fitted = useRef(false);
@@ -254,6 +272,12 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
         {empty && (history === 'idle' || history === 'loading') && <CanvasMessage><Shimmer className="text-sm">Reading history…</Shimmer></CanvasMessage>}
         {empty && history === 'complete' && <CanvasMessage>No messages yet.</CanvasMessage>}
         {empty && history === 'failed' && <CanvasMessage>History unavailable</CanvasMessage>}
+        {forkError && (
+          <div className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg border bg-card py-1 pr-1 pl-3 text-sm text-destructive shadow-xs" role="alert">
+            <span className="min-w-0 wrap-anywhere">{forkError}</span>
+            <Button className="shrink-0 text-muted-foreground" onClick={() => setForkError(null)} size="xs" type="button" variant="ghost">Dismiss</Button>
+          </div>
+        )}
         {selection && <SelectionMenu onChoose={chooseSideChat} selection={selection} />}
         {pendingDeletion && (
           <DeleteSideChatDialog

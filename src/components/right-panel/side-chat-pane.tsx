@@ -5,11 +5,13 @@ import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, Pro
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import { COLUMN } from '@/components/conversation-panel';
 import { AttachmentPreviewProvider } from '@/components/conversation/attachment-preview-context';
-import { MESSAGE_TEXT } from '@/components/conversation/conversation-turn';
+import { MESSAGE_TEXT, TurnForkContext, type TurnForkActions } from '@/components/conversation/conversation-turn';
+import { useForkLauncher } from '@/components/conversation/fork-launcher';
 import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
 import { Button } from '@/components/ui/button';
 import { conversationHub } from '@/renderer/conversation-hub';
+import { canForkAt } from '@/renderer/forking';
 import { useSideChats } from '@/renderer/map/use-side-chats';
 import { canBranchTurn } from '@/renderer/side-chat-branching';
 import { announceSideChats, onSideChatsChanged } from '@/renderer/side-chat-events';
@@ -157,6 +159,16 @@ export function SideChatPane({ root, draft, sideChat, branchPointText, onBound, 
     dismiss();
   };
 
+  // A side chat can't change files, but a fork of it is a conversation of its own that can. An unsent tab has nothing to fork yet.
+  const forkLauncher = useForkLauncher();
+  const forkActions = useMemo((): TurnForkActions | null => forkLauncher && sideChat && {
+    can: (turn, position) => !forkLauncher.pending && canForkAt(state, turn.id, position, false),
+    fork: (turn, position) => {
+      setError(null);
+      forkLauncher.fork(sideChat, turn, position).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    },
+  }, [forkLauncher, sideChat, state]);
+
   // A failed load shows only while the side chat is still listed, so a deleted one closes its tab without saying so.
   // Without a listing, a failed one says the same rather than reading forever, and Reload lists again.
   const historyFailed = summary !== undefined && (state.history === 'failed' || state.error !== null);
@@ -195,7 +207,7 @@ export function SideChatPane({ root, draft, sideChat, branchPointText, onBound, 
             </div>
           )
           : turns.length > 0
-            ? <AttachmentPreviewProvider conversationRef={sideChat}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(sideChat)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider>
+            ? <AttachmentPreviewProvider conversationRef={sideChat}><TurnForkContext.Provider value={forkActions}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(sideChat)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></TurnForkContext.Provider></AttachmentPreviewProvider>
             : reading && <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div>)}
       </div>
       {selection && <SelectionMenu onChoose={chooseSideChat} selection={selection} />}
