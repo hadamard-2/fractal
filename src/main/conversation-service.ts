@@ -109,9 +109,13 @@ export class ConversationService {
     return reported && { ...reported, parentKey: this.mainKeyOf(reported.parentKey) };
   }
 
+  /** A fork Fractal recorded started when Fractal made it: the agent may report the start of the history it copied from its parent. */
   private withLineage(summary: ConversationSummary): ConversationSummary {
-    const forkedFrom = this.lineageOf(conversationKey(summary.ref), summary.forkedFrom);
-    return forkedFrom ? { ...summary, forkedFrom } : summary;
+    const key = conversationKey(summary.ref);
+    const forkedFrom = this.lineageOf(key, summary.forkedFrom);
+    if (!forkedFrom) return summary;
+    const record = this.branches?.get(key);
+    return { ...summary, forkedFrom, ...(record?.kind === 'fork' ? { createdAt: record.createdAt } : {}) };
   }
 
   /**
@@ -216,6 +220,21 @@ export class ConversationService {
     return ref;
   }
 
+  /**
+   * A new conversation with a title: a Claude draft carries it until its first send names it, and an agent session is renamed,
+   * best effort, since it already exists and is usable untitled.
+   */
+  private async createTitled(provider: ProviderId, projectPath: string, title: string): Promise<ConversationRef> {
+    const ref = await this.create(provider, projectPath);
+    const draft = this.drafts.get(conversationKey(ref));
+    if (draft) {
+      draft.title = title;
+      return ref;
+    }
+    try { await this.registry.resolve(ref).renameConversation?.(ref, title); } catch { /* the conversation is usable without its title */ }
+    return ref;
+  }
+
   async fork(input: ConversationRef, point: ForkPoint, kind: BranchKind): Promise<ConversationRef> {
     this.assertAvailable();
     const branches = this.branches;
@@ -235,19 +254,21 @@ export class ConversationService {
     const afterIndex = after ? index : index - 1;
     const afterTurn = turns[afterIndex] as ConversationTurn | undefined;
     const summary = await this.registry.validate(source);
+    // A side chat is read-only and approval-free, so a fork of one takes the settings of the conversation the side chat belongs to.
+    const mainRef = this.mainConversationOf(source);
+    const settingsFrom = kind === 'fork' && conversationKey(mainRef) !== key ? mainRef : undefined;
+    // A fork of a side chat nests under the main conversation, so it is named after it.
+    const baseTitle = settingsFrom ? (await this.registry.validate(settingsFrom)).title : summary.title;
     if (this.deleting.has(key)) throw new Error('Conversation is not idle');
     // A history may never record a turn's end, so an active turn is only in progress while the conversation is busy.
     const busy = BUSY_RUNTIMES.has(summary.runtime) || this.ownedRuns.has(key) || this.startingRuns.has(key);
     if (afterTurn?.status === 'active' && busy) throw new Error('Cannot fork from a turn in progress');
     if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     const note = kind === 'side-chat' ? SIDE_CHAT_NOTE : afterIndex !== turns.length - 1 ? FORK_NOTE : undefined;
-    const title = `${summary.title} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
-    // A side chat is read-only and approval-free, so a fork of one takes the settings of the conversation the side chat belongs to.
-    const mainRef = this.mainConversationOf(source);
-    const settingsFrom = kind === 'fork' && conversationKey(mainRef) !== key ? mainRef : undefined;
+    const title = `${baseTitle} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
     const ref = afterTurn
       ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), ...(settingsFrom ? { settingsFrom } : {}), title })
-      : await this.create(source.provider, source.projectPath);
+      : await this.createTitled(source.provider, source.projectPath, title);
     const branchPointText = kind === 'side-chat' && afterTurn ? branchPointOf(afterTurn) : undefined;
     // A fork of a side chat nests under the main conversation in the sidebar, and keeps nesting there once the side chat is deleted.
     const mainKey = kind === 'fork' ? this.mainKeyOf(key) : key;

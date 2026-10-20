@@ -726,6 +726,18 @@ describe('ConversationService branches', () => {
     await f.service.dispose();
   });
 
+  test('titles a fork before the first turn like any fork, and still makes it when the title cannot be set', async () => {
+    const f = branchFixture();
+    const renameConversation = vi.fn<NonNullable<HarnessAdapter['renameConversation']>>(async () => undefined);
+    f.adapter.renameConversation = renameConversation;
+    await f.service.open(ref, loadId);
+    await f.service.fork(ref, { turnId: 't1', position: 'before' }, 'fork');
+    expect(renameConversation).toHaveBeenCalledWith(forkedRef, 'Chat (fork)');
+    renameConversation.mockRejectedValueOnce(new Error('rename failed'));
+    await expect(f.service.fork(ref, { turnId: 't1', position: 'before' }, 'fork')).resolves.toEqual(forkedRef);
+    await f.service.dispose();
+  });
+
   test('does not fork a conversation that is still loading', async () => {
     const f = branchFixture();
     const gate = deferred<void>();
@@ -855,6 +867,19 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('titles a fork of a side chat after the main conversation, and a side chat of a side chat after the side chat', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [{ ...f.source, title: 'Plan' }, f.forked, ...f.extra]);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Plan (side chat)' });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ title: 'Plan (fork)' }));
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'side-chat');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ title: 'Plan (side chat) (side chat)' }));
+      await f.service.dispose();
+    });
+
     test('forks a side chat with the settings of its main conversation, and a main conversation with none', async () => {
       const f = branchFixture(undefined, claude);
       f.records.set('claude:side', side('claude:main'));
@@ -932,8 +957,21 @@ describe('ConversationService branches', () => {
       await f.service.open(f.at('main'), loadId);
       await f.service.fork(f.at('main'), { turnId: 't1', position: 'before' }, 'fork');
       const draft = (await conversations(f)).find((item) => item.ref.nativeSessionId === 'forked');
-      expect(draft).toMatchObject({ ref: f.at('forked'), forkedFrom: { parentKey: 'claude:main', inheritedTurnCount: 0 } });
+      expect(draft).toMatchObject({ ref: f.at('forked'), title: 'Chat (fork)', forkedFrom: { parentKey: 'claude:main', inheritedTurnCount: 0 } });
       expect(read).not.toHaveBeenCalled();
+      await f.service.dispose();
+    });
+
+    test('lists a recorded fork with the time Fractal made it rather than the start of the history it copied', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [{ ...f.source, createdAt: 5 }, ...f.extra]);
+      f.extra.push({ ...summary, ref: f.at('older'), title: 'Older', createdAt: 5 }, { ...summary, ref: f.at('newer'), title: 'Newer', createdAt: 5 });
+      f.adapter.readSummary = vi.fn(async (unlisted: ConversationRef) => ({ ...summary, ref: unlisted, title: 'Unlisted', createdAt: 5 }));
+      f.records.set('claude:older', fork('claude:main', { createdAt: 10 }));
+      f.records.set('claude:newer', fork('claude:main', { createdAt: 20 }));
+      f.records.set('claude:unlisted', fork('claude:main', { createdAt: 30 }));
+      const createdAt = Object.fromEntries((await conversations(f)).map((item) => [item.ref.nativeSessionId, item.createdAt]));
+      expect(createdAt).toEqual({ main: 5, older: 10, newer: 20, unlisted: 30 });
       await f.service.dispose();
     });
 

@@ -193,9 +193,8 @@ export function registerConversationIpc(service: ConversationService, getWindow:
       const ref = parseConversationRef(input), point = parseForkPoint(pointInput), kind = parseBranchKind(kindInput); requireLoad(owner, ref);
       return async () => {
         const forked = parseConversationRef(await service.fork(ref, point, kind));
-        // A side chat's own access is read-only; its fork runs with the main conversation's. The fork exists either way.
-        const main = kind === 'fork' ? service.mainConversationOf(ref) : undefined;
-        if (main && conversationKey(main) !== conversationKey(ref)) await options.accessChoices?.inherit(forked, main).catch((): void => undefined);
+        // A fork starts on the access of the conversation it came from, or, from a side chat, whose own access is read-only, of the main conversation. The fork exists either way.
+        if (kind === 'fork') await options.accessChoices?.inherit(forked, service.mainConversationOf(ref)).catch((): void => undefined);
         return forked;
       };
     });

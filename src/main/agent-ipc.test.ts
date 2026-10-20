@@ -376,11 +376,19 @@ describe('conversation IPC', () => {
         expect(choices.inherit).toHaveBeenCalledWith(forked, main);
       });
 
-      test('inherits nothing for a fork of a main conversation, or for a side chat', async () => {
+      test('gives a fork of a main conversation that conversation\'s access', async () => {
+        const choices = accessChoices();
+        const f = fixture(undefined, choices);
+        f.service.mainConversationOf.mockReturnValue(ref);
+        await f.invoke('open', ref, loadId);
+        await expect(f.invoke('fork', ref, point, 'fork')).resolves.toEqual(forked);
+        expect(choices.inherit).toHaveBeenCalledWith(forked, ref);
+      });
+
+      test('inherits nothing for a side chat', async () => {
         const choices = accessChoices();
         const f = fixture(undefined, choices);
         await f.invoke('open', ref, loadId);
-        await f.invoke('fork', ref, point, 'fork');
         f.service.mainConversationOf.mockReturnValue(main);
         await f.invoke('fork', ref, point, 'side-chat');
         expect(choices.inherit).not.toHaveBeenCalled();
