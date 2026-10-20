@@ -24,10 +24,14 @@ export function ComposerNode({ id, data }: NodeProps<Node<{ kind: 'composer'; dr
   const [error, setError] = useState<string | null>(null);
 
   // React Flow keeps a node hidden until it has measured it, and a hidden textarea can't take focus, so it's focused once shown.
+  // The caret goes after any prefilled text, so a question typed under a quote stays below it.
   const textarea = useRef<HTMLTextAreaElement>(null);
   const measured = useStore((state) => state.nodeLookup.get(id)?.measured.height !== undefined);
   useEffect(() => {
-    if (measured) textarea.current?.focus();
+    const element = textarea.current;
+    if (!measured || !element) return;
+    element.focus();
+    element.setSelectionRange(element.value.length, element.value.length);
   }, [measured]);
   // A failed send disables the textarea while it runs, which drops focus; the user is back to editing.
   useEffect(() => {

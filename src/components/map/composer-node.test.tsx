@@ -9,9 +9,9 @@ import { ComposerEnvironmentContext, ComposerNode, type ComposerEnvironment } fr
 const draft: SideChatDraft = { id: 'd1', parent: { provider: 'claude', nativeSessionId: 'root', projectPath: '/work' }, afterTurnId: 't1', text: '' };
 const NODE_TYPES = { composer: ComposerNode };
 
-function renderComposer(environment: Partial<ComposerEnvironment> = {}, text = '') {
+function renderComposer(environment: Partial<ComposerEnvironment> = {}, text = '', measured?: { width: number; height: number }) {
   const env: ComposerEnvironment = { submit: vi.fn(async () => undefined), remove: vi.fn(), ...environment };
-  const nodes: Node<MapNodeData>[] = [{ id: 'composer|d1', type: 'composer', position: { x: 0, y: 0 }, data: { kind: 'composer', draft: { ...draft, text } } }];
+  const nodes: Node<MapNodeData>[] = [{ id: 'composer|d1', type: 'composer', position: { x: 0, y: 0 }, data: { kind: 'composer', draft: { ...draft, text } }, ...(measured ? { measured } : {}) }];
   render(
     <ReactFlowProvider>
       <ComposerEnvironmentContext.Provider value={env}>
@@ -33,6 +33,15 @@ test('shows the placeholder and the send hint, and keeps canvas gestures off the
 test('starts from the draft\'s text', () => {
   const { textarea } = renderComposer({}, '> quoted\n\n');
   expect(textarea.value).toBe('> quoted\n\n');
+});
+
+test('once shown, it takes focus with the caret after a prefilled quote, so the question goes below it', async () => {
+  const user = userEvent.setup();
+  const { env, textarea } = renderComposer({}, '> quoted\n\n', { width: 320, height: 120 });
+  await waitFor(() => expect(document.activeElement).toBe(textarea));
+  expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([10, 10]);
+  await user.keyboard('Why?{Control>}{Enter}{/Control}');
+  expect(env.submit).toHaveBeenCalledWith(expect.anything(), '> quoted\n\nWhy?');
 });
 
 test('Enter adds a newline, and Ctrl+Enter or Cmd+Enter submits', async () => {
