@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 type ToolId = 'changes' | 'terminal' | 'browser' | 'files' | 'side-chat';
 type ToolEntry = { id: ToolId; label: string; Icon: LucideIcon };
 
-// Terminal, Files, and Changes exist; the others are listed so the panel shows its intended shape before they land.
+// Browser is listed so the panel shows its intended shape before it lands.
 const TOOL_ENTRIES: readonly ToolEntry[] = [
   { id: 'changes', label: 'Changes', Icon: FileDiff },
   { id: 'terminal', label: 'Terminal', Icon: SquareTerminal },
@@ -14,14 +14,22 @@ const TOOL_ENTRIES: readonly ToolEntry[] = [
   { id: 'side-chat', label: 'Side chat', Icon: MessageCirclePlus },
 ];
 
-type Handlers = { onTerminal: () => void; onFiles: () => void; onChanges: () => void; projectOpen: boolean };
 type State = { onSelect?: () => void; hint?: string; shortcut?: string };
+type Handlers = {
+  onTerminal: () => void;
+  onFiles: () => void;
+  onChanges: () => void;
+  projectOpen: boolean;
+  /** Side chat's state as the selected conversation allows it: a handler, or a hint saying why not. */
+  sideChat: { onSelect?: () => void; hint?: string };
+};
 
 // Terminal, Files and Changes all work inside the project, so none has anywhere to start without one.
-function stateOf(id: ToolId, { onTerminal, onFiles, onChanges, projectOpen }: Handlers): State {
+function stateOf(id: ToolId, { onTerminal, onFiles, onChanges, projectOpen, sideChat }: Handlers): State {
   if (id === 'terminal') return projectOpen ? { onSelect: onTerminal, hint: 'Ctrl+`', shortcut: 'Control+`' } : { hint: 'Open a project first' };
   if (id === 'files') return projectOpen ? { onSelect: onFiles, hint: 'Ctrl+Shift+F', shortcut: 'Control+Shift+F' } : { hint: 'Open a project first' };
   if (id === 'changes') return projectOpen ? { onSelect: onChanges, hint: 'Ctrl+Shift+D', shortcut: 'Control+Shift+D' } : { hint: 'Open a project first' };
+  if (id === 'side-chat') return sideChat;
   return { hint: 'Soon' };
 }
 

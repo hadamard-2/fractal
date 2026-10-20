@@ -5,6 +5,7 @@ import { providerName, runtimeLabel, type NavSelection } from '@/components/side
 import { conversationKey, type ConversationRef, type ConversationRuntime } from '@/shared/conversation-contract';
 import { ProjectPickerDialog } from '@/components/conversation/project-picker-dialog';
 import { useStartConversation } from '@/components/conversation/use-start-conversation';
+import { isSubagentConversation } from '@/renderer/conversation-lookup';
 import { isAppShortcut } from '@/renderer/shortcuts';
 import { visibleProjects } from '@/renderer/project-visibility';
 import { useProjectVisibility } from '@/renderer/use-project-visibility';
@@ -66,6 +67,7 @@ export function AppShell({
   onOpenSettings,
   insetRef,
   onProjectPathChange,
+  onConversationChange,
   showAgentColorTags,
   children,
 }: {
@@ -81,6 +83,8 @@ export function AppShell({
   insetRef?: Ref<HTMLElement>;
   // The selected conversation's project, where new terminals start.
   onProjectPathChange?: (path: string | null) => void;
+  // The selected conversation, read-only when it is a subagent conversation.
+  onConversationChange?: (conversation: { ref: ConversationRef; readOnly: boolean } | null) => void;
   // The agent-color-tags setting, held by App beside the settings dialog.
   showAgentColorTags?: boolean;
   children: (context: ShellContext) => ReactNode;
@@ -183,6 +187,10 @@ export function AppShell({
   useEffect(() => {
     onProjectPathChange?.(selectedRef?.projectPath ?? null);
   }, [selectedRef?.projectPath, onProjectPathChange]);
+  const selectedReadOnly = selectedRef !== null && isSubagentConversation(projects, selectedRef);
+  useEffect(() => {
+    onConversationChange?.(selectedRef ? { ref: selectedRef, readOnly: selectedReadOnly } : null);
+  }, [selectedRef, selectedReadOnly, onConversationChange]);
 
   return (
     <SidebarProvider

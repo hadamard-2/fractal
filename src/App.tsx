@@ -12,6 +12,7 @@ import { TitleBar } from '@/components/title-bar';
 import { Button } from '@/components/ui/button';
 import { MODE_TOGGLE_INSET, modeToggleShift } from '@/renderer/right-panel-layout';
 import { isAppShortcut } from '@/renderer/shortcuts';
+import type { ConversationRef } from '@/shared/conversation-contract';
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('execute');
@@ -33,6 +34,8 @@ export default function App() {
   const [rightResizing, setRightResizing] = useState(false);
   // Execute's selected project; new terminals start there in any mode.
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  // Execute's selected conversation; Side chat in the panel branches from it.
+  const [conversation, setConversation] = useState<{ ref: ConversationRef; readOnly: boolean } | null>(null);
   const shellInsetRef = useRef<HTMLElement>(null);
   // The home screen is Execute with nothing selected; the selected project is
   // null exactly then. The mode toggle stays out of it.
@@ -149,6 +152,7 @@ export default function App() {
       */}
       <div className="flex h-full flex-col">
         <RightWorkspace
+          conversation={conversation}
           leftInsetRef={shellInsetRef}
           onOpenChange={setRightOpen}
           onResizingChange={setRightResizing}
@@ -159,6 +163,7 @@ export default function App() {
         >
           <AppShell
             insetRef={shellInsetRef}
+            onConversationChange={setConversation}
             onProjectPathChange={setProjectPath}
             sidebarOpen={sidebarOpen}
             onSidebarOpenChange={setSidebarOpen}

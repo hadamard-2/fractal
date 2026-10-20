@@ -1,4 +1,4 @@
-import { FileDiff, SquareTerminal, X } from 'lucide-react';
+import { FileDiff, MessageCircle, SquareTerminal, X } from 'lucide-react';
 import { FileTypeIcon, FolderTypeIcon } from '@/components/code/file-icons';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -9,14 +9,25 @@ import { terminalTabLabel } from './terminal-tabs';
 export function panelTabLabel(tab: PanelTab, terminalCount: number): string {
   if (tab.kind === 'terminal') return terminalTabLabel(tab, terminalCount);
   if (tab.kind === 'changes') return 'Changes';
+  if (tab.kind === 'side-chat') return 'Side chat';
   return tab.path === null ? 'Files' : basename(tab.path);
 }
 
 export const tabPanelId = (tab: PanelTab): string => (tab.kind === 'terminal' ? `terminal-panel-${tab.id}` : `panel-${tab.id}`);
 
+const TOOLTIP_TEXT_LIMIT = 80;
+
+// A side chat's branch point, by its first line, which can be a whole paragraph.
+function branchPointTooltip(text: string | undefined): string {
+  const line = text?.split('\n')[0] ?? '';
+  if (!line) return 'Side chat';
+  return line.length > TOOLTIP_TEXT_LIMIT ? `${line.slice(0, TOOLTIP_TEXT_LIMIT)}…` : line;
+}
+
 function tooltipFor(tab: PanelTab): string {
   if (tab.kind === 'terminal') return tab.startedIn ?? tab.cwd;
   if (tab.kind === 'changes') return tab.projectPath;
+  if (tab.kind === 'side-chat') return branchPointTooltip(tab.branchPointText);
   return tab.path === null ? tab.projectPath : absoluteProjectPath(tab.projectPath, tab.path);
 }
 
@@ -59,6 +70,7 @@ export function PanelTabs({ tabs, selectedId, onSelect, onClose, onPin }: {
                 >
                   {tab.kind === 'terminal' && <SquareTerminal aria-hidden className="size-3.5 shrink-0" />}
                   {tab.kind === 'changes' && <FileDiff aria-hidden className="size-3.5 shrink-0" />}
+                  {tab.kind === 'side-chat' && <MessageCircle aria-hidden className="size-3.5 shrink-0" />}
                   {tab.kind === 'file' && (tab.path === null
                     ? <FolderTypeIcon className="size-3.5 shrink-0" name={basename(tab.projectPath)} />
                     : <FileTypeIcon className="size-3.5 shrink-0" path={tab.path} />)}

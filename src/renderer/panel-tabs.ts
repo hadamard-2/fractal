@@ -1,4 +1,5 @@
 import { nextTerminalNumber, type TerminalTab } from '@/components/right-panel/terminal-tabs';
+import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
 
 export type TerminalPanelTab = TerminalTab & { kind: 'terminal' };
 
@@ -15,7 +16,19 @@ export type FilePanelTab = {
 
 export type ChangesPanelTab = { kind: 'changes'; id: string; projectPath: string };
 
-export type PanelTab = TerminalPanelTab | FilePanelTab | ChangesPanelTab;
+export type SideChatPanelTab = {
+  kind: 'side-chat';
+  id: string;
+  /** The conversation the side chat hangs under, fixed when the tab is created; the tab stays when another is selected. */
+  root: ConversationRef;
+  /** Set while unsent: what the first send forks from, and the composer's starting text. */
+  draft?: { parent: ConversationRef; afterTurnId: string; text: string };
+  /** Null until the first send creates it. */
+  sideChat: ConversationRef | null;
+  branchPointText?: string;
+};
+
+export type PanelTab = TerminalPanelTab | FilePanelTab | ChangesPanelTab | SideChatPanelTab;
 
 export interface PanelTabsState {
   tabs: PanelTab[];
@@ -99,4 +112,30 @@ export function openFile(state: PanelTabsState, projectPath: string, path: strin
 /** Makes a file tab permanent. A tab with no file stays a preview, so the next file still fills it. */
 export function pinTab(state: PanelTabsState, id: string): PanelTabsState {
   return { ...state, tabs: state.tabs.map((tab) => (tab.kind === 'file' && tab.id === id && tab.path !== null ? { ...tab, preview: false } : tab)) };
+}
+
+/** A new unsent tab, except that an unsent tab with the same parent and turn and empty text is selected instead. */
+export function startSideChatTab(
+  state: PanelTabsState,
+  { root, parent, afterTurnId, text, branchPointText }: { root: ConversationRef; parent: ConversationRef; afterTurnId: string; text: string; branchPointText?: string },
+  newId: string,
+): PanelTabsState {
+  const parentKey = conversationKey(parent);
+  const existing = text === '' && state.tabs.find((tab) => tab.kind === 'side-chat' && tab.sideChat === null && tab.draft !== undefined
+    && tab.draft.text === '' && tab.draft.afterTurnId === afterTurnId && conversationKey(tab.draft.parent) === parentKey);
+  if (existing) return selectTab(state, existing.id);
+  return append(state, { kind: 'side-chat', id: newId, root, draft: { parent, afterTurnId, text }, sideChat: null, ...(branchPointText === undefined ? {} : { branchPointText }) });
+}
+
+/** Selects the tab bound to `sideChat`, or adds one. */
+export function openSideChatTab(state: PanelTabsState, { root, sideChat, branchPointText }: { root: ConversationRef; sideChat: ConversationRef; branchPointText?: string }, newId: string): PanelTabsState {
+  const key = conversationKey(sideChat);
+  const existing = state.tabs.find((tab) => tab.kind === 'side-chat' && tab.sideChat !== null && conversationKey(tab.sideChat) === key);
+  if (existing) return selectTab(state, existing.id);
+  return append(state, { kind: 'side-chat', id: newId, root, sideChat, ...(branchPointText === undefined ? {} : { branchPointText }) });
+}
+
+/** Binds a tab to the side chat its first send created, or with null puts it back to unsent; the draft stays either way. */
+export function bindSideChatTab(state: PanelTabsState, id: string, sideChat: ConversationRef | null): PanelTabsState {
+  return { ...state, tabs: state.tabs.map((tab) => (tab.kind === 'side-chat' && tab.id === id ? { ...tab, sideChat } : tab)) };
 }

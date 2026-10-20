@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type FilePanelTab, type PanelTabsState } from './panel-tabs';
+import type { ConversationRef } from '@/shared/conversation-contract';
+import { activeTerminalId, addTerminalTab, bindSideChatTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, openSideChatTab, pinTab, selectTab, startSideChatTab, updateTerminalTab, type FilePanelTab, type PanelTabsState } from './panel-tabs';
 
 const fileTabs = (state: PanelTabsState) => state.tabs.filter((tab): tab is FilePanelTab => tab.kind === 'file');
 const selected = (state: PanelTabsState) => state.tabs.find((tab) => tab.id === state.selectedId);
@@ -101,6 +102,62 @@ describe('changes tabs', () => {
     expect(state.selectedId).toBe('c2');
     state = closeTab(state, 'c2');
     expect(state.tabs.map((tab) => tab.id)).toEqual(['c1', 't1']);
+    expect(state.selectedId).toBe('t1');
+  });
+});
+
+describe('side-chat tabs', () => {
+  const root: ConversationRef = { provider: 'claude', nativeSessionId: 'root', projectPath: '/repo' };
+  const side: ConversationRef = { provider: 'claude', nativeSessionId: 'side', projectPath: '/repo' };
+  const start = (state: PanelTabsState, afterTurnId: string, text: string, id: string) =>
+    startSideChatTab(state, { root, parent: root, afterTurnId, text, branchPointText: 'The reply' }, id);
+  const sideChatTabs = (state: PanelTabsState) => state.tabs.filter((tab) => tab.kind === 'side-chat');
+
+  test('starts an unsent tab and selects it', () => {
+    const state = start(emptyPanelTabs, 'turn-1', '', 's1');
+    expect(selected(state)).toEqual({ kind: 'side-chat', id: 's1', root, draft: { parent: root, afterTurnId: 'turn-1', text: '' }, sideChat: null, branchPointText: 'The reply' });
+  });
+
+  test('reselects an unsent tab with the same parent, turn and no text, and opens a new one otherwise', () => {
+    let state = start(emptyPanelTabs, 'turn-1', '', 's1');
+    state = addTerminalTab(state, 't1', '/repo');
+    state = start(state, 'turn-1', '', 'unused');
+    expect(sideChatTabs(state)).toHaveLength(1);
+    expect(state.selectedId).toBe('s1');
+    state = start(state, 'turn-1', '> quoted', 's2');
+    state = start(state, 'turn-2', '', 's3');
+    state = startSideChatTab(state, { root, parent: side, afterTurnId: 'turn-1', text: '' }, 's4');
+    expect(sideChatTabs(state).map((tab) => tab.id)).toEqual(['s1', 's2', 's3', 's4']);
+    expect(state.selectedId).toBe('s4');
+    state = bindSideChatTab(state, 's1', side);
+    state = start(state, 'turn-1', '', 's5');
+    expect(state.selectedId).toBe('s5');
+  });
+
+  test('binding sets or clears the side chat and keeps the draft', () => {
+    let state = start(emptyPanelTabs, 'turn-1', 'Why?', 's1');
+    state = bindSideChatTab(state, 's1', side);
+    expect(selected(state)).toMatchObject({ sideChat: side, draft: { parent: root, afterTurnId: 'turn-1', text: 'Why?' } });
+    state = bindSideChatTab(state, 's1', null);
+    expect(selected(state)).toMatchObject({ sideChat: null, draft: { afterTurnId: 'turn-1', text: 'Why?' } });
+  });
+
+  test('opening a side chat selects the tab bound to it, or adds one', () => {
+    let state = start(emptyPanelTabs, 'turn-1', '', 's1');
+    state = bindSideChatTab(state, 's1', side);
+    state = addTerminalTab(state, 't1', '/repo');
+    state = openSideChatTab(state, { root, sideChat: { ...side } }, 'unused');
+    expect(state.selectedId).toBe('s1');
+    const other: ConversationRef = { ...side, nativeSessionId: 'other' };
+    state = openSideChatTab(state, { root, sideChat: other, branchPointText: 'Earlier' }, 's2');
+    expect(selected(state)).toEqual({ kind: 'side-chat', id: 's2', root, sideChat: other, branchPointText: 'Earlier' });
+  });
+
+  test('closes like any other tab', () => {
+    let state = addTerminalTab(emptyPanelTabs, 't1', '/repo');
+    state = start(state, 'turn-1', '', 's1');
+    state = closeTab(state, 's1');
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['t1']);
     expect(state.selectedId).toBe('t1');
   });
 });

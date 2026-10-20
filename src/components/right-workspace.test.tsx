@@ -1,9 +1,26 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { initialConversationState, type ConversationState } from '@/renderer/conversation-reducer';
+import { conversationKey, type ConversationRef, type ConversationRuntime, type ConversationTurn } from '@/shared/conversation-contract';
+import { useSideChatLauncher } from './right-panel/side-chat-launcher';
 import { RightWorkspace } from './right-workspace';
+
+// The selected conversation's state, as Execute's lease keeps it in the hub.
+const hub = vi.hoisted(() => {
+  const states = new Map<string, unknown>();
+  const listeners = new Set<() => void>();
+  return {
+    states,
+    listeners,
+    // Unleased, a conversation reads as not yet loaded.
+    state: (ref: { provider: string; nativeSessionId: string }) => states.get(`${ref.provider}:${ref.nativeSessionId}`) ?? { history: 'idle', turns: [], runtime: 'unknown' },
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+});
+vi.mock('@/renderer/conversation-hub', () => ({ conversationHub: () => hub }));
 
 vi.mock('./terminal-view', () => ({
   TerminalView: ({ cwd, focusToken }: { cwd: string | null; focusToken?: number }) => (
@@ -35,19 +52,43 @@ vi.mock('./right-panel/changes/changes-pane', () => ({
   },
 }));
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); changesPaneProps.length = 0; });
+const boundRef: ConversationRef = { provider: 'claude', nativeSessionId: 'bound', projectPath: '/repo' };
+vi.mock('./right-panel/side-chat-pane', () => ({
+  SideChatPane: ({ root, draft, sideChat, branchPointText, onBound, onGone }: {
+    root: ConversationRef; draft?: { parent: ConversationRef; afterTurnId: string; text: string }; sideChat: ConversationRef | null; branchPointText?: string;
+    onBound: (ref: ConversationRef | null) => void; onGone: () => void;
+  }) => (
+    <div
+      data-after-turn={draft?.afterTurnId}
+      data-branch-point={branchPointText}
+      data-launcher={useSideChatLauncher() ? 'yes' : 'no'}
+      data-root={root.nativeSessionId}
+      data-side-chat={sideChat?.nativeSessionId}
+      data-testid="side-chat-pane"
+    >
+      <textarea aria-label="Side question" defaultValue={draft?.text} />
+      <button onClick={() => onBound(boundRef)} type="button">Bind</button>
+      <button onClick={onGone} type="button">Gone</button>
+    </div>
+  ),
+}));
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); changesPaneProps.length = 0; hub.states.clear(); hub.listeners.clear(); });
 
 const box = (left: number, width: number) => ({ left, width, x: left, y: 0, top: 0, right: left + width, bottom: 800, height: 800, toJSON: (): void => undefined });
 
-function Harness({ withInset = false, onResizingChange = () => undefined, projectPath = '/repo' as string | null }: { withInset?: boolean; onResizingChange?: (resizing: boolean) => void; projectPath?: string | null }) {
+function Harness({ withInset = false, onResizingChange = () => undefined, projectPath = '/repo' as string | null, conversation = null, children }: {
+  withInset?: boolean; onResizingChange?: (resizing: boolean) => void; projectPath?: string | null;
+  conversation?: { ref: ConversationRef; readOnly: boolean } | null; children?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState<number | null>(null);
   const insetRef = useRef<HTMLDivElement>(null);
   return (
     <>
       <button onClick={() => setOpen(!open)} type="button">{open ? 'Close panel' : 'Open panel'}</button>
-      <RightWorkspace leftInsetRef={withInset ? insetRef : undefined} onOpenChange={setOpen} onResizingChange={onResizingChange} onWidthChange={setWidth} open={open} projectPath={projectPath} width={width}>
-        <div data-inset={withInset || undefined} ref={insetRef}>Content</div>
+      <RightWorkspace conversation={conversation} leftInsetRef={withInset ? insetRef : undefined} onOpenChange={setOpen} onResizingChange={onResizingChange} onWidthChange={setWidth} open={open} projectPath={projectPath} width={width}>
+        <div data-inset={withInset || undefined} ref={insetRef}>Content{children}</div>
       </RightWorkspace>
     </>
   );
@@ -285,4 +326,142 @@ test('only the selected Changes tab is active', async () => {
   expect(lastActive()).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Close panel' }));
   expect(lastActive()).toBe(false);
+});
+
+describe('side chats', () => {
+  const ref: ConversationRef = { provider: 'claude', nativeSessionId: 'root', projectPath: '/repo' };
+  const turn = (id: string, status: ConversationTurn['status'], reply: string): ConversationTurn => ({
+    id, nativeId: id, userMessage: { id: `${id}-user`, text: 'Ask' }, status, captureCompleteness: 'complete',
+    blocks: [{ id: `${id}-reply`, kind: 'assistant-prose', text: reply, provider: 'claude' }],
+  });
+  const setState = (turns: ConversationTurn[], runtime: ConversationRuntime = 'idle', history: ConversationState['history'] = 'complete') => {
+    hub.states.set(conversationKey(ref), { ...initialConversationState, ref, turns, runtime, history });
+    act(() => { for (const listener of hub.listeners) listener(); });
+  };
+  const sideChatEntry = () => screen.getByRole('menuitem', { name: 'Side chat' });
+  // The selected tab's pane; the others stay mounted, hidden.
+  const pane = () => within(screen.getByRole('tabpanel')).getByTestId('side-chat-pane');
+  const panes = () => screen.queryAllByTestId('side-chat-pane');
+
+  function Child() {
+    const launcher = useSideChatLauncher();
+    if (!launcher) return <p>No launcher</p>;
+    return (
+      <>
+        <button onClick={() => launcher.start({ root: ref, parent: ref, turn: turn('t1', 'completed', 'The reply'), text: '> quoted' })} type="button">Start from child</button>
+        <button onClick={() => launcher.open({ root: ref, sideChat: boundRef, branchPointText: 'Earlier' })} type="button">Open from child</button>
+      </>
+    );
+  }
+
+  test('Side chat is unavailable with nothing selected, in a subagent chat, and with no reply to branch from', async () => {
+    const user = userEvent.setup();
+    const view = render(<Harness />);
+    await user.click(screen.getByRole('button', { name: 'Open panel' }));
+    expect(sideChatEntry().hasAttribute('disabled')).toBe(true);
+    expect(sideChatEntry().textContent).toBe('Side chatOpen a conversation first');
+    setState([turn('t1', 'completed', 'Done')]);
+    view.rerender(<Harness conversation={{ ref, readOnly: true }} />);
+    expect(sideChatEntry().textContent).toBe('Side chatNot available in subagent chats');
+    setState([turn('t1', 'active', 'Working')], 'active-in-fractal');
+    view.rerender(<Harness conversation={{ ref, readOnly: false }} />);
+    expect(sideChatEntry().hasAttribute('disabled')).toBe(true);
+    expect(sideChatEntry().textContent).toBe('Side chatNo reply to branch from yet');
+    setState([turn('t1', 'completed', 'Done')], 'idle', 'loading');
+    expect(sideChatEntry().textContent).toBe('Side chatNo reply to branch from yet');
+    setState([turn('t1', 'completed', 'Done')]);
+    expect(sideChatEntry().hasAttribute('disabled')).toBe(false);
+    expect(sideChatEntry().textContent).toBe('Side chat');
+  });
+
+  test('branches from the latest finished reply while the latest turn is still running, from the list and the + menu', async () => {
+    setState([turn('t1', 'completed', 'First answer'), turn('t2', 'active', 'Still going')], 'active-in-fractal');
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }} />);
+    await user.click(screen.getByRole('button', { name: 'Open panel' }));
+    await user.click(sideChatEntry());
+    expect(screen.getByRole('tab', { name: 'Side chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(pane().dataset).toMatchObject({ afterTurn: 't1', branchPoint: 'First answer', root: 'root' });
+    expect(pane().dataset.sideChat).toBeUndefined();
+    setState([turn('t1', 'completed', 'First answer'), turn('t2', 'completed', 'Second answer')]);
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(sideChatEntry());
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(2);
+    expect(pane().dataset).toMatchObject({ afterTurn: 't2', branchPoint: 'Second answer' });
+    // The same reply again, with nothing typed in its starting text, reselects that tab.
+    await user.click(screen.getByRole('tab', { name: 'Side chat', selected: false }));
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(sideChatEntry());
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(2);
+    expect(pane().dataset.afterTurn).toBe('t2');
+  });
+
+  test('a child starts and opens side chats, opening the panel and selecting the tab', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    expect(panel().getAttribute('aria-hidden')).toBe('false');
+    expect(screen.getByRole('tab', { name: 'Side chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(pane().dataset).toMatchObject({ afterTurn: 't1', branchPoint: 'The reply', launcher: 'yes' });
+    expect((screen.getByRole('textbox', { name: 'Side question' }) as HTMLTextAreaElement).value).toBe('> quoted');
+    await user.click(screen.getByRole('button', { name: 'Bind' }));
+    expect(pane().dataset.sideChat).toBe('bound');
+    await user.click(screen.getByRole('button', { name: 'Close panel' }));
+    await user.click(screen.getByRole('button', { name: 'Open from child' }));
+    expect(panel().getAttribute('aria-hidden')).toBe('false');
+    expect(screen.getAllByRole('tab', { name: 'Side chat' })).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+    await user.click(screen.getByRole('button', { name: 'Open from child' }));
+    expect(screen.getByRole('tab', { name: 'Side chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(pane().dataset.sideChat).toBe('bound');
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  test('a child opens a side chat with no tab yet in a new tab', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Open from child' }));
+    expect(screen.getByRole('tab', { name: 'Side chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(pane().dataset).toMatchObject({ sideChat: 'bound', branchPoint: 'Earlier', root: 'root' });
+    expect(pane().dataset.afterTurn).toBeUndefined();
+  });
+
+  test('there is no launcher without a project', () => {
+    render(<Harness conversation={{ ref, readOnly: false }} projectPath={null}><Child /></Harness>);
+    expect(screen.getByText('No launcher')).toBeTruthy();
+  });
+
+  test('a pane whose side chat is gone closes its tab', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    await user.click(screen.getByRole('button', { name: 'Gone' }));
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(panes()).toHaveLength(0);
+    expect(screen.getByRole('menu', { name: 'Add a tool' })).toBeTruthy();
+  });
+
+  test('a side-chat pane stays mounted while another tab is selected', async () => {
+    const user = userEvent.setup();
+    render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    const question = screen.getByRole('textbox', { name: 'Side question' });
+    await user.type(question, ' and more');
+    await user.click(screen.getByRole('button', { name: 'Add tool' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Terminal' }));
+    expect(screen.queryByRole('textbox', { name: 'Side question' })).toBeNull();
+    expect(panes()).toHaveLength(1);
+    await user.click(screen.getByRole('tab', { name: 'Side chat' }));
+    expect(screen.getByRole('textbox', { name: 'Side question' })).toBe(question);
+    expect((question as HTMLTextAreaElement).value).toBe('> quoted and more');
+  });
+
+  test('side-chat tabs stay when the selected conversation changes', async () => {
+    const user = userEvent.setup();
+    const view = render(<Harness conversation={{ ref, readOnly: false }}><Child /></Harness>);
+    await user.click(screen.getByRole('button', { name: 'Start from child' }));
+    view.rerender(<Harness conversation={null}><Child /></Harness>);
+    expect(screen.getByRole('tab', { name: 'Side chat' })).toBeTruthy();
+  });
 });

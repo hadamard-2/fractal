@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { List, Plus } from 'lucide-react';
+import { replyPreview } from '@/components/conversation/conversation-turn';
 import { ChangesPane } from '@/components/right-panel/changes/changes-pane';
 import { FilesPane } from '@/components/right-panel/files/files-pane';
 import { PanelTabs } from '@/components/right-panel/panel-tabs';
+import { SideChatLauncherContext, type SideChatLauncher } from '@/components/right-panel/side-chat-launcher';
+import { SideChatPane } from '@/components/right-panel/side-chat-pane';
 import { ToolList, ToolMenuItems } from '@/components/right-panel/tool-entries';
 import { TerminalLauncherContext, type OpenTerminalWith } from '@/components/right-panel/terminal-launcher';
 import { TerminalView } from '@/components/terminal-view';
@@ -10,8 +13,11 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { activeTerminalId, addTerminalTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, pinTab, selectTab, updateTerminalTab, type ChangesPanelTab, type FilePanelTab, type PanelTabsState, type TerminalPanelTab } from '@/renderer/panel-tabs';
+import { conversationHub } from '@/renderer/conversation-hub';
+import { activeTerminalId, addTerminalTab, bindSideChatTab, closeTab, emptyPanelTabs, openChangesTool, openFile, openFilesTool, openSideChatTab, pinTab, selectTab, startSideChatTab, updateTerminalTab, type ChangesPanelTab, type FilePanelTab, type PanelTabsState, type SideChatPanelTab, type TerminalPanelTab } from '@/renderer/panel-tabs';
 import { PANEL_MIN_WIDTH, clampPanelWidth, defaultPanelWidth, filesTreeDocked, panelLayout } from '@/renderer/right-panel-layout';
+import { latestBranchableTurn } from '@/renderer/side-chat-branching';
+import type { ConversationRef } from '@/shared/conversation-contract';
 
 // An element's width and left edge, kept current. Falls back to window
 // resizes where ResizeObserver is missing.
@@ -42,7 +48,7 @@ function useBox(ref: RefObject<HTMLElement | null> | undefined) {
  * animation re-renders only the panel: `children` arrives unchanged and React
  * skips it.
  */
-export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidthChange, onResizingChange, leftInsetRef, projectPath, children }: {
+export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidthChange, onResizingChange, leftInsetRef, projectPath, conversation, children }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // Controlled by App, which also places the mode toggle against it. Null
@@ -54,6 +60,8 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   // a left sidebar begins. Omitted in modes without one.
   leftInsetRef?: RefObject<HTMLElement | null>;
   projectPath: string | null;
+  // The selected conversation, where Side chat from the tool list branches; readOnly for a subagent conversation.
+  conversation: { ref: ConversationRef; readOnly: boolean } | null;
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -84,6 +92,7 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
   const terminalTabs = tabs.filter((tab): tab is TerminalPanelTab => tab.kind === 'terminal');
   const fileTabs = tabs.filter((tab): tab is FilePanelTab => tab.kind === 'file');
   const changesTabs = tabs.filter((tab): tab is ChangesPanelTab => tab.kind === 'changes');
+  const sideChatTabs = tabs.filter((tab): tab is SideChatPanelTab => tab.kind === 'side-chat');
   const selectedFileTab = selectedTab?.kind === 'file' ? selectedTab : undefined;
   const docked = filesTreeDocked(width);
   const treeShown = selectedFileTab !== undefined && (docked ? dockedTreeOpen : overlayOpen || selectedFileTab.path === null);
@@ -110,6 +119,42 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
     addTerminal(text);
   };
   const [launcher] = useState<OpenTerminalWith>(() => (text: string) => openTerminalWith.current(text));
+  // Side chats belong to their root, like terminals to their directory, so
+  // selecting another conversation leaves their tabs open. Read through a ref
+  // so the context value stays stable across renders.
+  const sideChatActions = useRef<SideChatLauncher>({ start: () => undefined, open: () => undefined });
+  sideChatActions.current = {
+    start: ({ root, parent, turn, text }) => {
+      if (projectPath === null) return;
+      if (!open) onOpenChange(true);
+      const id = crypto.randomUUID();
+      const branchPointText = replyPreview(turn) || undefined;
+      setPanelTabs((previous) => startSideChatTab(previous, { root, parent, afterTurnId: turn.id, text, branchPointText }, id));
+    },
+    open: ({ root, sideChat, branchPointText }) => {
+      if (projectPath === null) return;
+      if (!open) onOpenChange(true);
+      const id = crypto.randomUUID();
+      setPanelTabs((previous) => openSideChatTab(previous, { root, sideChat, branchPointText }, id));
+    },
+  };
+  const [sideChatLauncher] = useState<SideChatLauncher>(() => ({
+    start: (input) => sideChatActions.current.start(input),
+    open: (input) => sideChatActions.current.open(input),
+  }));
+  // Only the branchable turn's id is read from the hub, so a streamed event
+  // re-renders the panel only when it changes which reply Side chat would use.
+  const hub = conversationHub();
+  const branchTurnId = useSyncExternalStore(hub.subscribe, () => (conversation ? latestBranchableTurn(hub.state(conversation.ref), conversation.readOnly)?.id ?? null : null));
+  const startSideChatFromTool = () => {
+    if (!conversation) return;
+    const turn = latestBranchableTurn(hub.state(conversation.ref), conversation.readOnly);
+    if (turn) sideChatLauncher.start({ root: conversation.ref, parent: conversation.ref, turn, text: '' });
+  };
+  const sideChatTool = conversation === null ? { hint: 'Open a conversation first' }
+    : conversation.readOnly ? { hint: 'Not available in subagent chats' }
+    : branchTurnId === null ? { hint: 'No reply to branch from yet' }
+    : { onSelect: startSideChatFromTool };
   const openFiles = () => {
     if (projectPath === null) return;
     const id = crypto.randomUUID();
@@ -194,7 +239,9 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
         the mode and panel toggles, which float over the header row.
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ '--app-bar-reserve': layout.headerReserve } as CSSProperties}>
-        <TerminalLauncherContext.Provider value={projectPath === null ? null : launcher}>{children}</TerminalLauncherContext.Provider>
+        <TerminalLauncherContext.Provider value={projectPath === null ? null : launcher}>
+          <SideChatLauncherContext.Provider value={projectPath === null ? null : sideChatLauncher}>{children}</SideChatLauncherContext.Provider>
+        </TerminalLauncherContext.Provider>
       </div>
       {/*
         The panel keeps its full width and slides; this in-flow gap is what
@@ -246,13 +293,13 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                   <DropdownMenuTrigger asChild>
                     <Button aria-label="Add tool" className="size-8 shrink-0" size="icon" variant="ghost"><Plus aria-hidden className="size-4" /></Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} /></DropdownMenuContent>
+                  <DropdownMenuContent align="start" className="w-56"><ToolMenuItems onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} /></DropdownMenuContent>
                 </DropdownMenu>
               )}
             </div>
             {tabs.length === 0 ? (
               <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-                <ToolList onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} />
+                <ToolList onChanges={openChanges} onFiles={openFiles} onTerminal={() => addTerminal()} projectOpen={projectPath !== null} sideChat={sideChatTool} />
               </div>
             ) : (
               <div className="mx-2 mt-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-md border border-sidebar-border">
@@ -279,6 +326,25 @@ export function RightWorkspace({ open, onOpenChange, width: chosenWidth, onWidth
                     />
                   </div>
                 ))}
+                {/*
+                  Each pane holds its conversation and composer, so a hidden
+                  tab keeps its pane. A side chat's own selection menu starts
+                  nested side chats through the launcher.
+                */}
+                <SideChatLauncherContext.Provider value={projectPath === null ? null : sideChatLauncher}>
+                  {sideChatTabs.map((tab) => (
+                    <div aria-labelledby={tab.id} className="h-full" hidden={selectedId !== tab.id} id={`panel-${tab.id}`} key={tab.id} role="tabpanel">
+                      <SideChatPane
+                        branchPointText={tab.branchPointText}
+                        draft={tab.draft}
+                        onBound={(sideChat) => setPanelTabs((previous) => bindSideChatTab(previous, tab.id, sideChat))}
+                        onGone={() => setPanelTabs((previous) => closeTab(previous, tab.id))}
+                        root={tab.root}
+                        sideChat={tab.sideChat}
+                      />
+                    </div>
+                  ))}
+                </SideChatLauncherContext.Provider>
                 {fileTabs.length > 0 && (
                   <div className="h-full" hidden={!selectedFileTab}>
                     <FilesPane

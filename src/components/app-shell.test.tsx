@@ -24,8 +24,10 @@ test('explains no selection and opens native sidebar refs while identifying unav
   };
   Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
   const onProjectPathChange = vi.fn();
-  render(<AppShell onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
+  const onConversationChange = vi.fn();
+  render(<AppShell onConversationChange={onConversationChange} onOpenSettings={() => undefined} onProjectPathChange={onProjectPathChange}>{(shell) => <ExecuteMode {...shell} />}</AppShell>);
   expect(onProjectPathChange).toHaveBeenLastCalledWith(null);
+  expect(onConversationChange).toHaveBeenLastCalledWith(null);
   expect(screen.getByText('Pick up a thread')).toBeTruthy();
   await screen.findByText("Claude Code isn't available, so its conversations are hidden");
   const user = userEvent.setup();
@@ -34,6 +36,7 @@ test('explains no selection and opens native sidebar refs while identifying unav
   await user.click(await screen.findByRole('button', { name: /Review native history/ }));
   await waitFor(() => expect(api.open).toHaveBeenCalledWith(ref, expect.any(String)));
   expect(onProjectPathChange).toHaveBeenLastCalledWith('/work/fractal');
+  expect(onConversationChange).toHaveBeenLastCalledWith({ ref, readOnly: false });
   expect(screen.queryByLabelText('Conversation details')).toBeNull();
   expect(screen.getByText('(Codex · Status unknown)')).toBeTruthy();
 });
