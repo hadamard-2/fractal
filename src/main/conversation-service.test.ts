@@ -892,6 +892,23 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('keeps listing an unlisted fork of a side chat under the main conversation after the side chat is deleted', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source, ...f.extra]);
+      f.adapter.readSummary = vi.fn(async (unlisted: ConversationRef) => unlisted.nativeSessionId === 'forked' ? { ...f.forked, ref: unlisted } : null);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      f.deleteConversation.mockImplementation(async (deleted) => { f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item.ref.nativeSessionId !== deleted.nativeSessionId)); });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      await f.service.deleteSideChat(f.at('side'));
+      expect(f.records.has('claude:side')).toBe(false);
+      const listed = await conversations(f);
+      expect(listed.map((item) => item.ref.nativeSessionId)).toEqual(['main', 'forked']);
+      expect(listed[1].forkedFrom).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 2 });
+      await f.service.dispose();
+    });
+
     test('lists a fork made before the first message of a Claude conversation while it is still a draft', async () => {
       const f = branchFixture(undefined, claude);
       vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source]);
@@ -924,6 +941,15 @@ describe('ConversationService branches', () => {
       const plain = await f.service.open(ref, nextLoadId);
       expect(plain).not.toHaveProperty('forkedFrom');
       expect(plain.summary).not.toHaveProperty('forkedFrom');
+      await f.service.dispose();
+    });
+
+    test('opens a side chat without lineage even when the agent reports one', async () => {
+      const f = branchFixture();
+      f.records.set('codex:side', side('codex:session'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side', forkedFrom: { parentKey: 'codex:session' } });
+      const opened = await f.service.open(f.at('side'), loadId);
+      expect(opened).not.toHaveProperty('forkedFrom');
       await f.service.dispose();
     });
 

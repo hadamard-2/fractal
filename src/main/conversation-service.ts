@@ -99,10 +99,13 @@ export class ConversationService {
     return current;
   }
 
-  /** Fractal's record of a fork when it has one, else the lineage the agent reports, nested under the main conversation of a side chat it names. */
+  /**
+   * Fractal's record when it has one: a fork's lineage, and none for a side chat, whose agent may report the copy it was made with as a fork.
+   * Without a record, the lineage the agent reports, nested under the main conversation of a side chat it names.
+   */
   private lineageOf(key: string, reported: ForkLineage | undefined): ForkLineage | undefined {
     const record = this.branches?.get(key);
-    if (record?.kind === 'fork') return { parentKey: record.nestsUnder ?? record.parentKey, inheritedTurnCount: record.inheritedTurnCount };
+    if (record) return record.kind === 'fork' ? { parentKey: record.nestsUnder ?? record.parentKey, inheritedTurnCount: record.inheritedTurnCount } : undefined;
     return reported && { ...reported, parentKey: this.mainKeyOf(reported.parentKey) };
   }
 
@@ -112,7 +115,7 @@ export class ConversationService {
   }
 
   /**
-   * A recorded fork the listing lacks: an unsent draft, or the agent's own summary read under the project of its nearest listed ancestor.
+   * A recorded fork the listing lacks: an unsent draft, or the agent's own summary read under the project of its nearest listed ancestor or of the main conversation it nests under.
    * Null when it has no listed ancestor, or the agent does not have it or cannot read it.
    */
   private async readUnlistedFork(key: string, listed: Map<string, string>): Promise<ConversationSummary | null> {
@@ -120,9 +123,9 @@ export class ConversationService {
     if (draft) return this.withLineage(structuredClone(draft));
     const visited = new Set([key]);
     let projectPath: string | undefined;
-    for (let record = this.branches?.get(key); record && !visited.has(record.parentKey); record = this.branches?.get(record.parentKey)) {
-      projectPath = listed.get(record.parentKey);
-      if (projectPath !== undefined) break;
+    for (let record = this.branches?.get(key); record && projectPath === undefined && !visited.has(record.parentKey); record = this.branches?.get(record.parentKey)) {
+      // nestsUnder first: once a side chat is deleted its record is gone, and the walk through parentKey ends at it.
+      projectPath = (record.nestsUnder === undefined ? undefined : listed.get(record.nestsUnder)) ?? listed.get(record.parentKey);
       visited.add(record.parentKey);
     }
     if (projectPath === undefined) return null;
