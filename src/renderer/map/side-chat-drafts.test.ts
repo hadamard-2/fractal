@@ -61,7 +61,7 @@ describe('quoteSelection', () => {
 });
 
 describe('submitDraft, new side chat', () => {
-  test('forks after the turn, refreshes the side chats, and sends with the model choice once the history is complete and idle', async () => {
+  test('forks after the turn, refreshes the side chats, and sends with the parent\'s model choice once the history is complete and idle', async () => {
     const { hub, api, complete } = fakeHub();
     const d = deps(hub);
     const submitted = submitDraft(draft, d);
@@ -74,7 +74,8 @@ describe('submitDraft, new side chat', () => {
     await expect(submitted).resolves.toEqual(forked);
     expect(api.continue).toHaveBeenCalledWith(forked, { text: 'Why?', model: 'opus', effort: 'high' });
     expect(api.continue.mock.calls[0][1]).not.toHaveProperty('access');
-    expect(d.modelChoice).toHaveBeenCalledWith(forked);
+    expect(d.modelChoice).toHaveBeenCalledTimes(1);
+    expect(d.modelChoice).toHaveBeenCalledWith(root);
     expect(d.deleteSideChat).not.toHaveBeenCalled();
   });
 
@@ -153,6 +154,8 @@ describe('submitDraft, continuing', () => {
     await expect(submitDraft(continuing, d)).resolves.toEqual(side);
     expect(d.fork).not.toHaveBeenCalled();
     expect(api.continue).toHaveBeenCalledWith(side, { text: 'Why?', model: 'opus', effort: 'high' });
+    expect(d.modelChoice).toHaveBeenCalledTimes(1);
+    expect(d.modelChoice).toHaveBeenCalledWith(side);
     release();
   });
 

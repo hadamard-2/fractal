@@ -105,15 +105,19 @@ function whenReady(hub: ConversationHub, ref: ConversationRef, timeoutMs: number
   });
 }
 
-async function send(hub: ConversationHub, ref: ConversationRef, text: string, modelChoice: (ref: ConversationRef) => Promise<ModelChoice | null>): Promise<void> {
-  const choice = await modelChoice(ref);
+/** Sends to `ref` with the model choice resolved for `choiceOf`. */
+async function send(hub: ConversationHub, ref: ConversationRef, text: string, choiceOf: ConversationRef, modelChoice: (ref: ConversationRef) => Promise<ModelChoice | null>): Promise<void> {
+  const choice = await modelChoice(choiceOf);
   // A side chat never sends an access setting.
   const sent = hub.send(ref, { text, ...choice });
   if (!sent) throw new Error('The side chat can\'t take a message');
   await sent;
 }
 
-/** Forks (unless it continues), waits for the new side chat's history, then sends with its resolved model choice. Resolves with the side chat's ref. */
+/**
+ * Forks (unless it continues), waits for the new side chat's history, then sends. A new side chat's first message runs with the
+ * parent's resolved model choice; a continued one with its own. Resolves with the side chat's ref.
+ */
 export async function submitDraft(draft: SideChatDraft, deps: {
   hub: ConversationHub;
   fork: ConversationApi['fork'];
@@ -125,7 +129,7 @@ export async function submitDraft(draft: SideChatDraft, deps: {
 }): Promise<ConversationRef> {
   const { hub, modelChoice } = deps;
   if (draft.continues) {
-    try { await send(hub, draft.continues, draft.text, modelChoice); }
+    try { await send(hub, draft.continues, draft.text, draft.continues, modelChoice); }
     catch { throw new Error(SEND_FAILED); }
     return draft.continues;
   }
@@ -137,7 +141,7 @@ export async function submitDraft(draft: SideChatDraft, deps: {
   try {
     await deps.refreshSideChats();
     await whenReady(hub, ref, deps.timeoutMs ?? HISTORY_TIMEOUT_MS);
-    await send(hub, ref, draft.text, modelChoice);
+    await send(hub, ref, draft.text, draft.parent, modelChoice);
     return ref;
   } catch {
     // An unsent side chat would have no messages to show or delete it by, so it goes; best effort.

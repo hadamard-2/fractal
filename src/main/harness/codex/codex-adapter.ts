@@ -92,6 +92,10 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   async loadConversation(ref: ConversationRef): Promise<LoadedConversation> {
+    if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
+    // A thread this server has not loaded reads as notLoaded. A side chat is resumed here, with its read-only overrides, so it
+    // loads idle and can take its next message; nothing else would resume it, since it never asks for its model or access.
+    if (this.isReadOnlyThread(ref.nativeSessionId)) await this.resumeThread(ref);
     const thread = await this.readThread(ref);
     const events = normalizeCodexThread(thread);
     return { summary: await this.summaryFromThread(thread, completenessFor(thread, events)), events: asAsyncIterable(events) };
@@ -168,10 +172,12 @@ export class CodexAdapter implements HarnessAdapter {
     const projectPath = await this.canonicalPath(source.projectPath);
     const base = { threadId: source.nativeSessionId, lastTurnId: afterTurnId, cwd: projectPath };
     const note = options.note ? { developerInstructions: options.note } : {};
-    // A full fork starts with the parent's own model and access; a side chat is pinned read-only with approvals off.
+    // Both start on the parent's own model, so neither falls back to the CLI's configured default.
+    // A full fork also keeps the parent's access; a side chat is pinned read-only with approvals off.
+    const parent = await this.resumeThread(source);
     const settings = options.readOnly
-      ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const, config: await this.readOnlyConfig(projectPath) }
-      : forkSettingsFrom(await this.resumeThread(source));
+      ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const, config: await this.readOnlyConfig(projectPath), ...(parent.model ? { model: parent.model } : {}) }
+      : forkSettingsFrom(parent);
     const response = await this.server.request('thread/fork', { ...base, ...settings, ...note });
     if (await this.canonicalPath(response.thread.cwd) !== projectPath) throw new Error('Forked Codex project does not match the selected project');
     if (options.readOnly) this.readOnlyThreads.add(response.thread.id);

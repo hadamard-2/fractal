@@ -708,14 +708,37 @@ describe('Codex fork and read-only runs', () => {
     expect(adapterFor(createFakeAppServer()).capabilities().fork).toBe(true);
   });
 
-  test('forks a read-only side chat through the turn, with approvals off and the note as developer instructions', async () => {
+  test('forks a read-only side chat through the turn on the parent\'s model, with approvals off and the note as developer instructions', async () => {
     const server = createFakeAppServer();
     const forked = await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, note: 'Side chat note', title: 'Side' });
     expect(forkParams(server)).toEqual({
-      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: 'Side chat note', config: readOnlyConfig,
+      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: 'Side chat note', config: readOnlyConfig, model: 'gpt-5.6-terra',
     });
     expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
-    expect(server.requests.map((request) => request.method)).not.toContain('thread/resume');
+    const methods = server.requests.map((request) => request.method);
+    expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal' });
+    expect(methods.indexOf('thread/resume')).toBeLessThan(methods.indexOf('thread/fork'));
+  });
+
+  test('keeps a side chat on the parent\'s read-only settings, not its access, and sends no model when the parent reports none', async () => {
+    const server = createFakeAppServer();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => {
+      const result = await request(method, params);
+      return method === 'thread/resume' ? { ...(result as object), model: '', sandbox: { type: 'dangerFullAccess' }, approvalPolicy: 'on-request' } : result;
+    });
+    await adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+    expect(forkParams(server)).toEqual({
+      threadId: 'thread-1', lastTurnId: 'turn-3', cwd: '/work/fractal', sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', config: readOnlyConfig,
+    });
+  });
+
+  test('does not fork a side chat when the parent cannot be resumed', async () => {
+    const server = createFakeAppServer();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'thread/resume') throw new Error('resume failed'); return request(method, params); });
+    await expect(adapterFor(server).forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' })).rejects.toThrow('resume failed');
+    expect(server.requests.map((entry) => entry.method)).not.toContain('thread/fork');
   });
 
   test('forks a side chat with every configured MCP server off, read from the project\'s effective config', async () => {
@@ -758,7 +781,7 @@ describe('Codex fork and read-only runs', () => {
     const side = await adapter.forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
     await adapter.readAccess(side);
     const run = await adapter.continueConversation(side, { text: 'Look', branch: { readOnly: true } });
-    const resumes = server.requests.filter((request) => request.method === 'thread/resume');
+    const resumes = server.requests.filter((request) => request.method === 'thread/resume' && (request.params as { threadId?: string }).threadId === 'forked-thread');
     expect(resumes).toHaveLength(2);
     for (const resume of resumes) expect(resume.params).toEqual({ threadId: 'forked-thread', cwd: '/work/fractal', config: readOnlyConfig });
     await run.dispose();
@@ -780,6 +803,54 @@ describe('Codex fork and read-only runs', () => {
     ]);
     await adapter.readAccess(ref);
     expect(server.requests.filter((request) => request.method === 'thread/resume').at(-1)?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal' });
+  });
+
+  describe('loading a side chat', () => {
+    const side = { provider: 'codex' as const, nativeSessionId: 't-side', projectPath: '/work/fractal' };
+    const sideAdapter = (server: ReturnType<typeof createFakeAppServer>) => new CodexAdapter(server as never, { realpath: async (value) => value, isReadOnlyThread: (id) => id === 't-side' });
+    function readsAs(server: ReturnType<typeof createFakeAppServer>, id: string) {
+      const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+      server.request.mockImplementation(async (method, params) => {
+        const result = await request(method, params);
+        return method === 'thread/read' ? { thread: { ...threadRead.thread, id } } : result;
+      });
+    }
+
+    test('resumes a read-only thread with its read-only config before reading it, so it loads in this server', async () => {
+      const server = createFakeAppServer();
+      readsAs(server, 't-side');
+      const adapter = sideAdapter(server);
+      await adapter.loadConversation(side);
+      const methods = server.requests.map((request) => request.method);
+      expect(server.requests.find((request) => request.method === 'thread/resume')?.params).toEqual({ threadId: 't-side', cwd: '/work/fractal', config: readOnlyConfig });
+      expect(methods.indexOf('thread/resume')).toBeLessThan(methods.indexOf('thread/read'));
+      // Still resumable with its overrides afterwards: the load did not count as a resume without them.
+      const run = await adapter.continueConversation(side, { text: 'Look', branch: { readOnly: true } });
+      await run.dispose();
+    });
+
+    test('resumes a side chat this process forked', async () => {
+      const server = createFakeAppServer();
+      readsAs(server, 'forked-thread');
+      const adapter = adapterFor(server);
+      const forked = await adapter.forkConversation(ref, 'turn-3', { readOnly: true, title: 'Side' });
+      await adapter.loadConversation(forked);
+      expect(server.requests.filter((request) => request.method === 'thread/resume').at(-1)?.params).toEqual({ threadId: 'forked-thread', cwd: '/work/fractal', config: readOnlyConfig });
+    });
+
+    test('does not resume a thread that is not read-only', async () => {
+      const server = createFakeAppServer();
+      await sideAdapter(server).loadConversation(ref);
+      expect(server.requests.map((request) => request.method)).toEqual(['thread/read']);
+    });
+
+    test('fails the load when the resume fails, without reading', async () => {
+      const server = createFakeAppServer();
+      const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+      server.request.mockImplementation(async (method, params) => { if (method === 'thread/resume') throw new Error('resume failed'); return request(method, params); });
+      await expect(sideAdapter(server).loadConversation(side)).rejects.toThrow('resume failed');
+      expect(server.requests.map((entry) => entry.method)).not.toContain('thread/read');
+    });
   });
 
   test('refuses a read-only run on a thread already resumed in this process without the overrides', async () => {
