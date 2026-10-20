@@ -111,6 +111,15 @@ describe('Codex read adapter', () => {
     expect(summaries[0]).toMatchObject({ runtime: 'idle', createdAt: 1768000000000, updatedAt: 1768000030000, captureCompleteness: 'unknown' });
   });
 
+  test('reads the thread a listed thread was forked from', async () => {
+    const forked = { ...thread('newer'), forkedFromId: 'thr_parent' };
+    const server = createFakeAppServer([[forked, thread('older')], []]);
+    const summaries = await new CodexAdapter(server as never).listConversations();
+
+    expect(summaries[0]?.forkedFrom).toEqual({ parentKey: 'codex:thr_parent' });
+    expect(summaries[1]).not.toHaveProperty('forkedFrom');
+  });
+
   test('stops a repeated cursor and deduplicates overlapping native pages', async () => {
     const server = createFakeAppServer([[thread('newer'), thread('older')], [thread('older')]], true);
     const summaries = await new CodexAdapter(server as never, { realpath: async (value) => value }).listConversations();

@@ -6,6 +6,7 @@ import { createCodexLiveNormalizationContext, normalizeCodexNotification, normal
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
+import { conversationKey } from '@/shared/conversation-contract';
 import type { AccessState, AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import type { AgentPrompt, ConversationRun, ForkOptions, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import { codexAccessOverrides, codexAccessState, codexReadOnlyOverrides } from '@/main/harness/codex/codex-access';
@@ -537,6 +538,7 @@ function summaryFromThread(thread: Awaited<CodexRequestMap['thread/read']['resul
     ref: { provider: 'codex', nativeSessionId: thread.id, projectPath }, title,
     createdAt: thread.createdAt * 1000, updatedAt: thread.updatedAt * 1000,
     runtime: runtimeFor(thread.status), captureCompleteness,
+    ...(thread.forkedFromId ? { forkedFrom: { parentKey: conversationKey({ provider: 'codex', nativeSessionId: thread.forkedFromId }) } } : {}),
   };
 }
 
