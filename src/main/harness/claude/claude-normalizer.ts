@@ -338,9 +338,14 @@ const BOOKKEEPING_ATTACHMENT_TYPES = new Set([
 // ({ uuid, state }) and the account's rate-limit state.
 const BOOKKEEPING_STREAM_RECORD_TYPES = new Set(['command_lifecycle', 'rate_limit_event']);
 
-// hook_started and hook_progress report a hook running; post_turn_summary is a generated status
-// line for a turn whose content the stream already carried. The last three are live-stream only.
-const BOOKKEEPING_SYSTEM_SUBTYPES = new Set(['stop_hook_summary', 'turn_duration', 'hook_started', 'hook_progress', 'post_turn_summary']);
+// hook_started and hook_progress report a hook running; post_turn_summary and task_summary are
+// generated status lines (after a turn, and while its tools run) for content the stream already
+// carried; session_title_changed repeats the session's name, which the session list carries;
+// thinking_tokens is an approximate progress count. All but the first two are live-stream only.
+const BOOKKEEPING_SYSTEM_SUBTYPES = new Set([
+  'stop_hook_summary', 'turn_duration', 'hook_started', 'hook_progress', 'post_turn_summary', 'task_summary',
+  'session_title_changed', 'thinking_tokens',
+]);
 
 function isClaudeBookkeepingRecord(record: ClaudeHistoryRecord): boolean {
   const type = stringValue(record.type);

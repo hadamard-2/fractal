@@ -87,6 +87,9 @@ export function normalizeCodexNotification(notification: ServerNotification, con
           kind: 'action-updated', turnId: notification.params.turnId, actionId, status: 'running', patch: change.diff,
         });
       });
+    case 'thread/tokenUsage/updated':
+      // Token counts after each model response: accounting, not conversation content.
+      return [];
     default:
       return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnId(notification))];
   }

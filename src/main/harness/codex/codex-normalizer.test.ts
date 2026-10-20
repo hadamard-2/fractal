@@ -164,6 +164,14 @@ describe('Codex native normalization', () => {
     expect(afterInterrupt[0]?.payload).toMatchObject({ text: 'new' });
   });
 
+  test('drops the token usage Codex reports after each model response', () => {
+    // Recorded from codex-cli 0.162.1's app server.
+    const usage = { totalTokens: 17460, inputTokens: 17455, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 0 };
+    expect(normalizeCodexNotification({ method: 'thread/tokenUsage/updated', params: {
+      threadId: '01a159ee-8347-79c3-a9bb-1cfef893df72', turnId: '01a159ee-83c1-7943-8751-93fc7fa8578f', tokenUsage: { total: usage, last: usage, modelContextWindow: 258400 },
+    } }, createCodexLiveNormalizationContext())).toEqual([]);
+  });
+
   test('finishes a failed turn whose completion carries no loaded items', () => {
     const events = normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
       id: 'turn-1', items: [], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null, additionalDetails: null }, startedAt: 1, completedAt: 2, durationMs: 1_000,

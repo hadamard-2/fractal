@@ -265,6 +265,12 @@ describe('normalizeClaudeRecord', () => {
       { ...live, type: 'system', uuid: 's4', subtype: 'hook_progress', hook_id: 'h1', hook_name: 'SessionStart:startup', hook_event: 'SessionStart', stdout: 'partial', stderr: '', output: 'partial' },
       { ...live, type: 'system', uuid: 's5', subtype: 'hook_response', hook_id: 'h1', hook_name: 'SessionStart:startup', hook_event: 'SessionStart', output: 'ok', stdout: 'ok', stderr: '', exit_code: 0, outcome: 'success' },
       { ...live, type: 'system', uuid: 's6', subtype: 'post_turn_summary', summarizes_uuid: 'm1', status_category: 'done', status_detail: 'Answered', needs_action: false },
+      // task_summary as Claude Code 2.1.296 streams it: a progress line while tools run, then null once the turn is idle.
+      { ...live, type: 'system', uuid: 's10', subtype: 'task_summary', detail: 'Finding *.txt' },
+      { ...live, type: 'system', uuid: 's11', subtype: 'task_summary', detail: null },
+      // Also from 2.1.296: a titled fork's name on its first resume, and a live thinking-token estimate.
+      { ...live, type: 'system', uuid: 's12', subtype: 'session_title_changed', title: 'side' },
+      { ...live, type: 'system', uuid: 's13', subtype: 'thinking_tokens', estimated_tokens: 206, estimated_tokens_delta: 156, user_message_uuid: 'u2' },
     ];
     for (const [ordinal, record] of bookkeeping.entries()) expect(normalizeClaudeRecord(record, ordinal, context)).toEqual([]);
     const kept: ClaudeHistoryRecord[] = [
