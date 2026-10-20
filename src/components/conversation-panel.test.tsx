@@ -771,4 +771,22 @@ describe('forking from Execute', () => {
     expect(screen.getByText('notes.md')).toBeTruthy();
     expect(forkDraft(key)).toBeUndefined();
   });
+
+  test('sends a fork\'s pre-filled message as it was: its text, its image as bytes and its file by path', async () => {
+    URL.revokeObjectURL = vi.fn();
+    const send = vi.fn<ConversationApi['continue']>(async () => undefined);
+    install('idle', send, { ...allCapabilities, fork: true });
+    setForkDraft(conversationKey(claudeRef), { text: 'Why is the parser slow?', files: [
+      { filename: 'image.png', mediaType: 'image/png', url: 'data:image/png;base64,AAA' },
+      { filename: 'notes.md', mediaType: 'application/octet-stream', url: '', path: '/work/fractal/notes.md' },
+    ] });
+    render(<ConversationPanel conversationRef={claudeRef} />);
+    await ready(claudeRef);
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    expect(send).toHaveBeenCalledWith(claudeRef, expect.objectContaining({
+      text: 'Why is the parser slow?',
+      attachments: [{ kind: 'bytes', name: 'image.png', mediaType: 'image/png', data: 'AAA' }, { kind: 'path', path: '/work/fractal/notes.md' }],
+    }));
+  });
 });

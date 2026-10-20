@@ -37,7 +37,7 @@ export function forkDraftOf(turn: ConversationTurn): ForkDraft {
       })),
       // The composer has no preview for a path, so it shows as a file chip.
       ...attachments.map((attachment): ForkDraftFile => ({
-        filename: attachment.path.slice(attachment.path.lastIndexOf('/') + 1),
+        filename: attachment.path.split(/[\\/]/).pop() ?? attachment.path,
         mediaType: 'application/octet-stream',
         url: '',
         path: attachment.path,

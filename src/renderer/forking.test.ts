@@ -77,6 +77,11 @@ describe('forkDraftOf', () => {
     ]);
   });
 
+  test('names a Windows path\'s attachment after its last segment', () => {
+    const windows: ConversationTurn = { ...message, userMessage: { ...message.userMessage, images: [], attachments: [{ path: 'C:\\p\\a.ts', kind: 'file' }] } };
+    expect(forkDraftOf(windows).files).toEqual([{ filename: 'a.ts', mediaType: 'application/octet-stream', url: '', path: 'C:\\p\\a.ts' }]);
+  });
+
   test('is just the text for a plain message', () => {
     expect(forkDraftOf(turn('one'))).toEqual({ text: 'one', files: [] });
   });
