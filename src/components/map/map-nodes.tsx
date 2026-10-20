@@ -94,7 +94,7 @@ function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
         {onDelete && <DeleteAction onDelete={onDelete} />}
       </div>
       {/* The message itself: text selected in here can start a side chat. */}
-      <div className="nodrag nopan cursor-text px-3 pb-3 select-text" data-map-message="">{children}</div>
+      <div className="nodrag nopan cursor-text px-3 pb-3 select-text" data-selection-source={id}>{children}</div>
       {/* Main-line and side-chat edges attach here; only the branch handle starts a connection. */}
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Top} type="target" />
       <Handle className="map-handle-anchor" isConnectable={false} position={Position.Bottom} type="source" />

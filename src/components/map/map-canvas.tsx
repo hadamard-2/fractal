@@ -2,6 +2,7 @@ import { Background, BackgroundVariant, ReactFlow, useReactFlow, type Dimensions
 import '@xyflow/react/dist/base.css';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Shimmer } from '@/components/ai-elements/shimmer';
+import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
 import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
@@ -14,7 +15,6 @@ import { DeleteSideChatDialog } from './delete-side-chat-dialog';
 import { ComposerEnvironmentContext, type ComposerEnvironment } from './composer-node';
 import { MapControls } from './map-controls';
 import { MAP_NODE_TYPES, MapNodeEnvironmentContext, type MapNodeEnvironment, type SideChatDeletion } from './map-nodes';
-import { SelectionMenu, useMessageSelection } from './selection-menu';
 
 type MapNode = Node<MapNodeData>;
 
@@ -124,14 +124,15 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
     if (draft) dispatchDraft({ type: 'add', draft });
   }, [readOnly, screenToFlowPosition]);
 
+  const canvas = useRef<HTMLDivElement>(null);
   const nodeData = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node.data])), [graph.nodes]);
   const branchable = useCallback((id: string) => {
     const data = nodeData.get(id);
     return data !== undefined && canBranchFrom(data);
   }, [nodeData]);
-  const { selection, dismiss } = useMessageSelection(readOnly ? null : branchable);
+  const { selection, dismiss } = useMessageSelection(canvas, readOnly ? null : branchable);
   const chooseSideChat = () => {
-    const data = selection && nodeData.get(selection.nodeId);
+    const data = selection && nodeData.get(selection.sourceId);
     const draft = data && draftFromMessage(data, selection.text, crypto.randomUUID());
     if (draft) dispatchDraft({ type: 'add', draft });
     window.getSelection()?.removeAllRanges();
@@ -221,29 +222,31 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
   return (
     <MapNodeEnvironmentContext.Provider value={environment}>
       <ComposerEnvironmentContext.Provider value={composerEnvironment}>
-        <ReactFlow<MapNode>
-          defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
-          deleteKeyCode={null}
-          edges={graph.edges}
-          elementsSelectable={false}
-          maxZoom={MAP.maxZoom}
-          minZoom={MAP.minZoom}
-          nodeTypes={MAP_NODE_TYPES}
-          nodes={nodes}
-          nodesConnectable
-          onConnectEnd={onConnectEnd}
-          onMoveStart={dismiss}
-          onNodeDragStart={dismiss}
-          onNodeDragStop={onNodeDragStop}
-          onNodesChange={onNodesChange}
-          panOnScroll
-          proOptions={PRO_OPTIONS}
-          snapGrid={SNAP_GRID}
-          snapToGrid
-        >
-          <Background gap={MAP.grid} size={1.5} variant={BackgroundVariant.Dots} />
-          <MapControls onViewChange={setView} view={layout.view} />
-        </ReactFlow>
+        <div className="min-h-0 min-w-0 flex-1" ref={canvas}>
+          <ReactFlow<MapNode>
+            defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+            deleteKeyCode={null}
+            edges={graph.edges}
+            elementsSelectable={false}
+            maxZoom={MAP.maxZoom}
+            minZoom={MAP.minZoom}
+            nodeTypes={MAP_NODE_TYPES}
+            nodes={nodes}
+            nodesConnectable
+            onConnectEnd={onConnectEnd}
+            onMoveStart={dismiss}
+            onNodeDragStart={dismiss}
+            onNodeDragStop={onNodeDragStop}
+            onNodesChange={onNodesChange}
+            panOnScroll
+            proOptions={PRO_OPTIONS}
+            snapGrid={SNAP_GRID}
+            snapToGrid
+          >
+            <Background gap={MAP.grid} size={1.5} variant={BackgroundVariant.Dots} />
+            <MapControls onViewChange={setView} view={layout.view} />
+          </ReactFlow>
+        </div>
         {empty && (history === 'idle' || history === 'loading') && <CanvasMessage><Shimmer className="text-sm">Reading history…</Shimmer></CanvasMessage>}
         {empty && history === 'complete' && <CanvasMessage>No messages yet.</CanvasMessage>}
         {empty && history === 'failed' && <CanvasMessage>History unavailable</CanvasMessage>}
