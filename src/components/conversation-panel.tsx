@@ -7,6 +7,7 @@ import { AttachmentPreviewProvider } from '@/components/conversation/attachment-
 import { AccessPicker } from '@/components/conversation/access-picker';
 import { nextAccessLevel } from '@/components/conversation/access-choice';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
+import { LiveStatus, turnActivity } from '@/components/conversation/live-status';
 import { ModelPicker } from '@/components/conversation/model-picker';
 import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
 import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
@@ -97,6 +98,14 @@ function NativeConversationPanel({ active, conversationRef, onRuntimeChange, rea
   const canResolve = state.history === 'complete' && state.sync === 'current'
     && (state.runtime === 'active-in-fractal' || state.runtime === 'waiting-for-user');
   const loading = state.history === 'loading' || state.history === 'idle';
+  // A transcript never records a turn ending, so the previous turn can still read as active. A
+  // send here notes the last turn it followed; only a newer one is the run's. A run this panel
+  // didn't start (opened mid-run) falls back to the latest turn.
+  const [sentAfter, setSentAfter] = useState<{ turnId?: string } | null>(null);
+  const lastTurn = state.turns.at(-1);
+  const activity = turnActivity(sentAfter && lastTurn?.id === sentAfter.turnId ? undefined : lastTurn);
+  // An open request is pinned by the composer and says what the agent is waiting on instead.
+  const liveStatus = (state.runtime === 'active-in-fractal' || sending) && !request && activity ? <LiveStatus activity={activity} key={activity.key} /> : null;
   const gap = routingGap(conversationRef.provider, state.capabilities);
 
   // Request events own the audit state; open controls stay by the composer
@@ -135,6 +144,7 @@ function NativeConversationPanel({ active, conversationRef, onRuntimeChange, rea
     if (!dispatched) throw new Error('Message was not sent');
     const attempt = {};
     pendingSend.current = attempt;
+    setSentAfter({ turnId: state.turns.at(-1)?.id });
     setSending(true);
     setActionError(null);
     try {
@@ -175,11 +185,10 @@ function NativeConversationPanel({ active, conversationRef, onRuntimeChange, rea
     <div className="@container relative flex size-full flex-col overflow-hidden">
       {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
       {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
-      {turns.length ? <div className="flex min-h-0 flex-1 flex-col" ref={transcript}><AttachmentPreviewProvider conversationRef={conversationRef}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider></div> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
+      {turns.length ? <div className="flex min-h-0 flex-1 flex-col" ref={transcript}><AttachmentPreviewProvider conversationRef={conversationRef}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} footer={liveStatus} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider></div> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : liveStatus ? <div className={`py-4 ${COLUMN}`}>{liveStatus}</div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
       <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 [scrollbar-gutter:stable] ${COLUMN}`}>
         {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
-        {state.runtime === 'active-in-fractal' && !canSend && !request && <p className="py-2 text-sm text-muted-foreground">The agent is working. You can send another message when it finishes.</p>}
         {gap && <p className="py-2 text-sm text-muted-foreground" role="status">{gap}</p>}
         {actionError && <p className="py-2 text-sm text-destructive" role="alert">{actionError}</p>}
         <PromptInput

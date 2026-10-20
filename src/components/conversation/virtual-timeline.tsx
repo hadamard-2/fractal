@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,9 +17,11 @@ interface Props {
   onResolve: (requestId: string, decision: UserDecision) => void | Promise<void>;
   columnClassName?: string;
   historyComplete?: boolean;
+  /** Shown after the last turn, inside its row, so it is measured and scrolled with it. */
+  footer?: ReactNode;
 }
 
-function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', historyComplete = true }: Props) {
+function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', historyComplete = true, footer }: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const [saved] = useState(() => positions.get(conversationId));
   const restoring = useRef(Boolean(saved?.anchor));
@@ -143,6 +145,7 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
         <div className="relative w-full" style={{ height: size }}>
           {virtualizer.getVirtualItems().map((item) => <div className={`absolute left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ top: item.start }}>
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />
+            {footer && item.index === turns.length - 1 && <div className="mt-4">{footer}</div>}
           </div>)}
         </div>
       </div>

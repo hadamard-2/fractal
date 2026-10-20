@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
@@ -633,5 +633,66 @@ describe('the side-chat selection menu', () => {
     await open({ active: false });
     select('It re-reads every file.');
     expect(menu()).toBeNull();
+  });
+});
+
+describe('the live status line', () => {
+  const status = () => screen.queryByRole('status', { name: 'Agent status' });
+  const transcript = () => screen.getByRole('log', { name: 'Conversation transcript' });
+  // jsdom has no layout: give the timeline a viewport and its rows a height so it renders them.
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: (): void => undefined });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 120 : 560; });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(560);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
+  });
+
+  test('says the agent is thinking as soon as a run starts, in place of an empty transcript', async () => {
+    install('active-in-fractal');
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    expect(status()?.textContent).toMatch(/^Thinking · 0s$/);
+    expect(screen.queryByText('No messages yet')).toBeNull();
+    expect(screen.queryByText(/The agent is working/)).toBeNull();
+  });
+
+  test('sits in the transcript after the last turn, where the reply continues', async () => {
+    install('active-in-fractal');
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    const running: ConversationTurn = {
+      id: 't1', nativeId: 't1', userMessage: { id: 'u1', text: 'Run the tests' }, status: 'active', captureCompleteness: 'complete',
+      blocks: [{ id: 'p1', kind: 'work-packet', status: 'active', actions: [{ id: 'a1', nativeId: 'a1', provider: 'codex', captureCompleteness: 'complete', kind: 'command', command: 'pnpm test', status: 'running', startedAt: Date.now() }] }],
+    };
+    act(() => emit({ ref, loadId, seq: seq++, type: 'turn.upserted', turn: running }));
+    await waitFor(() => expect(status()?.textContent).toMatch(/^Running a command · \d+s$/));
+    const line = within(transcript()).getByRole('status', { name: 'Agent status' });
+    const turn = within(transcript()).getByRole('article', { name: 'Conversation turn' });
+    expect(turn.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('does not read a previous turn its transcript left active as the run it just started', async () => {
+    install('idle', () => new Promise<void>(() => undefined));
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    const previous: ConversationTurn = { id: 't0', nativeId: 't0', userMessage: { id: 'u0', text: 'Hi' }, status: 'active', captureCompleteness: 'complete', blocks: [{ id: 'x', kind: 'assistant-prose', text: 'Hello there.', provider: 'codex' }] };
+    act(() => emit({ ref, loadId, seq: seq++, type: 'history.chunk', chunkIndex: 0, turns: [previous] }));
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Next question');
+    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(within(transcript()).getByRole('status', { name: 'Agent status' }).textContent).toMatch(/^Thinking · 0s$/));
+  });
+
+  test('is absent while the agent is idle, and while it waits on a request', async () => {
+    install('idle');
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    expect(status()).toBeNull();
+    cleanup();
+    install('active-in-fractal');
+    render(<ConversationPanel conversationRef={ref} />);
+    await ready();
+    act(() => emit({ ref, loadId, seq: seq++, type: 'request.opened', request: { id: 'approval', kind: 'approval', provider: 'codex', title: 'Run command?', operation: 'pnpm lint', status: 'open' } }));
+    expect(status()).toBeNull();
   });
 });
