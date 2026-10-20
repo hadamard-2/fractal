@@ -3,6 +3,19 @@ import { conversationKey, type ConversationRef, type SideChatSummary } from '@/s
 
 const NONE: SideChatSummary[] = [];
 
+/** The side chats below `ref`, reached through side-chat parents; forks and the conversations around them don't count. */
+export function sideChatsBelow(sideChats: readonly SideChatSummary[], ref: ConversationRef): SideChatSummary[] {
+  const reached = new Set([conversationKey(ref)]);
+  const below: SideChatSummary[] = [];
+  // Parents come before children in the listing, so one pass reaches every depth.
+  for (const summary of sideChats) {
+    if (!reached.has(summary.parentKey) || reached.has(conversationKey(summary.ref))) continue;
+    reached.add(conversationKey(summary.ref));
+    below.push(summary);
+  }
+  return below;
+}
+
 /**
  * The side chats under `root`, parents before children. Listed when the root
  * changes and again on `refresh()`; a later listing always wins over an earlier

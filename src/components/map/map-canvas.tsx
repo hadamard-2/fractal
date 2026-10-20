@@ -2,22 +2,29 @@ import { Background, BackgroundVariant, ReactFlow, useReactFlow, type Dimensions
 import '@xyflow/react/dist/base.css';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Shimmer } from '@/components/ai-elements/shimmer';
-import { conversationKey, type ConversationRef, type ModelChoice } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ConversationRuntime, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
-import { buildMapGraph, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
+import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
 import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, submitDraft, type HandOff } from '@/renderer/map/side-chat-drafts';
 import { useMapLayout } from '@/renderer/map/use-map-layout';
-import { useSideChats } from '@/renderer/map/use-side-chats';
+import { sideChatsBelow, useSideChats } from '@/renderer/map/use-side-chats';
+import { DeleteSideChatDialog } from './delete-side-chat-dialog';
 import { ComposerEnvironmentContext, type ComposerEnvironment } from './composer-node';
 import { MapControls } from './map-controls';
-import { MAP_NODE_TYPES, MapNodeEnvironmentContext, type MapNodeEnvironment } from './map-nodes';
+import { MAP_NODE_TYPES, MapNodeEnvironmentContext, type MapNodeEnvironment, type SideChatDeletion } from './map-nodes';
 import { SelectionMenu, useMessageSelection } from './selection-menu';
 
 type MapNode = Node<MapNodeData>;
 
 /** Where a node is while the user drags or resizes it, until the layout takes over at the end. */
 interface Override { position?: XYPosition; width?: number }
+
+/** A side chat in one of these is running or waiting on the user, so it can't be deleted. */
+const BUSY_RUNTIMES: ReadonlySet<ConversationRuntime> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
+
+/** The side chat the user is being asked about, with the side chats inside it as the list had them then. */
+interface PendingDeletion { sideChat: SideChatSummary; below: SideChatSummary[] }
 
 const NO_DRAFTS: readonly SideChatDraft[] = [];
 const SNAP_GRID: [number, number] = [MAP.grid, MAP.grid];
@@ -47,7 +54,7 @@ function modelChoiceOf(ref: ConversationRef): Promise<ModelChoice | null> {
 /** The map of one root conversation and its side chats. Mount it inside a ReactFlowProvider, one per root, so unsent drafts go with the root. */
 export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly: boolean }) {
   const { sideChats, refresh: refreshSideChats } = useSideChats(root);
-  const { layout, moveNode, resizeNode, setView } = useMapLayout(root);
+  const { layout, moveNode, resizeNode, setView, dropNodesOf } = useMapLayout(root);
   const refs = useMemo(() => [root, ...sideChats.map((summary) => summary.ref)], [root, sideChats]);
   const states = useConversationStates(refs);
   const rootState = states.get(conversationKey(root)) ?? initialConversationState;
@@ -175,15 +182,33 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
     if (done.size > 0) setHandOffs((prior) => prior.filter((handOff) => !done.has(handOff)));
   }, [handOffs, states, sideChats, moveNode]);
 
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null);
+  const deletions = useMemo(() => {
+    const offered = new Map<string, SideChatDeletion>();
+    for (const { summary, state } of sideChatStates) {
+      const below = sideChatsBelow(sideChats, summary.ref);
+      const busy = [state, ...below.map((nested) => states.get(conversationKey(nested.ref)))].some((own) => own !== undefined && BUSY_RUNTIMES.has(own.runtime));
+      if (busy) continue;
+      const firstTurnId = state.turns.slice(summary.inheritedTurnCount).find(hasUserContent)?.id;
+      offered.set(conversationKey(summary.ref), { firstTurnId, request: () => setPendingDeletion({ sideChat: summary, below }) });
+    }
+    return offered;
+  }, [sideChatStates, sideChats, states]);
+  const deleted = async ({ sideChat, below }: PendingDeletion) => {
+    dropNodesOf([sideChat, ...below].map((gone) => conversationKey(gone.ref)));
+    await refreshSideChats();
+  };
+
   const environment = useMemo((): MapNodeEnvironment => ({
     view: layout.view,
+    deletions,
     onResizeEnd: (id, { x, y, width }) => {
       // Listing the node pins its position too, which a resize from the left edge has also moved.
       moveNode(id, { x, y });
       resizeNode(id, width);
       setOverrides((prior) => withoutEntry(prior, id));
     },
-  }), [layout.view, moveNode, resizeNode]);
+  }), [layout.view, deletions, moveNode, resizeNode]);
 
   // Fit once per root, when its history first finishes loading; later rebuilds keep the user's viewport.
   const fitted = useRef(false);
@@ -225,6 +250,14 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
         {empty && history === 'complete' && <CanvasMessage>No messages yet.</CanvasMessage>}
         {empty && history === 'failed' && <CanvasMessage>History unavailable</CanvasMessage>}
         {selection && <SelectionMenu onChoose={chooseSideChat} selection={selection} />}
+        {pendingDeletion && (
+          <DeleteSideChatDialog
+            nested={pendingDeletion.below.length}
+            onClose={() => setPendingDeletion(null)}
+            onDeleted={() => deleted(pendingDeletion)}
+            sideChat={pendingDeletion.sideChat}
+          />
+        )}
       </ComposerEnvironmentContext.Provider>
     </MapNodeEnvironmentContext.Provider>
   );

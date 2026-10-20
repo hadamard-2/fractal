@@ -1,6 +1,6 @@
 import type { XYPosition } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MAP } from '@/renderer/map/map-graph';
+import { isNodeOf, MAP } from '@/renderer/map/map-graph';
 import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
 import { EMPTY_MAP_LAYOUT, type MapLayout, type MapView } from '@/shared/map-contract';
 
@@ -46,6 +46,8 @@ export function useMapLayout(root: ConversationRef | null): {
   /** Sets the width of a node the layout lists; the canvas lists a node it resizes with moveNode first. */
   resizeNode(id: string, width: number): void;
   setView(view: MapView): void;
+  /** Forgets every spot and width kept for the nodes of the conversations with these keys. */
+  dropNodesOf(keys: readonly string[]): void;
 } {
   const key = root ? conversationKey(root) : null;
   const latestRoot = useRef(root);
@@ -107,5 +109,15 @@ export function useMapLayout(root: ConversationRef | null): {
     edit((layout) => layout.view === view ? layout : { ...layout, view });
   }, [edit]);
 
-  return { layout: shown.key === key && key !== null ? shown.layout : EMPTY_MAP_LAYOUT, moveNode, resizeNode, setView };
+  const dropNodesOf = useCallback((keys: readonly string[]) => {
+    edit((layout) => {
+      const ids = Object.keys(layout.nodes).filter((id) => keys.some((key) => isNodeOf(key, id)));
+      if (ids.length === 0) return layout;
+      const nodes = { ...layout.nodes };
+      for (const id of ids) delete nodes[id];
+      return { ...layout, nodes };
+    });
+  }, [edit]);
+
+  return { layout: shown.key === key && key !== null ? shown.layout : EMPTY_MAP_LAYOUT, moveNode, resizeNode, setView, dropNodesOf };
 }

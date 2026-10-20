@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { ConversationRef } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef } from '@/shared/conversation-contract';
 import { EMPTY_MAP_LAYOUT, type MapApi, type MapLayout } from '@/shared/map-contract';
 import { useMapLayout } from './use-map-layout';
 
@@ -73,6 +73,37 @@ test('a resize stays within 240 to 960 and leaves an unlisted node to automatic 
   expect(result.current.layout.nodes.kept.width).toBe(240);
   act(() => { result.current.resizeNode('unlisted', 400); });
   expect(result.current.layout.nodes.unlisted).toBeUndefined();
+});
+
+test('dropping a conversation\'s nodes saves a layout without them, and keeps the others', async () => {
+  const gone = conversationKey(refB);
+  const layout: MapLayout = {
+    view: 'preview',
+    nodes: {
+      [`${gone}|t1|user`]: { x: 0, y: 0 }, [`${gone}|t1|reply`]: { x: 0, y: 200, width: 400 }, [`detached|${gone}`]: { x: 20, y: 20 },
+      [`${conversationKey(refA)}|t1|user`]: { x: 40, y: 40 }, [`${gone}x:2|t1|user`]: { x: 60, y: 60 },
+    },
+  };
+  const api = install({ layout: vi.fn(async () => layout) });
+  const { result } = await mounted();
+  act(() => { result.current.dropNodesOf([gone]); });
+  const rest = { [`${conversationKey(refA)}|t1|user`]: { x: 40, y: 40 }, [`${gone}x:2|t1|user`]: { x: 60, y: 60 } };
+  expect(result.current.layout.nodes).toEqual(rest);
+  act(() => { vi.advanceTimersByTime(300); });
+  await settle();
+  expect(api.saveLayout).toHaveBeenCalledTimes(1);
+  expect(api.saveLayout).toHaveBeenCalledWith(refA, { view: 'preview', nodes: rest });
+});
+
+test('dropping nodes that aren\'t listed changes and saves nothing', async () => {
+  const api = install({ layout: vi.fn(async () => stored) });
+  const { result } = await mounted();
+  const before = result.current.layout;
+  act(() => { result.current.dropNodesOf([conversationKey(refB)]); result.current.dropNodesOf([]); });
+  expect(result.current.layout).toBe(before);
+  act(() => { vi.advanceTimersByTime(1000); });
+  await settle();
+  expect(api.saveLayout).not.toHaveBeenCalled();
 });
 
 test('flushes the pending save when the root changes, and loads the new root', async () => {

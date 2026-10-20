@@ -40,6 +40,11 @@ export function mapNodeId(owner: ConversationRef, turnId: string, part: 'user' |
   return `${conversationKey(owner)}|${turnId}|${part}`;
 }
 
+/** Whether the node with this id is one of the conversation's own: a message node, or the marker of a branch point it lost. */
+export function isNodeOf(key: string, id: string): boolean {
+  return id.startsWith(`${key}|`) || id === `detached|${key}`;
+}
+
 const composerNodeId = (draft: SideChatDraft) => `composer|${draft.id}`;
 const detachedNodeId = (sideChat: SideChatSummary) => `detached|${conversationKey(sideChat.ref)}`;
 const edgeId = (source: string, target: string) => `${source}->${target}`;
@@ -49,7 +54,7 @@ function snap(value: number): number {
   return Math.round(value / MAP.grid) * MAP.grid || 0;
 }
 
-function hasUserContent(turn: ConversationTurn): boolean {
+export function hasUserContent(turn: ConversationTurn): boolean {
   const { text, images, attachments } = turn.userMessage;
   return text.trim() !== '' || (images?.length ?? 0) > 0 || (attachments?.length ?? 0) > 0;
 }
