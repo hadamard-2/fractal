@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Paperclip } from 'lucide-react';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -9,8 +9,12 @@ import { nextAccessLevel } from '@/components/conversation/access-choice';
 import { BlockingRequest } from '@/components/conversation/blocking-request';
 import { ModelPicker } from '@/components/conversation/model-picker';
 import { composerFileError, promptAttachments } from '@/components/conversation/prompt-attachments';
+import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
 import { VirtualTimeline } from '@/components/conversation/virtual-timeline';
+import { useSideChatLauncher } from '@/components/right-panel/side-chat-launcher';
 import { providerName } from '@/components/sidebar-03/nav-main';
+import { canBranchTurn } from '@/renderer/side-chat-branching';
+import { quoteSelection } from '@/renderer/side-chat-start';
 import { useAccessChoice } from '@/renderer/use-access-choice';
 import { useConversation } from '@/renderer/use-conversation';
 import { useModelChoice } from '@/renderer/use-model-choice';
@@ -53,7 +57,7 @@ function routingGap(provider: ConversationRef['provider'], capabilities: Harness
 
 type RuntimeListener = (ref: ConversationRef, runtime: ConversationRuntime | null) => void;
 
-function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSignal = 0 }: { conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; refreshSignal?: number }) {
+function NativeConversationPanel({ active, conversationRef, onRuntimeChange, readOnly, refreshSignal = 0 }: { active: boolean; conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; readOnly: boolean; refreshSignal?: number }) {
   const { state, canSend, send, interrupt, resolveRequest, reload } = useConversation(conversationRef);
   // A runtime Fractal does not own is only checked on open, so a refresh
   // reopens. The signal's value at mount is not a request: the open covers it.
@@ -106,6 +110,21 @@ function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSign
     }),
   }) : turn), [state.turns, state.requests]);
 
+  // The menu belongs to the transcript only: the composer sits outside the wrapper, so its text never offers one.
+  const launcher = useSideChatLauncher();
+  const transcript = useRef<HTMLDivElement>(null);
+  const branchable = useCallback((id: string) => {
+    const turn = state.turns.find((item) => item.id === id);
+    return turn !== undefined && canBranchTurn(turn, state.runtime, readOnly);
+  }, [state.turns, state.runtime, readOnly]);
+  const { selection, dismiss } = useMessageSelection(transcript, active && launcher && state.history === 'complete' ? branchable : null);
+  const chooseSideChat = () => {
+    const turn = selection && state.turns.find((item) => item.id === selection.sourceId);
+    if (turn) launcher?.start({ root: conversationRef, parent: conversationRef, turn, text: quoteSelection(selection.text) });
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+  };
+
   const handleSubmit = async (message: PromptInputMessage) => {
     if (!eligible || !modelChoice.loaded || !accessChoice.loaded || pendingSend.current || (!message.text.trim() && message.files.length === 0)) throw new Error('Message was not sent');
     let attachments: PromptAttachment[];
@@ -156,7 +175,7 @@ function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSign
     <div className="@container relative flex size-full flex-col overflow-hidden">
       {state.error && <div className="shrink-0 border-b px-4 py-2 text-sm text-destructive" role="alert">Failed to load this conversation: {state.error}{' '}<button className="underline" onClick={reload} type="button">Reload</button></div>}
       {state.sync === 'gap' && <p className="shrink-0 border-b px-4 py-2 text-sm text-muted-foreground" role="status">Some events were missed. Reloading native history…</p>}
-      {turns.length ? <AttachmentPreviewProvider conversationRef={conversationRef}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
+      {turns.length ? <div className="flex min-h-0 flex-1 flex-col" ref={transcript}><AttachmentPreviewProvider conversationRef={conversationRef}><VirtualTimeline columnClassName={COLUMN} conversationId={conversationKey(conversationRef)} historyComplete={state.history === 'complete' || state.history === 'failed'} onResolve={resolve} turns={turns} /></AttachmentPreviewProvider></div> : <div className="min-h-0 flex-1">{loading ? <div className="flex size-full items-center justify-center" role="status"><Shimmer className="text-sm">Reading history…</Shimmer></div> : <ConversationEmptyState title={state.history === 'failed' ? 'History unavailable' : 'No messages yet'} description={state.history === 'failed' ? 'Reload to try reading this conversation again.' : 'This native session has no captured messages.'} />}</div>}
       <div className={`max-h-[60%] shrink-0 overflow-y-auto pb-2 [scrollbar-gutter:stable] ${COLUMN}`}>
         {request && <fieldset className="min-w-0 py-3" disabled={!canResolve}><BlockingRequest key={request.id} onResolve={resolve} request={request} /></fieldset>}
         {state.runtime === 'waiting-for-user' && !request && <p className="py-2 text-sm text-muted-foreground" role="status">This session is waiting for user input.</p>}
@@ -187,11 +206,12 @@ function NativeConversationPanel({ conversationRef, onRuntimeChange, refreshSign
           </PromptInputFooter>
         </PromptInput>
       </div>
+      {selection && <SelectionMenu onChoose={chooseSideChat} selection={selection} />}
     </div>
   );
 }
 
-/** `onRuntimeChange` hears the open conversation's runtime once it is known, and null when the panel closes; a change in `refreshSignal` reopens it. */
-export function ConversationPanel({ conversationRef, onRuntimeChange, refreshSignal }: { conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; refreshSignal?: number }) {
-  return <NativeConversationPanel conversationRef={conversationRef} key={`${conversationKey(conversationRef)}:${conversationRef.projectPath}`} onRuntimeChange={onRuntimeChange} refreshSignal={refreshSignal} />;
+/** `onRuntimeChange` hears the open conversation's runtime once it is known, and null when the panel closes; a change in `refreshSignal` reopens it. Text selected in a turn offers a side chat while the panel is `active` and not `readOnly` (a subagent conversation). */
+export function ConversationPanel({ active = true, conversationRef, onRuntimeChange, readOnly = false, refreshSignal }: { active?: boolean; conversationRef: ConversationRef; onRuntimeChange?: RuntimeListener; readOnly?: boolean; refreshSignal?: number }) {
+  return <NativeConversationPanel active={active} conversationRef={conversationRef} key={`${conversationKey(conversationRef)}:${conversationRef.projectPath}`} onRuntimeChange={onRuntimeChange} readOnly={readOnly} refreshSignal={refreshSignal} />;
 }

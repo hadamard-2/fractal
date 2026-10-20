@@ -5,6 +5,7 @@ import { providerName } from '@/components/sidebar-03/nav-main';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ShellContext } from '@/components/app-shell';
+import { isSubagentConversation } from '@/renderer/conversation-lookup';
 import { MOD_KEY_LABEL } from '@/renderer/shortcuts';
 import type { HarnessStatus, ProviderId } from '@/shared/conversation-contract';
 
@@ -101,7 +102,7 @@ export function ProviderNotices({ providers }: { providers: HarnessStatus[] }) {
  * session isn't torn down by a mode switch.
  */
 export function ExecuteMode({ active = true, selectedRef, history, actions, onRuntimeChange, refreshSignal }: ShellContext & { active?: boolean }) {
-  const { providers, loaded, error } = history;
+  const { projects, providers, loaded, error } = history;
   const shortcuts = [
     ['Search conversations', `${MOD_KEY_LABEL} K`],
     ['Add a project', `${MOD_KEY_LABEL} O`],
@@ -109,7 +110,7 @@ export function ExecuteMode({ active = true, selectedRef, history, actions, onRu
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ display: active ? undefined : 'none' }}>
       {selectedRef ? (
-        <ConversationPanel conversationRef={selectedRef} onRuntimeChange={onRuntimeChange} refreshSignal={refreshSignal} />
+        <ConversationPanel active={active} conversationRef={selectedRef} onRuntimeChange={onRuntimeChange} readOnly={isSubagentConversation(projects, selectedRef)} refreshSignal={refreshSignal} />
       ) : (
         /*
           The home screen: one action, the shortcuts that reach the rest, and

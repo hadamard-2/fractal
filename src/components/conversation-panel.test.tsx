@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, expect, test, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
+import { SideChatLauncherContext, type SideChatLauncher } from '@/components/right-panel/side-chat-launcher';
+import { quoteSelection } from '@/renderer/side-chat-start';
 import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { accessLevels } from '@/shared/access-levels';
 import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, HarnessCapabilities, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
@@ -502,4 +504,116 @@ test('shows no routing notice when the agent can route approvals and questions',
   await ready(claudeRef);
   await waitFor(() => expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false));
   expect(screen.queryByText(/routing (is|are) unavailable/)).toBeNull();
+});
+
+describe('the side-chat selection menu', () => {
+  const turn = (id: string, ask: string, reply: string, status: ConversationTurn['status'] = 'completed'): ConversationTurn => ({
+    id, nativeId: id, userMessage: { id: `${id}-user`, text: ask },
+    blocks: [{ id: `${id}-prose`, kind: 'assistant-prose', text: reply, provider: 'codex' }],
+    status, captureCompleteness: 'complete',
+  });
+  const first = turn('t1', 'Why is the parser slow?', 'It re-reads every file.');
+  const second = turn('t2', 'Which file is worst?', 'The lockfile.');
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = options.top ?? 0; } });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 120 : 560; });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(560);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
+    Range.prototype.getBoundingClientRect = () => DOMRect.fromRect({ x: 120, y: 200, width: 80, height: 20 });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
+    window.getSelection()?.removeAllRanges();
+  });
+
+  async function open(props: { active?: boolean; readOnly?: boolean; launcher?: SideChatLauncher | null; runtime?: ConversationRuntime; turns?: ConversationTurn[] } = {}) {
+    const launcher = props.launcher === undefined ? { start: vi.fn(), open: vi.fn() } : props.launcher;
+    install(props.runtime ?? 'idle');
+    render(
+      <SideChatLauncherContext.Provider value={launcher}>
+        <ConversationPanel active={props.active} conversationRef={ref} readOnly={props.readOnly} />
+      </SideChatLauncherContext.Provider>,
+    );
+    await ready();
+    act(() => emit({ ref, loadId, seq: seq++, type: 'history.chunk', chunkIndex: 0, turns: props.turns ?? [first, second] }));
+    await screen.findByText(second.blocks[0].kind === 'assistant-prose' ? second.blocks[0].text : '');
+    return launcher;
+  }
+
+  /** Selects from `start` to `end` as a drag across the page would; elements are found by their text. */
+  function select(start: string | HTMLElement, end: string | HTMLElement = start, offsets?: [number, number]) {
+    const from = (typeof start === 'string' ? screen.getByText(start) : start).firstChild;
+    const to = (typeof end === 'string' ? screen.getByText(end) : end).firstChild;
+    if (!from || !to) throw new Error('No text to select');
+    const range = document.createRange();
+    range.setStart(from, offsets?.[0] ?? 0);
+    range.setEnd(to, offsets?.[1] ?? to.textContent?.length ?? 0);
+    act(() => {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+  }
+  const menu = () => screen.queryByRole('button', { name: 'Side chat' });
+
+  test('choosing it starts a side chat after that reply with the selection quoted, and clears the selection', async () => {
+    const launcher = await open();
+    select('It re-reads every file.', 'It re-reads every file.', [3, 18]);
+    const entry = menu();
+    if (!entry) throw new Error('No menu');
+    await userEvent.setup().click(entry);
+    expect(launcher?.start).toHaveBeenCalledWith({ root: ref, parent: ref, turn: first, text: quoteSelection('re-reads every') });
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+    expect(menu()).toBeNull();
+  });
+
+  test('text selected in a user message branches after that same turn', async () => {
+    const launcher = await open();
+    select('Which file is worst?');
+    const entry = menu();
+    if (!entry) throw new Error('No menu');
+    await userEvent.setup().click(entry);
+    expect(launcher?.start).toHaveBeenCalledWith({ root: ref, parent: ref, turn: second, text: quoteSelection('Which file is worst?') });
+  });
+
+  test('offers nothing for a subagent conversation', async () => {
+    await open({ readOnly: true });
+    select('It re-reads every file.');
+    expect(menu()).toBeNull();
+  });
+
+  test('offers nothing in the turn that is still running, but still in the finished one before it', async () => {
+    await open({ runtime: 'active-in-fractal', turns: [first, turn('t2', 'Which file is worst?', 'The lockfile.', 'active')] });
+    select('The lockfile.');
+    expect(menu()).toBeNull();
+    select('It re-reads every file.');
+    expect(menu()).toBeTruthy();
+  });
+
+  test('offers nothing for text in the composer', async () => {
+    await open();
+    const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    await userEvent.setup().type(input, 'Draft question');
+    input.setSelectionRange(0, 5);
+    act(() => { document.dispatchEvent(new Event('selectionchange')); });
+    expect(menu()).toBeNull();
+  });
+
+  test('offers nothing for a selection across two turns', async () => {
+    await open();
+    select('It re-reads every file.', 'Which file is worst?');
+    expect(menu()).toBeNull();
+  });
+
+  test('offers nothing without a launcher, or while the panel is not active', async () => {
+    await open({ launcher: null });
+    select('It re-reads every file.');
+    expect(menu()).toBeNull();
+    cleanup();
+    await open({ active: false });
+    select('It re-reads every file.');
+    expect(menu()).toBeNull();
+  });
 });
