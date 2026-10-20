@@ -2,11 +2,11 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { forkDraftOf, setForkDraft } from '@/renderer/forking';
 import { conversationKey, type ConversationRef, type ConversationTurn, type ForkPoint } from '@/shared/conversation-contract';
 
-/** Makes forks and opens them. Null where nothing provides one, as on the map's nodes. */
+/** Makes forks and opens them. Null where nothing provides one. */
 export interface ForkLauncher {
   /** Forks `source` after `turn`'s reply or before its message, then opens the fork in Execute. Rejects with the agent's error. */
   fork(source: ConversationRef, turn: ConversationTurn, position: ForkPoint['position']): Promise<void>;
-  /** True while a fork is being made; every "Fork from here" is disabled meanwhile. */
+  /** True while a fork is being made; every "Fork from here" is hidden meanwhile. */
   pending: boolean;
 }
 

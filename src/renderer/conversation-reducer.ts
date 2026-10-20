@@ -25,7 +25,7 @@ export interface ConversationState {
   nextHistoryChunkIndex: number;
   streamedRuntime: boolean;
   streamedSummary: boolean;
-  /** Where this conversation branched from, when it is a fork or side chat. */
+  /** Where this conversation branched from, when it is a fork; a side chat has none. */
   forkedFrom: ForkLineage | null;
 }
 

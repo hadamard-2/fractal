@@ -391,7 +391,7 @@ function stringAt(records: ClaudeHistoryRecord[], key: string): string | undefin
   return records.map((record) => record[key]).find((value): value is string => typeof value === 'string');
 }
 
-// Claude Code's own fork copies the parent's records into the new transcript, each
+// The Agent SDK's forkSession copies the parent's records into the new transcript, each
 // stamped forkedFrom: { sessionId, messageUuid }, so the first one names the parent.
 function forkParentId(records: ClaudeHistoryRecord[]): string | undefined {
   return records.map((record) => objectValue(record.forkedFrom)?.sessionId).find((value): value is string => typeof value === 'string');
