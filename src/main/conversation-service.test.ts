@@ -855,6 +855,21 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('forks a side chat with the settings of its main conversation, and a main conversation with none', async () => {
+      const f = branchFixture(undefined, claude);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ readOnly: false, settingsFrom: f.at('main') }));
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'side-chat');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.not.objectContaining({ settingsFrom: expect.anything() }));
+      await f.service.open(f.at('main'), nextLoadId);
+      await f.service.fork(f.at('main'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('main'), 't2', expect.not.objectContaining({ settingsFrom: expect.anything() }));
+      await f.service.dispose();
+    });
+
     test('records no nestsUnder for a fork of a main conversation', async () => {
       const f = branchFixture(undefined, claude);
       await f.service.open(f.at('main'), loadId);

@@ -4,6 +4,7 @@ import type { AccessState, ConversationRef } from '@/shared/conversation-contrac
 import type { StoredAccess } from './access-choice-store';
 
 const claudeRef: ConversationRef = { provider: 'claude', nativeSessionId: 'a', projectPath: '/work' };
+const forkRef: ConversationRef = { provider: 'claude', nativeSessionId: 'fork', projectPath: '/work' };
 const codexRef: ConversationRef = { provider: 'codex', nativeSessionId: 'b', projectPath: '/work' };
 const level = (id: string): AccessState => ({ kind: 'level', level: id });
 
@@ -19,6 +20,38 @@ function setup(readAccess?: (ref: ConversationRef) => Promise<AccessState | unde
 }
 
 describe('AccessChoices', () => {
+  describe('inherit', () => {
+    test('gives a fork with no choice the level of another conversation, unsent', async () => {
+      const { choices, store } = setup(async (ref) => ref === claudeRef ? level('acceptEdits') : undefined);
+      await choices.inherit(forkRef, claudeRef);
+      expect(store.entries.get('claude:fork')).toEqual({ state: level('acceptEdits'), sent: false });
+      await expect(choices.resolve(forkRef)).resolves.toEqual({ access: { state: level('acceptEdits'), picked: true } });
+    });
+
+    test('uses the picked level of the other conversation', async () => {
+      const { choices } = setup();
+      choices.choose(claudeRef, 'plan');
+      await choices.inherit(forkRef, claudeRef);
+      await expect(choices.resolve(forkRef)).resolves.toEqual({ access: { state: level('plan'), picked: true } });
+    });
+
+    test.each([
+      ['a custom state', async (): Promise<AccessState | undefined> => ({ kind: 'custom', label: 'dontAsk', mode: 'dontAsk' })],
+      ['no access', async (): Promise<AccessState | undefined> => undefined],
+    ])('leaves the store alone when the other conversation has %s', async (_name, readAccess) => {
+      const { choices, store } = setup(readAccess);
+      await choices.inherit(forkRef, claudeRef);
+      expect(store.entries.size).toBe(0);
+    });
+
+    test('leaves a fork that already has a choice alone', async () => {
+      const { choices, store } = setup(async () => level('acceptEdits'));
+      choices.choose(forkRef, 'plan');
+      await choices.inherit(forkRef, claudeRef);
+      expect(store.entries.get('claude:fork')).toEqual({ state: level('plan'), sent: false });
+    });
+  });
+
   test('lists the levels for an agent', () => {
     const { choices } = setup();
     expect(choices.levels('claude').map((entry) => entry.id)).toEqual(['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions']);

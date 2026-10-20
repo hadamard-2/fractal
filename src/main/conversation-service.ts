@@ -242,8 +242,11 @@ export class ConversationService {
     if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     const note = kind === 'side-chat' ? SIDE_CHAT_NOTE : afterIndex !== turns.length - 1 ? FORK_NOTE : undefined;
     const title = `${summary.title} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
+    // A side chat is read-only and approval-free, so a fork of one takes the settings of the conversation the side chat belongs to.
+    const mainRef = this.mainConversationOf(source);
+    const settingsFrom = kind === 'fork' && conversationKey(mainRef) !== key ? mainRef : undefined;
     const ref = afterTurn
-      ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), title })
+      ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), ...(settingsFrom ? { settingsFrom } : {}), title })
       : await this.create(source.provider, source.projectPath);
     const branchPointText = kind === 'side-chat' && afterTurn ? branchPointOf(afterTurn) : undefined;
     // A fork of a side chat nests under the main conversation in the sidebar, and keeps nesting there once the side chat is deleted.

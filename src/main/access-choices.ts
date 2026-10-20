@@ -52,6 +52,14 @@ export class AccessChoices {
     this.store.set(conversationKey(ref), { state, sent: false });
   }
 
+  /** A fork that has no choice of its own starts on the level `from` would run with; a custom state or no access leaves it on the agent's default. */
+  async inherit(fork: ConversationRef, from: ConversationRef): Promise<void> {
+    if (this.store.get(conversationKey(fork))) return;
+    const state = (await this.resolve(from)).access?.state;
+    // A pick made while this was reading wins over the inherited one.
+    if (state?.kind === 'level' && !this.store.get(conversationKey(fork))) this.store.set(conversationKey(fork), { state, sent: false });
+  }
+
   /** Any state can reach the agent's command line, so a read-back one is held to the same levels and Settings gate as a pick. */
   validateSend(ref: ConversationRef, access: TurnAccess | undefined): void {
     if (!access) return;

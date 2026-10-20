@@ -180,7 +180,8 @@ export class CodexAdapter implements HarnessAdapter {
     const note = options.note ? { developerInstructions: options.note } : {};
     // Both start on the parent's own model, so neither falls back to the CLI's configured default.
     // A full fork also keeps the parent's access; a side chat is pinned read-only with approvals off.
-    const parent = await this.resumeThread(source);
+    // A full fork of a side chat takes the model and access of the conversation it belongs to, not the side chat's.
+    const parent = await this.resumeThread(options.settingsFrom ?? source);
     const settings = options.readOnly
       ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const, config: await this.readOnlyConfig(projectPath), ...(parent.model ? { model: parent.model } : {}) }
       : forkSettingsFrom(parent);

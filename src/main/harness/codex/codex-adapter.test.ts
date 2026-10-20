@@ -929,6 +929,28 @@ describe('Codex fork and read-only runs', () => {
     expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
   });
 
+  describe('forking a side chat as a full fork', () => {
+    const sideChat = { provider: 'codex' as const, nativeSessionId: 'side-thread', projectPath: '/work/fractal' };
+
+    test('takes the model and access from the settings source and forks the side chat\'s history, with no read-only config', async () => {
+      const server = createFakeAppServer();
+      const forked = await adapterFor(server).forkConversation(sideChat, 'turn-2', { readOnly: false, title: 'Fork', settingsFrom: ref });
+      expect(server.requests.map((request) => request.method)).toEqual(['thread/resume', 'thread/fork', 'thread/name/set']);
+      expect(server.requests[0]?.params).toEqual({ threadId: 'thread-1', cwd: '/work/fractal' });
+      expect(forkParams(server)).toEqual({
+        threadId: 'side-thread', lastTurnId: 'turn-2', cwd: '/work/fractal', model: 'gpt-5.6-terra', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
+      });
+      expect(forkParams(server)).not.toHaveProperty('config');
+      expect(forked).toEqual({ provider: 'codex', nativeSessionId: 'forked-thread', projectPath: '/work/fractal' });
+    });
+
+    test('takes the settings from the source itself without a settings source', async () => {
+      const server = createFakeAppServer();
+      await adapterFor(server).forkConversation(sideChat, 'turn-2', { readOnly: false, title: 'Fork' });
+      expect(server.requests[0]?.params).toEqual({ threadId: 'side-thread', cwd: '/work/fractal' });
+    });
+  });
+
   test.each([
     [{ type: 'readOnly', networkAccess: false }, 'read-only'],
     [{ type: 'dangerFullAccess' }, 'danger-full-access'],

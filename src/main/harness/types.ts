@@ -38,6 +38,8 @@ export interface ForkOptions {
   readOnly: boolean;
   note?: string;
   title: string;
+  /** A full fork takes its model and access from this conversation instead of the source; set when the source is a side chat. */
+  settingsFrom?: ConversationRef;
 }
 
 export interface AgentPrompt {
