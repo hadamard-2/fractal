@@ -1,6 +1,6 @@
 import { canonicalizeProjectPath, groupConversationsByProject, type Realpath } from '@/main/harness/project-path';
 import type { ForkOptions, HarnessAdapter } from '@/main/harness/types';
-import { conversationKey, type ConversationRef, type ConversationSummary, type HarnessStatus, type ProviderId } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type ConversationSummary, type ForkLineage, type HarnessStatus, type ProviderId } from '@/shared/conversation-contract';
 import { parseConversationRef } from '@/shared/conversation-ipc';
 
 export class ConversationRegistry {
@@ -101,8 +101,11 @@ export class ConversationRegistry {
     return this.summaries.get(ref.provider)?.find((item) => conversationKey(item.ref) === conversationKey(ref));
   }
 
-  /** A conversation the listing lacks, read from an available agent that can read one directly; null when it cannot, or says it does not exist. Never cached. */
-  private async readUnlisted(ref: ConversationRef): Promise<ConversationSummary | null> {
+  /**
+   * A conversation the listing lacks, read from an available agent that can read one directly; null when it cannot, or says it does not exist.
+   * Never cached, and does not run discovery: availability is as of the last one. Throws when reading it fails.
+   */
+  async readUnlisted(ref: ConversationRef): Promise<ConversationSummary | null> {
     const adapter = this.resolve(ref);
     if (!adapter.readSummary || this.statuses.get(ref.provider)?.availability !== 'available') return null;
     const item = await adapter.readSummary(ref);
@@ -143,6 +146,10 @@ export class ConversationRegistry {
     if (ref.provider !== adapter.provider) throw new Error('Mismatched conversation provider');
     ref.projectPath = await canonicalizeProjectPath(ref.projectPath, this.realpath);
     // Keep summaries only; adapter-owned file/thread locators never cross this boundary.
-    return { ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }), ...(item.parentId === undefined ? {} : { parentId: item.parentId }) };
+    return { ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }), ...(item.parentId === undefined ? {} : { parentId: item.parentId }), ...(item.forkedFrom === undefined ? {} : { forkedFrom: lineageOf(item.forkedFrom) }) };
   }
+}
+
+function lineageOf({ parentKey, inheritedTurnCount }: ForkLineage): ForkLineage {
+  return { parentKey, ...(inheritedTurnCount === undefined ? {} : { inheritedTurnCount }) };
 }

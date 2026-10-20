@@ -32,6 +32,22 @@ test('lists only side chat keys', () => {
   expect(store.sideChatKeys()).toEqual(new Set(['claude:side']));
 });
 
+test('lists only fork keys', () => {
+  const store = new BranchStore(tempDir());
+  store.set('claude:side', sideChat);
+  store.set('codex:fork', fork);
+  expect(store.forkKeys()).toEqual(new Set(['codex:fork']));
+});
+
+test('round-trips nestsUnder and drops a non-string value while keeping the rest of the record', () => {
+  const dir = tempDir();
+  const nested: BranchRecord = { ...fork, parentKey: 'claude:side', nestsUnder: 'claude:main' };
+  new BranchStore(dir).set('claude:nested', nested);
+  expect(new BranchStore(dir).get('claude:nested')).toEqual(nested);
+  writeFileSync(path.join(dir, 'branches.json'), JSON.stringify({ conversations: { 'claude:bad': { ...fork, nestsUnder: 7 } } }));
+  expect(new BranchStore(dir).get('claude:bad')).toEqual(fork);
+});
+
 test('moves an unparseable file aside, reads as empty, and writes a fresh file without touching the moved one', () => {
   const dir = tempDir();
   const file = path.join(dir, 'branches.json');

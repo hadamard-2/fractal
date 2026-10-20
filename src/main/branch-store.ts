@@ -16,6 +16,8 @@ export interface BranchRecord {
   createdAt: number;
   /** The start of the reply a side chat was cut after, at most 500 characters; shown when that reply is gone. */
   branchPointText?: string;
+  /** For a fork of a side chat: conversationKey() of the main conversation it nests under, which outlives the side chat. */
+  nestsUnder?: string;
 }
 
 interface StoredBranches { conversations: Record<string, BranchRecord> }
@@ -76,10 +78,14 @@ export class BranchStore {
     return found;
   }
 
-  sideChatKeys(): Set<string> {
+  sideChatKeys(): Set<string> { return this.keysOf('side-chat'); }
+
+  forkKeys(): Set<string> { return this.keysOf('fork'); }
+
+  private keysOf(kind: BranchKind): Set<string> {
     const keys = new Set<string>();
     for (const [key, record] of Object.entries(this.load().conversations)) {
-      if (record.kind === 'side-chat') keys.add(key);
+      if (record.kind === kind) keys.add(key);
     }
     return keys;
   }
@@ -153,7 +159,7 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 function coerceEntry(value: unknown): BranchRecord | undefined {
   const record = objectValue(value);
   if (!record) return undefined;
-  const { parentKey, afterTurnId, inheritedTurnCount, note, createdAt, branchPointText } = record;
+  const { parentKey, afterTurnId, inheritedTurnCount, note, createdAt, branchPointText, nestsUnder } = record;
   if (typeof parentKey !== 'string') return undefined;
   if (afterTurnId !== null && typeof afterTurnId !== 'string') return undefined;
   if (typeof inheritedTurnCount !== 'number' || !Number.isInteger(inheritedTurnCount) || inheritedTurnCount < 0) return undefined;
@@ -164,5 +170,6 @@ function coerceEntry(value: unknown): BranchRecord | undefined {
   const entry: BranchRecord = { kind, parentKey, afterTurnId: afterTurnId as string | null, inheritedTurnCount, createdAt };
   if (typeof note === 'string') entry.note = note;
   if (typeof branchPointText === 'string') entry.branchPointText = branchPointText;
+  if (typeof nestsUnder === 'string') entry.nestsUnder = nestsUnder;
   return entry;
 }
