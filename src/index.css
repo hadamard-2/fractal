@@ -354,12 +354,16 @@
   border-radius: 9999px;
   background-color: var(--card);
 }
+/* Centred 12px beyond the right edge, clear of the resize line that runs along the edge itself. */
+.react-flow__handle.map-branch-handle[data-can-branch='true'] {
+  right: -12px;
+}
 .react-flow__handle.map-branch-handle:hover,
 .react-flow__handle.map-branch-handle.connectingfrom {
   border-color: var(--primary);
   background-color: var(--primary);
 }
-/* A reply that can't branch keeps the handle its side-chat edges leave from, out of sight and out of reach. */
+/* A reply that can't branch keeps the handle its side-chat edges leave from, out of sight and out of reach, on the edge itself so those edges still meet the node. */
 .react-flow__handle.map-branch-handle[data-can-branch='false'] {
   opacity: 0;
   pointer-events: none;
