@@ -55,3 +55,10 @@ test('drops an invalid entry and keeps its siblings', () => {
   writeFileSync(path.join(dir, 'map-layouts.json'), JSON.stringify([]));
   expect(store.get('claude:a')).toBeUndefined();
 });
+
+test('keeps a node listed with only its width', () => {
+  const dir = tempDir();
+  const sized = { view: 'preview' as const, nodes: { 'claude:b': { width: 400 }, 'claude:c': { x: 1, y: 2 } } };
+  new MapLayoutStore(dir).set('claude:a', sized);
+  expect(new MapLayoutStore(dir).get('claude:a')).toEqual(sized);
+});

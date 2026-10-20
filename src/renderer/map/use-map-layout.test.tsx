@@ -64,15 +64,32 @@ test('a resize keeps the position and a move keeps the width', async () => {
   expect(result.current.layout.nodes.kept).toEqual({ x: 60, y: 80, width: 600 });
 });
 
-test('a resize stays within 240 to 960 and leaves an unlisted node to automatic layout', async () => {
+test('a resize stays within 240 to 960', async () => {
   install({ layout: vi.fn(async () => stored) });
   const { result } = await mounted();
   act(() => { result.current.resizeNode('kept', 2000); });
   expect(result.current.layout.nodes.kept.width).toBe(960);
   act(() => { result.current.resizeNode('kept', 100); });
   expect(result.current.layout.nodes.kept.width).toBe(240);
+});
+
+test('resizing an unlisted node stores its width alone, leaving its position to automatic layout, and saves it', async () => {
+  const api = install({ layout: vi.fn(async () => stored) });
+  const { result } = await mounted();
   act(() => { result.current.resizeNode('unlisted', 400); });
-  expect(result.current.layout.nodes.unlisted).toBeUndefined();
+  expect(result.current.layout.nodes.unlisted).toEqual({ width: 400 });
+  act(() => { result.current.resizeNode('unlisted', 2000); });
+  expect(result.current.layout.nodes.unlisted).toEqual({ width: 960 });
+  act(() => { vi.advanceTimersByTime(300); });
+  await settle();
+  expect(api.saveLayout).toHaveBeenCalledWith(refA, { view: 'full', nodes: { kept: { x: 20, y: 40, width: 400 }, unlisted: { width: 960 } } });
+});
+
+test('moving a node listed with only its width keeps that width', async () => {
+  install({ layout: vi.fn(async (): Promise<MapLayout> => ({ view: 'preview', nodes: { sized: { width: 500 } } })) });
+  const { result } = await mounted();
+  act(() => { result.current.moveNode('sized', { x: 100, y: 200 }); });
+  expect(result.current.layout.nodes.sized).toEqual({ x: 100, y: 200, width: 500 });
 });
 
 test('dropping a conversation\'s nodes saves a layout without them, and keeps the others', async () => {

@@ -292,6 +292,34 @@ describe('buildMapGraph auto layout', () => {
   });
 });
 
+describe('buildMapGraph width-only layout entries', () => {
+  test('a node listed with only a width keeps its automatic spot, and the nodes below follow its new size', () => {
+    const resized = replyId(root, 't1');
+    const graph = build({ layout: layoutOf({ [resized]: { width: 600 } }), heights: new Map([[resized, 200]]) });
+
+    expect(at(graph, resized)).toEqual(at(build(), resized));
+    expect(find(graph, resized)?.width).toBe(600);
+    expect(at(graph, userId(root, 't2'))).toEqual({ x: 0, y: at(graph, resized).y + 200 + MAP.gapY });
+  });
+
+  test('a width-only node follows a moved node above it, as an unlisted one would', () => {
+    const graph = build({ layout: layoutOf({ [userId(root, 't1')]: { x: 500, y: 700 }, [replyId(root, 't1')]: { width: 400 } }) });
+
+    expect(at(graph, replyId(root, 't1'))).toEqual({ x: 500, y: 700 + 120 + MAP.gapY });
+    expect(find(graph, replyId(root, 't1'))?.width).toBe(400);
+  });
+
+  test('a side chat column clears a parent reply widened in place', () => {
+    const side = sideRef('side-1');
+    const graph = build({
+      layout: layoutOf({ [replyId(root, 't1')]: { width: 600 } }),
+      sideChats: [{ summary: summary('side-1', 't1'), state: state(side, [turn('s1')]) }],
+    });
+
+    expect(at(graph, userId(side, 's1')).x).toBe(600 + MAP.gapX);
+  });
+});
+
 describe('buildMapGraph drafts', () => {
   const side = sideRef('side-1');
   const draft = (overrides: Partial<SideChatDraft> = {}): SideChatDraft =>

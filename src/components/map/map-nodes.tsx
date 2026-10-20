@@ -27,8 +27,8 @@ export interface MapNodeEnvironment {
   view: MapView;
   /** By conversationKey() of the side chat; a side chat that can't be deleted right now isn't listed. */
   deletions: ReadonlyMap<string, SideChatDeletion>;
-  /** A width resize ended; the node's position moves too when it was resized from the left edge. */
-  onResizeEnd(id: string, frame: { x: number; y: number; width: number }): void;
+  /** A width resize from this edge ended; only a resize from the left edge moves the node's position too. */
+  onResizeEnd(id: string, frame: { x: number; y: number; width: number }, edge: 'left' | 'right'): void;
 }
 
 export const MapNodeEnvironmentContext = createContext<MapNodeEnvironment>({ view: 'preview', deletions: new Map(), onResizeEnd: () => undefined });
@@ -75,7 +75,6 @@ function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
   children: ReactNode;
 }) {
   const { onResizeEnd } = useContext(MapNodeEnvironmentContext);
-  const resizeEnd = (_: unknown, { x, y, width }: ResizeParams) => onResizeEnd(id, { x, y, width });
   return (
     <div className={cn('rounded-lg border bg-card text-card-foreground shadow-xs', line === 'main' ? 'border-primary' : 'border-border', className)}>
       {(['left', 'right'] as const).map((position) => (
@@ -84,7 +83,7 @@ function NodeFrame({ id, line, label, branch, onDelete, className, children }: {
           key={position}
           maxWidth={MAP.maxWidth}
           minWidth={MAP.minWidth}
-          onResizeEnd={resizeEnd}
+          onResizeEnd={(_: unknown, { x, y, width }: ResizeParams) => onResizeEnd(id, { x, y, width }, position)}
           position={position}
           resizeDirection="horizontal"
           variant={ResizeControlVariant.Line}

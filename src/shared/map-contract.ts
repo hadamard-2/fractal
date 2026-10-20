@@ -2,9 +2,10 @@ import type { ConversationRef } from '@/shared/conversation-contract';
 
 export type MapView = 'preview' | 'full';
 
-export interface MapNodeLayout { x: number; y: number; width?: number }
+/** x and y are both present or both absent, and at least one field is: a moved node has its spot, a resized one its width. */
+export interface MapNodeLayout { x?: number; y?: number; width?: number }
 
-/** Per root conversation. A node is listed only once the user has moved or resized it; the rest are placed automatically. */
+/** Per root conversation. A node is listed only once the user has moved or resized it; one without a spot, and every unlisted one, is placed automatically. */
 export interface MapLayout { view: MapView; nodes: Record<string, MapNodeLayout> }
 
 export const MAP_CHANNELS = { layout: 'fractal:map:layout', saveLayout: 'fractal:map:save-layout' } as const;
@@ -39,9 +40,10 @@ function numberWithin(value: unknown, min: number, max: number): number {
 
 function parseNode(value: unknown): MapNodeLayout {
   if (!plainObject(value)) invalidLayout();
-  const x = numberWithin(value.x, -MAX_COORDINATE, MAX_COORDINATE);
-  const y = numberWithin(value.y, -MAX_COORDINATE, MAX_COORDINATE);
-  return value.width === undefined ? { x, y } : { x, y, width: numberWithin(value.width, MIN_WIDTH, MAX_WIDTH) };
+  const placed = value.x !== undefined || value.y !== undefined;
+  if (!placed && value.width === undefined) invalidLayout();
+  const position = placed ? { x: numberWithin(value.x, -MAX_COORDINATE, MAX_COORDINATE), y: numberWithin(value.y, -MAX_COORDINATE, MAX_COORDINATE) } : {};
+  return value.width === undefined ? position : { ...position, width: numberWithin(value.width, MIN_WIDTH, MAX_WIDTH) };
 }
 
 /** Validates an untrusted layout and returns a copy holding only the known fields. */

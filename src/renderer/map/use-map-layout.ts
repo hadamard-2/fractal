@@ -43,7 +43,7 @@ function flush(session: Session): void {
 export function useMapLayout(root: ConversationRef | null): {
   layout: MapLayout;
   moveNode(id: string, position: XYPosition): void;
-  /** Sets the width of a node the layout lists; the canvas lists a node it resizes with moveNode first. */
+  /** Sets a node's width, keeping any spot the layout has for it; an unlisted node is listed with its width alone, so it stays automatically placed. */
   resizeNode(id: string, width: number): void;
   setView(view: MapView): void;
   /** Forgets every spot and width kept for the nodes of the conversations with these keys. */
@@ -98,11 +98,7 @@ export function useMapLayout(root: ConversationRef | null): {
   }, [edit]);
 
   const resizeNode = useCallback((id: string, width: number) => {
-    edit((layout) => {
-      const node = layout.nodes[id];
-      if (!node) return layout;
-      return { ...layout, nodes: { ...layout.nodes, [id]: { ...node, width: Math.min(MAP.maxWidth, Math.max(MAP.minWidth, width)) } } };
-    });
+    edit((layout) => ({ ...layout, nodes: { ...layout.nodes, [id]: { ...layout.nodes[id], width: Math.min(MAP.maxWidth, Math.max(MAP.minWidth, width)) } } }));
   }, [edit]);
 
   const setView = useCallback((view: MapView) => {

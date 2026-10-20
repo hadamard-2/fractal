@@ -199,9 +199,9 @@ export function MapCanvas({ root, readOnly }: { root: ConversationRef; readOnly:
   const environment = useMemo((): MapNodeEnvironment => ({
     view: layout.view,
     deletions,
-    onResizeEnd: (id, { x, y, width }) => {
-      // Listing the node pins its position too, which a resize from the left edge has also moved.
-      moveNode(id, { x, y });
+    onResizeEnd: (id, { x, y, width }, edge) => {
+      // A resize from the right keeps the node where it was placed, automatically or not; one from the left has moved it, so that spot is kept.
+      if (edge === 'left') moveNode(id, { x, y });
       resizeNode(id, width);
       setOverrides((prior) => withoutEntry(prior, id));
     },

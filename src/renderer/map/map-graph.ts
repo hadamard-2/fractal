@@ -115,12 +115,12 @@ export function buildMapGraph(input: {
     return { x, startY: snap(startY) };
   }
 
-  /** A node placed at its saved spot if it has one, else at the chain's running automatic spot. */
+  /** A node placed at its saved spot if it has one, else at the chain's running automatic spot, at its saved width if it has one. */
   function place<D extends MapNodeData>(id: string, data: D, auto: XYPosition): Node<D> {
     const saved = layout.nodes[id];
     return {
       id, type: data.kind, data,
-      position: saved ? { x: saved.x, y: saved.y } : auto,
+      position: saved?.x !== undefined && saved.y !== undefined ? { x: saved.x, y: saved.y } : auto,
       width: saved?.width ?? MAP.nodeWidth,
     };
   }

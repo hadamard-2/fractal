@@ -29,7 +29,7 @@ test('bounds the number of nodes and the length of a node id', () => {
 test('bounds coordinates and widths to finite, sane values', () => {
   const layout = (n: unknown) => ({ view: 'preview', nodes: { a: n } });
   expect(() => parseMapLayout(layout({ x: 10_000_000, y: -10_000_000 }))).not.toThrow();
-  const badNodes: unknown[] = [{ x: NaN, y: 0 }, { x: 0, y: Infinity }, { x: 10_000_001, y: 0 }, { x: 0, y: -10_000_001 }, { x: '1', y: 0 }, { x: 0 }, 'a', null, []];
+  const badNodes: unknown[] = [{ x: NaN, y: 0 }, { x: 0, y: Infinity }, { x: 10_000_001, y: 0 }, { x: 0, y: -10_000_001 }, { x: '1', y: 0 }, { x: 0 }, { y: 0, width: 400 }, {}, { junk: true }, 'a', null, []];
   for (const bad of badNodes) {
     expect(() => parseMapLayout(layout(bad)), JSON.stringify(bad)).toThrow('Invalid map layout');
   }
@@ -37,6 +37,15 @@ test('bounds coordinates and widths to finite, sane values', () => {
   expect(parseMapLayout(layout({ ...node, width: 960 })).nodes.a.width).toBe(960);
   for (const width of [239, 961, NaN, Infinity, '300', null]) {
     expect(() => parseMapLayout(layout({ ...node, width })), String(width)).toThrow('Invalid map layout');
+  }
+});
+
+test('keeps a width without a position, for a node resized but left to automatic placement', () => {
+  const parsed = parseMapLayout({ view: 'preview', nodes: { a: { width: 400, junk: true } } });
+  expect(parsed.nodes).toEqual({ a: { width: 400 } });
+  expect(Object.keys(parsed.nodes.a)).toEqual(['width']);
+  for (const width of [239, 961, NaN, '300', null]) {
+    expect(() => parseMapLayout({ view: 'preview', nodes: { a: { width } } }), String(width)).toThrow('Invalid map layout');
   }
 });
 
