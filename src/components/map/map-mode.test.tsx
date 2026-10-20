@@ -21,7 +21,7 @@ const sideChat: SideChatSummary = { ref: side, parentKey: conversationKey(root),
 
 interface Fixture { listeners: Set<(event: ConversationStreamEvent) => void>; loads: Map<string, string>; map: MapApi; conversations: ConversationApi }
 
-function install({ sideChats = [], layout = EMPTY_MAP_LAYOUT }: { sideChats?: SideChatSummary[]; layout?: MapLayout } = {}): Fixture {
+function install({ sideChats = [], layout = EMPTY_MAP_LAYOUT, runtime = 'idle' }: { sideChats?: SideChatSummary[]; layout?: MapLayout; runtime?: ConversationSummary['runtime'] } = {}): Fixture {
   const listeners = new Set<(event: ConversationStreamEvent) => void>();
   const loads = new Map<string, string>();
   let saved = layout;
@@ -29,7 +29,7 @@ function install({ sideChats = [], layout = EMPTY_MAP_LAYOUT }: { sideChats?: Si
     list: async () => ({ projects: [], providers: [] }), create: async () => null,
     open: async (ref, loadId) => {
       loads.set(conversationKey(ref), loadId);
-      return { summary: { ref, title: 'Map', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities: { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: true } };
+      return { summary: { ref, title: 'Map', updatedAt: 1, runtime, captureCompleteness: 'complete' }, capabilities: { create: true, partialStreaming: true, approvals: true, questions: true, interrupt: true, steerWhileRunning: false, fork: true } };
     },
     close: async () => undefined, continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined), resolveRequest: vi.fn(async () => undefined),
     previewAttachment: vi.fn(async () => ({ kind: 'missing' as const })), openAttachment: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
@@ -163,10 +163,19 @@ test('a reply offers the branch handle, except in a subagent conversation', asyn
   expect(branchHandle('Hi there.')?.getAttribute('data-can-branch')).toBe('false');
 });
 
-test('a reply that can\'t branch keeps a closed branch handle, so a side chat cut from it stays attached', async () => {
-  const fixture = install({ sideChats: [sideChat] });
+test('a reloaded turn left active can branch while its conversation is idle', async () => {
+  const fixture = install();
   render(<MapMode {...shell(root)} />);
-  // A reloaded transcript can leave the latest turn active, and that turn is where the side chat was cut.
+  // A transcript never records a turn ending, so a reloaded latest turn stays active.
+  await loadHistory(fixture, root, [{ ...turn('t1', 'Hello', 'Hi there.'), status: 'active' }]);
+  await screen.findByText('Hi there.');
+  expect(branchHandle('Hi there.')?.getAttribute('data-can-branch')).toBe('true');
+});
+
+test('a reply that can\'t branch keeps a closed branch handle, so a side chat cut from it stays attached', async () => {
+  const fixture = install({ sideChats: [sideChat], runtime: 'active-externally' });
+  render(<MapMode {...shell(root)} />);
+  // The turn the side chat was cut after is running again, elsewhere.
   await loadHistory(fixture, root, [{ ...turn('t1', 'Hello', 'Hi there.'), status: 'active' }]);
   await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
   await screen.findByText('More.');

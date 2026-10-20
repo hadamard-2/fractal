@@ -745,11 +745,47 @@ describe('ConversationService branches', () => {
     await f.service.open(ref, loadId);
     await expect(f.service.fork(ref, { turnId: 'missing', position: 'after' }, 'fork')).rejects.toThrow('Fork point is not in this conversation');
     await expect(f.service.fork(ref, { turnId: 't1', position: 'before' }, 'side-chat')).rejects.toThrow('Side chats branch after a reply');
-    await expect(f.service.fork(ref, { turnId: 't2', position: 'after' }, 'fork')).rejects.toThrow('Cannot fork from a turn in progress');
     vi.mocked(f.adapter.listConversations).mockResolvedValue([{ ...summary, parentId: 'parent' }]);
     await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'fork')).rejects.toThrow('Subagent conversations are read-only');
     expect(f.adapter.forkConversation).not.toHaveBeenCalled();
     expect(f.records.size).toBe(0);
+    await f.service.dispose();
+  });
+
+  test.each(['active-in-fractal', 'active-externally', 'waiting-for-user'] as const)('refuses to fork from an unfinished turn while the conversation is %s', async (runtime) => {
+    const f = branchFixture([start('t1'), finish('t1'), start('t2')]);
+    vi.mocked(f.adapter.listConversations).mockResolvedValue([{ ...summary, runtime }]);
+    await f.service.open(ref, loadId);
+    await expect(f.service.fork(ref, { turnId: 't2', position: 'after' }, 'side-chat')).rejects.toThrow('Cannot fork from a turn in progress');
+    await expect(f.service.fork(ref, { turnId: 't1', position: 'after' }, 'side-chat')).resolves.toEqual(forkedRef);
+    expect(f.adapter.forkConversation).toHaveBeenCalledTimes(1);
+    await f.service.dispose();
+  });
+
+  test('forks from an unfinished turn when the conversation is idle, as a history that never recorded its end leaves it', async () => {
+    const f = branchFixture([start('t1'), finish('t1'), start('t2')]);
+    await f.service.open(ref, loadId);
+    await expect(f.service.fork(ref, { turnId: 't2', position: 'after' }, 'side-chat')).resolves.toEqual(forkedRef);
+    expect(f.adapter.forkConversation).toHaveBeenCalledWith(ref, 't2', expect.anything());
+    await f.service.dispose();
+  });
+
+  test('refuses to fork from an unfinished turn while Fractal is running the conversation, even if the agent says idle', async () => {
+    const f = branchFixture([start('t1'), finish('t1'), start('t2')]);
+    await f.service.open(ref, loadId);
+    const gate = deferred<ConversationRun>();
+    vi.mocked(f.adapter.continueConversation).mockReturnValue(gate.promise);
+    const starting = f.service.continue(ref, { text: 'Go' }, 'renderer');
+    await vi.waitFor(() => expect(f.adapter.continueConversation).toHaveBeenCalled());
+    await expect(f.service.fork(ref, { turnId: 't2', position: 'after' }, 'side-chat')).rejects.toThrow('Cannot fork from a turn in progress');
+    const run = runFixture();
+    const end = deferred<IteratorResult<NativeEvent>>();
+    run.events[Symbol.asyncIterator].mockReturnValue({ next: () => end.promise });
+    gate.resolve(run);
+    await starting;
+    await expect(f.service.fork(ref, { turnId: 't2', position: 'after' }, 'side-chat')).rejects.toThrow('Cannot fork from a turn in progress');
+    expect(f.adapter.forkConversation).not.toHaveBeenCalled();
+    end.resolve({ done: true, value: undefined });
     await f.service.dispose();
   });
 

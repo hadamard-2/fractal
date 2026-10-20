@@ -7,7 +7,7 @@ import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
-import { conversationKey, parseConversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type SideChatSummary, type UserDecision } from '@/shared/conversation-contract';
+import { BUSY_RUNTIMES, conversationKey, parseConversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type SideChatSummary, type UserDecision } from '@/shared/conversation-contract';
 import { MAX_BRANCH_POINT_TEXT_LENGTH, parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
 type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities };
@@ -37,8 +37,6 @@ type OwnedRun = { ref: ConversationRef; id: string; rendererId: string; run: Con
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
 
 type Branches = Pick<BranchStore, 'get' | 'set' | 'delete' | 'descendants' | 'sideChatKeys'>;
-
-const BUSY_RUNTIMES: ReadonlySet<ConversationSummary['runtime']> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
 
 export class ConversationService {
   private readonly loads = new Map<string, Load>();
@@ -161,8 +159,11 @@ export class ConversationService {
     if (kind === 'side-chat' && !after) throw new Error('Side chats branch after a reply');
     const afterIndex = after ? index : index - 1;
     const afterTurn = turns[afterIndex] as ConversationTurn | undefined;
-    if (afterTurn?.status === 'active') throw new Error('Cannot fork from a turn in progress');
     const summary = await this.registry.validate(source);
+    // A history may never record a turn's end, so an active turn is only in progress while the conversation is busy.
+    const key = conversationKey(source);
+    const busy = BUSY_RUNTIMES.has(summary.runtime) || this.ownedRuns.has(key) || this.startingRuns.has(key);
+    if (afterTurn?.status === 'active' && busy) throw new Error('Cannot fork from a turn in progress');
     if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     const note = kind === 'side-chat' ? SIDE_CHAT_NOTE : afterIndex !== turns.length - 1 ? FORK_NOTE : undefined;
     const title = `${summary.title} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;

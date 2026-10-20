@@ -63,9 +63,9 @@ export function draftFromConnectEnd(connection: ConnectionEnd, drop: Drop, toFlo
 
 type MessageData = Extract<MapNodeData, { kind: 'user' | 'reply' }>;
 
-/** Whether text selected in this node can start a side chat: a reply that can branch, or a user message whose turn has finished. */
+/** Whether text selected in this node can start a side chat: a reply or user message whose turn can branch. */
 export function canBranchFrom(data: MapNodeData): data is MessageData {
-  return data.kind === 'reply' ? data.canBranch : data.kind === 'user' && data.turn.status !== 'active';
+  return (data.kind === 'reply' || data.kind === 'user') && data.canBranch;
 }
 
 /** The draft "Side chat" makes from text selected in a message: a side chat after that turn's reply, opening with the quote. */

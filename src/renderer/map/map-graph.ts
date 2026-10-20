@@ -1,6 +1,6 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import type { ConversationState } from '@/renderer/conversation-reducer';
-import { conversationKey, type ConversationRef, type ConversationTurn, type SideChatSummary } from '@/shared/conversation-contract';
+import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ConversationTurn, type SideChatSummary } from '@/shared/conversation-contract';
 import type { MapLayout } from '@/shared/map-contract';
 
 export const MAP = {
@@ -26,7 +26,7 @@ export interface SideChatDraft {
 }
 
 export type MapNodeData =
-  | { kind: 'user'; owner: ConversationRef; line: 'main' | 'side'; turn: ConversationTurn }
+  | { kind: 'user'; owner: ConversationRef; line: 'main' | 'side'; turn: ConversationTurn; canBranch: boolean }
   | { kind: 'reply'; owner: ConversationRef; line: 'main' | 'side'; turn: ConversationTurn; latest: boolean; canBranch: boolean }
   | { kind: 'composer'; draft: SideChatDraft }
   | { kind: 'detached'; sideChat: SideChatSummary };
@@ -146,13 +146,15 @@ export function buildMapGraph(input: {
       : { x: column.x, y: snap(cursor) };
 
     turns.forEach((turn, index) => {
+      // A history may never record a turn's end, so an active turn is only in progress while its conversation is busy.
+      const canBranch = !readOnly && !(turn.status === 'active' && BUSY_RUNTIMES.has(state.runtime));
       if (hasUserContent(turn)) {
         const id = mapNodeId(owner, turn.id, 'user');
-        push(place(id, { kind: 'user', owner, line, turn }, next()));
+        push(place(id, { kind: 'user', owner, line, turn, canBranch }, next()));
       }
       const id = mapNodeId(owner, turn.id, 'reply');
       const reply = place(id, {
-        kind: 'reply', owner, line, turn, latest: index === turns.length - 1, canBranch: turn.status !== 'active' && !readOnly,
+        kind: 'reply', owner, line, turn, latest: index === turns.length - 1, canBranch,
       }, next());
       push(reply);
       drawn.replies.set(turn.id, reply);

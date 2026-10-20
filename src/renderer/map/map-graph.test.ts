@@ -72,13 +72,36 @@ describe('buildMapGraph nodes', () => {
     ]);
   });
 
-  test('marks the latest reply and lets only settled replies branch', () => {
-    const graph = build({ root: { ref: root, state: state(root, [turn('t1'), turn('t2', { status: 'active' })]) } });
-    const reply = (id: string) => find(graph, replyId(root, id))?.data;
+  test.each(['active-in-fractal', 'active-externally', 'waiting-for-user'] as const)('marks the latest reply, and lets no message of an unfinished turn branch while the conversation is %s', (runtime) => {
+    const graph = build({ root: { ref: root, state: { ...state(root, [turn('t1'), turn('t2', { status: 'active' })]), runtime } } });
+    const data = (id: string) => find(graph, id)?.data;
 
-    expect(reply('t1')).toMatchObject({ latest: false, canBranch: true });
-    expect(reply('t2')).toMatchObject({ latest: true, canBranch: false });
-    expect(build({ readOnly: true }).nodes.filter((node) => node.data.kind === 'reply').every((node) => node.data.kind === 'reply' && !node.data.canBranch)).toBe(true);
+    expect(data(replyId(root, 't1'))).toMatchObject({ latest: false, canBranch: true });
+    expect(data(userId(root, 't1'))).toMatchObject({ canBranch: true });
+    expect(data(replyId(root, 't2'))).toMatchObject({ latest: true, canBranch: false });
+    expect(data(userId(root, 't2'))).toMatchObject({ canBranch: false });
+  });
+
+  test.each(['idle', 'unknown', 'failed'] as const)('lets an unfinished turn branch while the conversation is %s, since a history may never record a turn ending', (runtime) => {
+    const graph = build({ root: { ref: root, state: { ...state(root, [turn('t1'), turn('t2', { status: 'active' })]), runtime } } });
+
+    expect(find(graph, replyId(root, 't2'))?.data).toMatchObject({ latest: true, canBranch: true });
+    expect(find(graph, userId(root, 't2'))?.data).toMatchObject({ canBranch: true });
+  });
+
+  test('a side chat\'s messages follow its own runtime', () => {
+    const side = sideRef('side-1');
+    const busySide = { summary: summary('side-1', 't1'), state: { ...state(side, [turn('s1', { status: 'active' })]), runtime: 'active-in-fractal' as const } };
+    const graph = build({ root: { ref: root, state: { ...state(root, [turn('t1', { status: 'active' })]), runtime: 'idle' } }, sideChats: [busySide] });
+
+    expect(find(graph, replyId(root, 't1'))?.data).toMatchObject({ canBranch: true });
+    expect(find(graph, replyId(side, 's1'))?.data).toMatchObject({ canBranch: false });
+  });
+
+  test('lets nothing branch in a read-only map', () => {
+    const messages = build({ readOnly: true }).nodes.filter((node) => node.data.kind === 'reply' || node.data.kind === 'user');
+    expect(messages).toHaveLength(4);
+    expect(messages.every((node) => (node.data.kind === 'reply' || node.data.kind === 'user') && !node.data.canBranch)).toBe(true);
   });
 });
 

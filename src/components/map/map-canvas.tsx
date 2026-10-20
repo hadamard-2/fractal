@@ -2,7 +2,7 @@ import { Background, BackgroundVariant, ReactFlow, useReactFlow, type Dimensions
 import '@xyflow/react/dist/base.css';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Shimmer } from '@/components/ai-elements/shimmer';
-import { conversationKey, type ConversationRef, type ConversationRuntime, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
+import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
 import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
@@ -19,9 +19,6 @@ type MapNode = Node<MapNodeData>;
 
 /** Where a node is while the user drags or resizes it, until the layout takes over at the end. */
 interface Override { position?: XYPosition; width?: number }
-
-/** A side chat in one of these is running or waiting on the user, so it can't be deleted. */
-const BUSY_RUNTIMES: ReadonlySet<ConversationRuntime> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
 
 /** The side chat the user is being asked about, with the side chats inside it as the list had them then. */
 interface PendingDeletion { sideChat: SideChatSummary; below: SideChatSummary[] }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { ConversationHub } from '@/renderer/conversation-hub';
 import type { MapNodeData, SideChatDraft } from '@/renderer/map/map-graph';
 import { initialConversationState } from '@/renderer/conversation-reducer';
-import { draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, quoteSelection, submitDraft } from '@/renderer/map/side-chat-drafts';
+import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, quoteSelection, submitDraft } from '@/renderer/map/side-chat-drafts';
 import { conversationKey, type ConversationApi, type ConversationRef, type ConversationStreamEvent, type ConversationTurn, type HarnessCapabilities, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
 
 const root: ConversationRef = { provider: 'claude', nativeSessionId: 'root', projectPath: '/work' };
@@ -222,6 +222,16 @@ describe('draftFromConnectEnd', () => {
   });
 });
 
+describe('canBranchFrom', () => {
+  test('a message can branch when its node says so, whatever its turn\'s status', () => {
+    expect(canBranchFrom(reply({ turn: turn('t1', 'active') }))).toBe(true);
+    expect(canBranchFrom({ kind: 'user', owner: root, line: 'main', turn: turn('t1', 'active'), canBranch: true })).toBe(true);
+    expect(canBranchFrom(reply({ canBranch: false }))).toBe(false);
+    expect(canBranchFrom({ kind: 'user', owner: root, line: 'main', turn: turn('t1'), canBranch: false })).toBe(false);
+    expect(canBranchFrom({ kind: 'composer', draft })).toBe(false);
+  });
+});
+
 describe('draftFromMessage', () => {
   test('a reply\'s selection branches after that reply, quoted', () => {
     expect(draftFromMessage(reply({ owner: side, line: 'side', turn: turn('s1'), latest: true }), 'the lockfile', 'd1'))
@@ -229,13 +239,13 @@ describe('draftFromMessage', () => {
   });
 
   test('a user message\'s selection branches after the same turn\'s reply', () => {
-    expect(draftFromMessage({ kind: 'user', owner: root, line: 'main', turn: turn('t3') }, 'why', 'd1'))
+    expect(draftFromMessage({ kind: 'user', owner: root, line: 'main', turn: turn('t3'), canBranch: true }, 'why', 'd1'))
       .toEqual({ id: 'd1', parent: root, afterTurnId: 't3', text: '> why\n\n' });
   });
 
-  test('nothing branches from a reply that can\'t, a turn still running, or a node that isn\'t a message', () => {
+  test('nothing branches from a reply or user message that can\'t, or a node that isn\'t a message', () => {
     expect(draftFromMessage(reply({ canBranch: false }), 'x', 'd1')).toBeNull();
-    expect(draftFromMessage({ kind: 'user', owner: root, line: 'main', turn: turn('t1', 'active') }, 'x', 'd1')).toBeNull();
+    expect(draftFromMessage({ kind: 'user', owner: root, line: 'main', turn: turn('t1', 'active'), canBranch: false }, 'x', 'd1')).toBeNull();
     expect(draftFromMessage({ kind: 'composer', draft }, 'x', 'd1')).toBeNull();
   });
 });

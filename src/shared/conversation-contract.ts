@@ -316,6 +316,9 @@ export interface ConversationApi {
   onEvent(listener: (event: ConversationStreamEvent) => void): () => void;
 }
 
+/** Runtimes in which a conversation is running a turn or waiting on the user. */
+export const BUSY_RUNTIMES: ReadonlySet<ConversationRuntime> = new Set(['active-in-fractal', 'active-externally', 'waiting-for-user']);
+
 export function conversationKey(ref: Pick<ConversationRef, 'provider' | 'nativeSessionId'> & Partial<ConversationRef>): string {
   return `${ref.provider}:${ref.nativeSessionId}`;
 }
