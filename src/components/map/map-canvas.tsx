@@ -3,12 +3,12 @@ import '@xyflow/react/dist/base.css';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import { SelectionMenu, useMessageSelection } from '@/components/conversation/selection-menu';
-import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type ModelChoice, type SideChatSummary } from '@/shared/conversation-contract';
+import { BUSY_RUNTIMES, conversationKey, type ConversationRef, type SideChatSummary } from '@/shared/conversation-contract';
 import { conversationHub, useConversationStates } from '@/renderer/conversation-hub';
 import { initialConversationState } from '@/renderer/conversation-reducer';
 import { buildMapGraph, hasUserContent, MAP, type MapNodeData, type SideChatDraft } from '@/renderer/map/map-graph';
 import { canBranchFrom, draftFromConnectEnd, draftFromMessage, draftsReducer, handOffNodeId, type HandOff } from '@/renderer/map/side-chat-drafts';
-import { submitDraft } from '@/renderer/side-chat-start';
+import { modelChoiceOf, submitDraft } from '@/renderer/side-chat-start';
 import { useMapLayout } from '@/renderer/map/use-map-layout';
 import { sideChatsBelow, useSideChats } from '@/renderer/map/use-side-chats';
 import { DeleteSideChatDialog } from './delete-side-chat-dialog';
@@ -42,11 +42,6 @@ function withoutEntry<V>(map: ReadonlyMap<string, V>, id: string): ReadonlyMap<s
 
 function CanvasMessage({ children }: { children: ReactNode }) {
   return <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">{children}</div>;
-}
-
-/** The model a side chat's next turn runs with; a failed lookup means the agent's default. */
-function modelChoiceOf(ref: ConversationRef): Promise<ModelChoice | null> {
-  return Promise.resolve().then(() => window.fractal.models.list(ref)).then((result) => result.choice, (): null => null);
 }
 
 /** The map of one root conversation and its side chats. Mount it inside a ReactFlowProvider, one per root, so unsent drafts go with the root. */

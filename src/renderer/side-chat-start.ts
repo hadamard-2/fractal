@@ -10,6 +10,11 @@ export function quoteSelection(text: string): string {
   return `${text.trim().split('\n').map((line) => `> ${line}`).join('\n')}\n\n`;
 }
 
+/** The model a side chat's next turn runs with; a failed lookup means the agent's default. */
+export function modelChoiceOf(ref: ConversationRef): Promise<ModelChoice | null> {
+  return Promise.resolve().then(() => window.fractal.models.list(ref)).then((result) => result.choice, (): null => null);
+}
+
 /** What to send: more of an existing side chat when `continues` is set, otherwise a new side chat after `afterTurnId`'s reply in `parent`. */
 export type SideChatRequest = { text: string } & ({ continues: ConversationRef } | { parent: ConversationRef; afterTurnId: string });
 

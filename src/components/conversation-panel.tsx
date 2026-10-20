@@ -22,7 +22,7 @@ import { conversationKey, MAX_PROMPT_ATTACHMENTS, type ConversationRef, type Con
 // panel's width (it is the `@container`), so rows inside the scrolling transcript and
 // the composer outside it resolve the padding against the same width. Both regions
 // reserve a stable scrollbar gutter so the column's edges line up between them.
-const COLUMN = 'px-[max(1rem,6cqw,(100cqw_-_46rem)/2)]';
+export const COLUMN = 'px-[max(1rem,6cqw,(100cqw_-_46rem)/2)]';
 
 function AttachButton({ disabled }: { disabled: boolean }) {
   const attachments = usePromptInputAttachments();

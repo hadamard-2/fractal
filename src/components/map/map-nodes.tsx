@@ -4,14 +4,14 @@ import { createContext, useCallback, useContext, useSyncExternalStore, type Reac
 import { MessageResponse } from '@/components/ai-elements/message';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import { AttachmentPreviewProvider } from '@/components/conversation/attachment-preview-context';
-import { AgentReplyBody, MESSAGE_TEXT, splitTurnWork, UserMessageBody } from '@/components/conversation/conversation-turn';
+import { AgentReplyBody, MESSAGE_TEXT, replyPreview, UserMessageBody } from '@/components/conversation/conversation-turn';
 import { providerName } from '@/components/sidebar-03/nav-main';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { conversationHub } from '@/renderer/conversation-hub';
 import { MAP, type MapNodeData } from '@/renderer/map/map-graph';
-import { conversationKey, type ConversationRef, type ConversationTurn, type TurnBlock } from '@/shared/conversation-contract';
+import { conversationKey, type ConversationRef, type TurnBlock } from '@/shared/conversation-contract';
 import type { MapView } from '@/shared/map-contract';
 import { ComposerNode } from './composer-node';
 
@@ -37,11 +37,6 @@ type DataOf<K extends MapNodeData['kind']> = Extract<MapNodeData, { kind: K }>;
 type MapNodeProps<K extends MapNodeData['kind']> = NodeProps<Node<DataOf<K>>>;
 
 const proseOf = (blocks: TurnBlock[]) => blocks.flatMap((block) => block.kind === 'assistant-prose' ? [block.text] : []).join('\n\n');
-
-/** The prose Preview starts from: the reply's answer as execute shows it, or all its prose when it has no answer yet. */
-function replyPreview(turn: ConversationTurn): string {
-  return proseOf(splitTurnWork(turn).answer) || proseOf(turn.blocks);
-}
 
 /** Preview's cut: the start of a message, clamped to three lines. */
 function Clamped({ text }: { text: string }) {

@@ -47,6 +47,13 @@ export function splitTurnWork(turn: ConversationTurnData): { lead: TurnBlock[]; 
   };
 }
 
+const proseOf = (blocks: TurnBlock[]) => blocks.flatMap((block) => block.kind === 'assistant-prose' ? [block.text] : []).join('\n\n');
+
+/** The prose a reply's preview starts from: its answer as Execute shows it, or all its prose without one. */
+export function replyPreview(turn: ConversationTurnData): string {
+  return proseOf(splitTurnWork(turn).answer) || proseOf(turn.blocks);
+}
+
 // A URL, path, or hash with no spaces would otherwise keep its full width and push the transcript sideways.
 export const MESSAGE_TEXT = 'max-w-none text-sm leading-6 wrap-anywhere';
 
@@ -139,7 +146,7 @@ export function AgentReplyBody({ turn, onResolve }: { turn: ConversationTurnData
 
 export function ConversationTurn({ turn, onResolve }: { turn: ConversationTurnData; onResolve: ResolveRequest }) {
   return (
-    <article aria-label="Conversation turn" className="space-y-4">
+    <article aria-label="Conversation turn" className="space-y-4" data-selection-source={turn.id}>
       <UserMessageBody turn={turn} />
       <AgentReplyBody onResolve={onResolve} turn={turn} />
     </article>
