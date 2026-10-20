@@ -607,6 +607,24 @@ describe('the side-chat selection menu', () => {
     expect(menu()).toBeNull();
   });
 
+  test('offers nothing until the history has finished loading', async () => {
+    install();
+    render(
+      <SideChatLauncherContext.Provider value={{ start: vi.fn(), open: vi.fn() }}>
+        <ConversationPanel conversationRef={ref} />
+      </SideChatLauncherContext.Provider>,
+    );
+    await waitFor(() => expect(loadId).not.toBe(''));
+    act(() => emit({ ref, loadId, seq: seq++, type: 'history.chunk', chunkIndex: 0, turns: [first, second] }));
+    await screen.findByText('The lockfile.');
+    select('It re-reads every file.');
+    expect(menu()).toBeNull();
+
+    act(() => emit({ ref, loadId, seq: seq++, type: 'history.complete' }));
+    select('It re-reads every file.');
+    expect(menu()).toBeTruthy();
+  });
+
   test('offers nothing without a launcher, or while the panel is not active', async () => {
     await open({ launcher: null });
     select('It re-reads every file.');

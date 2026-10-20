@@ -131,6 +131,19 @@ test('read-only offers nothing', () => {
   expect(menu()).toBeNull();
 });
 
+test('a selection made before it was disabled doesn\'t come back when it is enabled again', () => {
+  const view = render(<Harness accepts={all} onChoose={vi.fn()} />);
+  select('First message');
+  expect(menu()).toBeTruthy();
+  view.rerender(<Harness accepts={null} onChoose={vi.fn()} />);
+  expect(menu()).toBeNull();
+  view.rerender(<Harness accepts={all} onChoose={vi.fn()} />);
+  expect(menu()).toBeNull();
+  // A new selection still offers it.
+  select('Second message');
+  expect(menu()).toBeTruthy();
+});
+
 test('the menu goes when the selection collapses, the page scrolls, or the canvas moves', () => {
   render(<Harness accepts={all} onChoose={vi.fn()} />);
   select('First message');

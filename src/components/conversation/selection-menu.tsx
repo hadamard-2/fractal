@@ -74,6 +74,8 @@ export function useMessageSelection(
     return () => {
       document.removeEventListener('selectionchange', read);
       window.removeEventListener('scroll', hide, true);
+      // Nothing reads the selection while disabled, so what was read before would be stale once enabled again.
+      setSelection(null);
     };
   }, [enabled, container]);
 
