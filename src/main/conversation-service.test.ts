@@ -952,6 +952,30 @@ describe('ConversationService branches', () => {
       await f.service.dispose();
     });
 
+    test('deletes natively a side chat the listing lacks but the agent still has, then its record', async () => {
+      const f = tree();
+      const unlisted = f.extra.find((item) => item.ref.nativeSessionId === 'sc2');
+      f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item !== unlisted));
+      f.adapter.readSummary = vi.fn(async (read) => read.nativeSessionId === 'sc2' ? unlisted ?? null : null);
+      const order: string[] = [];
+      f.deleteConversation.mockImplementation(async (deleted) => { order.push(`native:${deleted.nativeSessionId}`); });
+      f.branches.delete = (key: string) => { order.push(`record:${key}`); f.records.delete(key); };
+      await expect(f.service.deleteSideChat(at('sc1'))).resolves.toEqual([at('sc3'), at('sc2'), at('sc1')]);
+      expect(f.adapter.readSummary).toHaveBeenCalledWith(at('sc2'));
+      expect(order).toEqual(['native:sc3', 'record:codex:sc3', 'native:sc2', 'record:codex:sc2', 'native:sc1', 'record:codex:sc1']);
+      await f.service.dispose();
+    });
+
+    test('removes only the record of an unlisted side chat the agent confirms is gone', async () => {
+      const f = tree();
+      f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item.ref.nativeSessionId !== 'sc2'));
+      f.adapter.readSummary = vi.fn(async () => null);
+      await expect(f.service.deleteSideChat(at('sc1'))).resolves.toEqual([at('sc3'), at('sc2'), at('sc1')]);
+      expect(f.deleteConversation.mock.calls.map(([deleted]) => deleted.nativeSessionId)).toEqual(['sc3', 'sc1']);
+      expect([...f.records.keys()]).toEqual(['codex:fk', 'codex:fk-sc']);
+      await f.service.dispose();
+    });
+
     test('is not available without a branch store', async () => {
       const f = fixture();
       await expect(f.service.deleteSideChat(ref)).rejects.toThrow('Side chat deletion is not available');

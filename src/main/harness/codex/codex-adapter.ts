@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { versionWarning } from '@/main/harness/version-floor';
 import type { CodexAppServer, CodexRequestMap } from '@/main/harness/codex/codex-app-server';
+import { JsonRpcError } from '@/main/harness/codex/json-rpc-peer';
 import { createCodexLiveNormalizationContext, normalizeCodexNotification, normalizeCodexServerRequest, normalizeCodexThread } from '@/main/harness/codex/codex-normalizer';
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
@@ -94,6 +95,21 @@ export class CodexAdapter implements HarnessAdapter {
     const thread = await this.readThread(ref);
     const events = normalizeCodexThread(thread);
     return { summary: await this.summaryFromThread(thread, completenessFor(thread, events)), events: asAsyncIterable(events) };
+  }
+
+  /**
+   * `thread/list` leaves out a thread with no turn of its own, such as a fork that has not run yet or a thread just started, so
+   * those are read by id. Turns are not requested: a thread with no user message yet cannot return them.
+   */
+  async readSummary(ref: ConversationRef): Promise<ConversationSummary | null> {
+    let thread: Awaited<CodexRequestMap['thread/read']['result']>['thread'];
+    try {
+      thread = await this.requestThread(ref, false);
+    } catch (error) {
+      if (isThreadNotLoaded(error)) return null;
+      throw error;
+    }
+    return this.summaryFromThread(thread, 'unknown');
   }
 
   async watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe> {
@@ -457,11 +473,16 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   private async readThread(ref: ConversationRef) {
+    const thread = await this.requestThread(ref, true);
+    if (await this.canonicalPath(thread.cwd) !== await this.canonicalPath(ref.projectPath)) throw new Error('Requested Codex project does not match the discovered thread');
+    return thread;
+  }
+
+  private async requestThread(ref: ConversationRef, includeTurns: boolean) {
     if (ref.provider !== 'codex') throw new Error('Conversation provider must be codex');
-    const response = await this.server.request('thread/read', { threadId: ref.nativeSessionId, includeTurns: true });
+    const response = await this.server.request('thread/read', { threadId: ref.nativeSessionId, includeTurns });
     const thread = response.thread;
     if (thread.id !== ref.nativeSessionId) throw new Error('Requested Codex thread does not match the discovered thread');
-    if (await this.canonicalPath(thread.cwd) !== await this.canonicalPath(ref.projectPath)) throw new Error('Requested Codex project does not match the discovered thread');
     return thread;
   }
 
@@ -518,6 +539,11 @@ function runtimeFor(status: Awaited<CodexRequestMap['thread/read']['result']>['t
   if (status.type === 'systemError') return 'failed';
   if (status.type === 'active') return status.activeFlags.length > 0 ? 'waiting-for-user' : 'active-externally';
   return 'unknown';
+}
+
+/** How Codex answers `thread/read` for a thread it does not have, as observed after `thread/delete`. */
+function isThreadNotLoaded(error: unknown): boolean {
+  return error instanceof JsonRpcError && error.code === -32600 && error.message.startsWith('thread not loaded:');
 }
 
 function hasThreadId(value: unknown): value is { params: { threadId: string } } {

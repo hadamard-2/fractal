@@ -65,6 +65,11 @@ export interface HarnessAdapter {
   capabilities(): HarnessCapabilities;
   listConversations(): Promise<ConversationSummary[]>;
   loadConversation(ref: ConversationRef): Promise<LoadedConversation>;
+  /**
+   * The session's summary read from the agent directly, for a session its listing does not return.
+   * Null only when the agent says the session does not exist; any other failure throws. Absent when the listing is complete.
+   */
+  readSummary?(ref: ConversationRef): Promise<ConversationSummary | null>;
   watchConversation(ref: ConversationRef, sink: NativeEventSink): Promise<Unsubscribe>;
   createConversation(projectPath: string): Promise<ConversationRef>;
   continueConversation(ref: ConversationRef, prompt: AgentPrompt): Promise<ConversationRun>;

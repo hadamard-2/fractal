@@ -217,7 +217,7 @@ export class ConversationService {
     }));
     for (const [index, ref] of refs.entries()) {
       const key = conversationKey(ref);
-      // Absent from a working listing: already gone from the agent's history, so only Fractal's record is left to remove.
+      // The agent says it does not have it: already gone from its history, so only Fractal's record is left to remove.
       if (listed[index] !== null) await this.registry.delete(ref);
       branches.delete(key);
       const load = this.loads.get(key);

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { CodexAdapter } from '@/main/harness/codex/codex-adapter';
 import threadRead from '@/main/harness/codex/__fixtures__/thread-read.json';
+import { JsonRpcError } from '@/main/harness/codex/json-rpc-peer';
 
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 
@@ -637,6 +638,55 @@ describe('Codex native continuation', () => {
     server.emitStatus({ availability: 'unavailable', message: 'exited' });
     expect(server.responses).toEqual([{ id: 32, result: { permissions: {}, scope: 'turn' } }]);
     await run.dispose();
+  });
+});
+
+describe('Codex summary of a single thread', () => {
+  const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+  const adapterFor = (server: ReturnType<typeof createFakeAppServer>) => new CodexAdapter(server as never, { realpath: async (value) => value });
+  function readFails(server: ReturnType<typeof createFakeAppServer>, error: Error) {
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'thread/read') throw error; return request(method, params); });
+  }
+
+  test('reads the thread without its turns and maps it like a listed one', async () => {
+    const server = createFakeAppServer();
+    await expect(adapterFor(server).readSummary(ref)).resolves.toEqual({
+      ref, title: 'Native history', createdAt: 1768000000000, updatedAt: 1768000010000, runtime: 'idle', captureCompleteness: 'unknown',
+    });
+    expect(server.requests).toEqual([{ method: 'thread/read', params: { threadId: 'thread-1', includeTurns: false } }]);
+  });
+
+  test('reports the thread\'s own project, leaving the comparison to the caller', async () => {
+    const server = createFakeAppServer();
+    await expect(adapterFor(server).readSummary({ ...ref, projectPath: '/work/other' })).resolves.toMatchObject({ ref: { projectPath: '/work/fractal' } });
+  });
+
+  test('is null when Codex says the thread is not loaded', async () => {
+    const server = createFakeAppServer();
+    readFails(server, new JsonRpcError(-32600, 'thread not loaded: thread-1'));
+    await expect(adapterFor(server).readSummary(ref)).resolves.toBeNull();
+  });
+
+  test.each([
+    { label: 'the same code with another message', error: new JsonRpcError(-32600, 'invalid request') },
+    { label: 'the same message with another code', error: new JsonRpcError(-32603, 'thread not loaded: thread-1') },
+    { label: 'a transport failure', error: new Error('thread not loaded: thread-1') },
+  ])('rethrows $label', async ({ error }) => {
+    const server = createFakeAppServer();
+    readFails(server, error);
+    await expect(adapterFor(server).readSummary(ref)).rejects.toBe(error);
+  });
+
+  test('refuses a thread Codex returns under another id', async () => {
+    const server = createFakeAppServer();
+    await expect(adapterFor(server).readSummary({ ...ref, nativeSessionId: 'thread-2' })).rejects.toThrow('does not match');
+  });
+
+  test('refuses a conversation that is not a Codex thread', async () => {
+    const server = createFakeAppServer();
+    await expect(adapterFor(server).readSummary({ ...ref, provider: 'claude' })).rejects.toThrow('Conversation provider must be codex');
+    expect(server.requests).toEqual([]);
   });
 });
 

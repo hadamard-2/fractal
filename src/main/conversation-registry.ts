@@ -73,15 +73,16 @@ export class ConversationRegistry {
   }
 
   /**
-   * The conversation as the agent's own listing has it right now, or null when a working listing does not have it.
-   * Throws when the listing cannot vouch either way: the provider is unavailable, or the conversation is listed under another project.
+   * The conversation as the agent has it right now: from its listing, or read from the agent directly when the listing lacks it.
+   * Null when the agent does not have it. Throws when the agent cannot vouch either way: the provider is unavailable,
+   * the conversation is under another project, or reading it directly fails.
    */
   async lookup(ref: ConversationRef): Promise<ConversationSummary | null> {
     const parsed = parseConversationRef(ref);
     this.resolve(parsed);
     await this.refreshProvider(parsed.provider);
     if (this.statuses.get(parsed.provider)?.availability !== 'available') throw new Error('Conversation provider is not available');
-    const summary = this.summaries.get(parsed.provider)?.find((item) => conversationKey(item.ref) === conversationKey(parsed));
+    const summary = this.listed(parsed) ?? await this.readUnlisted(parsed);
     if (!summary) return null;
     if (summary.ref.projectPath !== parsed.projectPath) throw new Error('Conversation is not currently available in this project');
     return structuredClone(summary);
@@ -91,9 +92,24 @@ export class ConversationRegistry {
     const parsed = parseConversationRef(ref);
     this.resolve(parsed);
     await this.refreshProvider(parsed.provider);
-    const summary = this.summaries.get(parsed.provider)?.find((item) => conversationKey(item.ref) === conversationKey(parsed) && item.ref.projectPath === parsed.projectPath);
-    if (!summary) throw new Error('Conversation is not currently available in this project');
+    const summary = this.listed(parsed) ?? await this.readUnlisted(parsed);
+    if (!summary || summary.ref.projectPath !== parsed.projectPath) throw new Error('Conversation is not currently available in this project');
     return structuredClone(summary);
+  }
+
+  private listed(ref: ConversationRef): ConversationSummary | undefined {
+    return this.summaries.get(ref.provider)?.find((item) => conversationKey(item.ref) === conversationKey(ref));
+  }
+
+  /** A conversation the listing lacks, read from an available agent that can read one directly; null when it cannot, or says it does not exist. Never cached. */
+  private async readUnlisted(ref: ConversationRef): Promise<ConversationSummary | null> {
+    const adapter = this.resolve(ref);
+    if (!adapter.readSummary || this.statuses.get(ref.provider)?.availability !== 'available') return null;
+    const item = await adapter.readSummary(ref);
+    if (!item) return null;
+    const summary = await this.summaryOf(adapter, item);
+    if (conversationKey(summary.ref) !== conversationKey(ref)) throw new Error('Read conversation does not match the requested conversation');
+    return summary;
   }
 
   refreshProvider(provider: ProviderId): Promise<void> {
@@ -112,13 +128,7 @@ export class ConversationRegistry {
       const status = await adapter.probe();
       const summaries: ConversationSummary[] = [];
       if (status.availability === 'available') {
-        for (const item of await adapter.listConversations()) {
-          const ref = parseConversationRef(item.ref);
-          if (ref.provider !== provider) throw new Error('Mismatched conversation provider');
-          ref.projectPath = await canonicalizeProjectPath(ref.projectPath, this.realpath);
-          // Cache summaries only; adapter-owned file/thread locators never cross this boundary.
-          summaries.push({ ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }), ...(item.parentId === undefined ? {} : { parentId: item.parentId }) });
-        }
+        for (const item of await adapter.listConversations()) summaries.push(await this.summaryOf(adapter, item));
       }
       this.summaries.set(provider, summaries);
       this.statuses.set(provider, structuredClone({ ...status, provider }));
@@ -126,5 +136,13 @@ export class ConversationRegistry {
       this.summaries.set(provider, []);
       this.statuses.set(provider, { provider, availability: 'unavailable', capabilities: { create: false, partialStreaming: false, approvals: false, questions: false, interrupt: false, steerWhileRunning: false, fork: false }, message: 'Conversation discovery failed for this provider.' });
     }
+  }
+
+  private async summaryOf(adapter: HarnessAdapter, item: ConversationSummary): Promise<ConversationSummary> {
+    const ref = parseConversationRef(item.ref);
+    if (ref.provider !== adapter.provider) throw new Error('Mismatched conversation provider');
+    ref.projectPath = await canonicalizeProjectPath(ref.projectPath, this.realpath);
+    // Keep summaries only; adapter-owned file/thread locators never cross this boundary.
+    return { ref, title: item.title, updatedAt: item.updatedAt, runtime: item.runtime, captureCompleteness: item.captureCompleteness, ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }), ...(item.parentId === undefined ? {} : { parentId: item.parentId }) };
   }
 }

@@ -105,6 +105,70 @@ describe('ConversationRegistry', () => {
     });
   });
 
+  describe('a conversation the listing lacks', () => {
+    const ref = { provider: 'codex' as const, nativeSessionId: 'unlisted', projectPath: '/repo' };
+    const unlisted = (projectPath = '/repo'): ConversationSummary => ({ ref: { provider: 'codex', nativeSessionId: 'unlisted', projectPath }, title: 'Unlisted', updatedAt: 3, runtime: 'idle', captureCompleteness: 'unknown' });
+    function reading(summary: ConversationSummary | null) {
+      const codex = adapter('codex');
+      const readSummary = vi.fn(async (): Promise<ConversationSummary | null> => summary);
+      codex.readSummary = readSummary;
+      return { codex, readSummary, registry: new ConversationRegistry([codex], realpath) };
+    }
+
+    test('is read from the agent directly, canonicalized, and kept out of the listing', async () => {
+      const { codex, registry } = reading(unlisted('/link'));
+      await expect(registry.validate(ref)).resolves.toMatchObject({ ref, title: 'Unlisted' });
+      await expect(registry.lookup(ref)).resolves.toMatchObject({ ref, title: 'Unlisted' });
+      expect(codex.readSummary).toHaveBeenCalledWith(ref);
+      expect((await registry.list()).projects[0].conversations.map((item) => item.ref.nativeSessionId)).toEqual(['codex']);
+    });
+
+    test('is not read when the listing has it', async () => {
+      const { codex, registry } = reading(unlisted());
+      await registry.validate({ ...ref, nativeSessionId: 'codex' });
+      await registry.lookup({ ...ref, nativeSessionId: 'codex' });
+      expect(codex.readSummary).not.toHaveBeenCalled();
+    });
+
+    test('is refused when the agent has it under another project', async () => {
+      const { registry } = reading(unlisted('/elsewhere'));
+      await expect(registry.validate(ref)).rejects.toThrow('Conversation is not currently available in this project');
+      await expect(registry.lookup(ref)).rejects.toThrow('Conversation is not currently available in this project');
+    });
+
+    test('is missing when the agent says it does not exist', async () => {
+      const { registry } = reading(null);
+      await expect(registry.validate(ref)).rejects.toThrow('Conversation is not currently available in this project');
+      await expect(registry.lookup(ref)).resolves.toBeNull();
+    });
+
+    test('propagates any other failure to read it', async () => {
+      const { readSummary, registry } = reading(null);
+      readSummary.mockRejectedValue(new Error('read failed'));
+      await expect(registry.validate(ref)).rejects.toThrow('read failed');
+      await expect(registry.lookup(ref)).rejects.toThrow('read failed');
+    });
+
+    test('is refused when the agent returns another conversation', async () => {
+      const { registry } = reading({ ...unlisted(), ref: { provider: 'codex', nativeSessionId: 'other', projectPath: '/repo' } });
+      await expect(registry.validate(ref)).rejects.toThrow();
+      await expect(registry.lookup(ref)).rejects.toThrow();
+    });
+
+    test('is missing, as before, when the agent cannot read a single conversation', async () => {
+      const registry = new ConversationRegistry([adapter('codex')], realpath);
+      await expect(registry.validate(ref)).rejects.toThrow('Conversation is not currently available in this project');
+      await expect(registry.lookup(ref)).resolves.toBeNull();
+    });
+
+    test('is not read while the provider is unavailable', async () => {
+      const { codex, registry } = reading(unlisted());
+      vi.mocked(codex.probe).mockResolvedValue({ provider: 'codex', availability: 'unavailable', capabilities });
+      await expect(registry.validate(ref)).rejects.toThrow('Conversation is not currently available in this project');
+      expect(codex.readSummary).not.toHaveBeenCalled();
+    });
+  });
+
   test('knows a project only once discovery has found a conversation in it', async () => {
     const registry = new ConversationRegistry([adapter('codex')], realpath);
     expect(registry.hasProject('/repo')).toBe(false);
