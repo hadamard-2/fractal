@@ -3,6 +3,7 @@ import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { FOLLOW_BOTTOM_DISTANCE, nextScrollAction, readingAnchor, restoreAnchor, type ReadingAnchor } from '@/renderer/timeline-scroll';
 import type { ConversationTurn as Turn, UserDecision } from '@/shared/conversation-contract';
 import { ConversationTurn } from './conversation-turn';
@@ -19,9 +20,21 @@ interface Props {
   historyComplete?: boolean;
   /** Shown after the last turn, inside its row, so it is measured and scrolled with it. */
   footer?: ReactNode;
+  /** The index of the first turn the fork made itself; a divider marks where the inherited history ends. */
+  dividerBefore?: number;
 }
 
-function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', historyComplete = true, footer }: Props) {
+function ForkDivider({ className }: { className?: string }) {
+  return (
+    <div aria-label="Forked here" className={cn('flex items-center gap-3', className)} role="separator">
+      <div aria-hidden className="h-px flex-1 bg-primary" />
+      <span className="text-xs text-primary">Forked here</span>
+      <div aria-hidden className="h-px flex-1 bg-primary" />
+    </div>
+  );
+}
+
+function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', historyComplete = true, footer, dividerBefore }: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const [saved] = useState(() => positions.get(conversationId));
   const restoring = useRef(Boolean(saved?.anchor));
@@ -144,8 +157,13 @@ function Timeline({ conversationId, turns, onResolve, columnClassName = 'px-4', 
       <div aria-label="Conversation transcript" aria-live="off" className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] focus-visible:outline-none" onScroll={() => { remember(); syncAwayFromBottom(); }} ref={viewport} role="log" style={{ overflowAnchor: 'none' }} tabIndex={0}>
         <div className="relative w-full" style={{ height: size }}>
           {virtualizer.getVirtualItems().map((item) => <div className={`absolute left-0 w-full py-4 ${columnClassName}`} data-index={item.index} key={item.key} ref={virtualizer.measureElement} style={{ top: item.start }}>
+            {item.index === dividerBefore && <ForkDivider className="mb-4" />}
             <ConversationTurn onResolve={onResolve} turn={turns[item.index]} />
-            {footer && item.index === turns.length - 1 && <div className="mt-4">{footer}</div>}
+            {/* A fork with nothing of its own yet ends on the divider, ahead of the footer. */}
+            {item.index === turns.length - 1 && (dividerBefore === turns.length || footer) && <div className="mt-4 space-y-4">
+              {dividerBefore === turns.length && <ForkDivider />}
+              {footer}
+            </div>}
           </div>)}
         </div>
       </div>

@@ -142,6 +142,33 @@ test('creates a chat from a project row and opens its native reference', async (
   await waitFor(() => expect(open).toHaveBeenCalledWith(ref, expect.any(String)));
 });
 
+test('opens each new request once: selects the conversation and lists conversations again', async () => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
+  window.ResizeObserver = class { observe(): void { return undefined; } unobserve(): void { return undefined; } disconnect(): void { return undefined; } };
+  const forked: ConversationRef = { ...ref, nativeSessionId: 'forked' };
+  const open = vi.fn<ConversationApi['open']>(async (selected) => ({ summary: { ref: selected, title: 'Forked chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }, capabilities }));
+  const list = vi.fn<ConversationApi['list']>(async () => ({ projects: [{ projectPath: ref.projectPath, displayName: 'Fractal', conversations: [{ ref, title: 'Existing chat', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete' }] }], providers: [] }));
+  const api: ConversationApi = {
+    list, open, create: async () => null, close: async () => undefined, continue: async () => undefined, interrupt: async () => undefined, resolveRequest: async () => undefined, previewAttachment: async () => ({ kind: 'missing' as const }), openAttachment: async () => undefined, rename: async () => undefined, fork: async () => { throw new Error('fork unused'); }, sideChats: async () => [], deleteSideChat: async () => undefined, onEvent: () => () => undefined,
+  };
+  Object.defineProperty(window, 'fractal', { configurable: true, value: { conversations: api, settings } });
+  const onConversationChange = vi.fn();
+  const shell = (openRequest: { ref: ConversationRef; id: number } | null) => <AppShell onConversationChange={onConversationChange} onOpenSettings={() => undefined} openRequest={openRequest}>{(context) => <ExecuteMode {...context} />}</AppShell>;
+  const { rerender } = render(shell(null));
+  await screen.findByRole('button', { name: 'Fractal' });
+  await waitFor(() => expect(list).toHaveBeenCalled());
+  const listed = list.mock.calls.length;
+  rerender(shell({ ref: forked, id: 1 }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith(forked, expect.any(String)));
+  expect(onConversationChange).toHaveBeenLastCalledWith({ ref: forked, readOnly: false });
+  await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(listed));
+  const relisted = list.mock.calls.length;
+  // The same request again, as a re-render passes it, changes nothing.
+  rerender(shell({ ref: forked, id: 1 }));
+  await act(async () => undefined);
+  expect(list).toHaveBeenCalledTimes(relisted);
+});
+
 describe('home screen actions', () => {
   const creatable = { ...capabilities, create: true };
   const other: ConversationRef = { provider: 'codex', nativeSessionId: 'native-other', projectPath: '/work/other' };

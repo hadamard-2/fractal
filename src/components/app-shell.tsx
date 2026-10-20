@@ -69,6 +69,7 @@ export function AppShell({
   onProjectPathChange,
   onConversationChange,
   showAgentColorTags,
+  openRequest,
   children,
 }: {
   // Controlled by App so the open/collapsed state remains stable.
@@ -87,6 +88,8 @@ export function AppShell({
   onConversationChange?: (conversation: { ref: ConversationRef; readOnly: boolean } | null) => void;
   // The agent-color-tags setting, held by App beside the settings dialog.
   showAgentColorTags?: boolean;
+  // A conversation made outside the shell, such as a fork, to select. Each new id is applied once.
+  openRequest?: { ref: ConversationRef; id: number } | null;
   children: (context: ShellContext) => ReactNode;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
@@ -148,6 +151,14 @@ export function AppShell({
   };
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
+  // Selected like any conversation started here, and listed again so the sidebar shows it.
+  const appliedOpenRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openRequest || openRequest.id === appliedOpenRequest.current) return;
+    appliedOpenRequest.current = openRequest.id;
+    selectCreated(openRequest.ref);
+    refreshHistory();
+  }, [openRequest]);
   // Read by the listener below, which subscribes once.
   const actionsRef = useRef(actions);
   actionsRef.current = actions;

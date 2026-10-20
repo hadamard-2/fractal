@@ -4,10 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ConversationPanel } from './conversation-panel';
 import { SideChatLauncherContext, type SideChatLauncher } from '@/components/right-panel/side-chat-launcher';
+import { ForkLauncherContext, type ForkLauncher } from '@/components/conversation/fork-launcher';
+import { forkDraft, setForkDraft } from '@/renderer/forking';
 import { quoteSelection } from '@/renderer/side-chat-start';
 import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { accessLevels } from '@/shared/access-levels';
-import type { AccessApi, AccessListing, AgentModel, ConversationApi, ConversationRef, ConversationRuntime, ConversationStreamEvent, ConversationTurn, HarnessCapabilities, ModelChoice, ModelsApi } from '@/shared/conversation-contract';
+import { conversationKey, type AccessApi, type AccessListing, type AgentModel, type ConversationApi, type ConversationRef, type ConversationRuntime, type ConversationStreamEvent, type ConversationTurn, type HarnessCapabilities, type ModelChoice, type ModelsApi } from '@/shared/conversation-contract';
 
 const ref: ConversationRef = { provider: 'codex', nativeSessionId: 'panel-test', projectPath: '/work/fractal' };
 let emit: (event: ConversationStreamEvent) => void;
@@ -694,5 +696,79 @@ describe('the live status line', () => {
     await ready();
     act(() => emit({ ref, loadId, seq: seq++, type: 'request.opened', request: { id: 'approval', kind: 'approval', provider: 'codex', title: 'Run command?', operation: 'pnpm lint', status: 'open' } }));
     expect(status()).toBeNull();
+  });
+});
+
+describe('forking from Execute', () => {
+  const turn = (id: string, ask: string, reply: string): ConversationTurn => ({
+    id, nativeId: id, userMessage: { id: `${id}-user`, text: ask },
+    blocks: [{ id: `${id}-prose`, kind: 'assistant-prose', text: reply, provider: 'claude', concludesTurn: true }],
+    status: 'completed', captureCompleteness: 'complete',
+  });
+  const first = turn('t1', 'Why is the parser slow?', 'It re-reads every file.');
+  const second = turn('t2', 'Cache it', 'Cached.');
+  const forkButtons = () => screen.queryAllByRole('button', { name: 'Fork from here' });
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: function (this: HTMLElement, options: ScrollToOptions) { this.scrollTop = options.top ?? 0; } });
+    // Rows measure at the timeline's estimate, so mounting them resizes nothing.
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.hasAttribute('data-index') ? 280 : 560; });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(560);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800);
+  });
+
+  async function open(launcher: ForkLauncher | null, options: { readOnly?: boolean; inheritedTurnCount?: number } = {}) {
+    const api = install('idle', async () => undefined, { ...allCapabilities, fork: true });
+    const opened = api.open;
+    api.open = async (selected, id) => ({ ...await opened(selected, id), ...(options.inheritedTurnCount === undefined ? {} : { forkedFrom: { parentKey: 'claude:parent', inheritedTurnCount: options.inheritedTurnCount } }) });
+    render(<ForkLauncherContext.Provider value={launcher}><ConversationPanel conversationRef={claudeRef} readOnly={options.readOnly} /></ForkLauncherContext.Provider>);
+    await ready(claudeRef);
+    act(() => emit({ ref: claudeRef, loadId, seq: seq++, type: 'history.chunk', chunkIndex: 0, turns: [first, second] }));
+    await screen.findByText('Cached.');
+  }
+
+  test('forks from a message or a reply with the conversation it is in', async () => {
+    const launcher: ForkLauncher = { fork: vi.fn(async () => undefined), pending: false };
+    await open(launcher);
+    // Before and after each of the two turns.
+    expect(forkButtons()).toHaveLength(4);
+    fireEvent.click(forkButtons()[0]);
+    expect(launcher.fork).toHaveBeenLastCalledWith(claudeRef, expect.objectContaining({ id: 't1' }), 'before');
+    fireEvent.click(forkButtons()[3]);
+    expect(launcher.fork).toHaveBeenLastCalledWith(claudeRef, expect.objectContaining({ id: 't2' }), 'after');
+  });
+
+  test('shows the agent\'s error when a fork fails', async () => {
+    await open({ fork: vi.fn(async () => { throw new Error('Claude could not fork this session'); }), pending: false });
+    fireEvent.click(forkButtons()[1]);
+    expect((await screen.findByRole('alert')).textContent).toBe('Claude could not fork this session');
+  });
+
+  test('offers no fork while one is being made, without a launcher, or in a subagent conversation', async () => {
+    await open({ fork: vi.fn(), pending: true });
+    expect(forkButtons()).toHaveLength(0);
+    cleanup();
+    await open(null);
+    expect(forkButtons()).toHaveLength(0);
+    cleanup();
+    await open({ fork: vi.fn(), pending: false }, { readOnly: true });
+    expect(forkButtons()).toHaveLength(0);
+  });
+
+  test('marks where a fork\'s own turns begin', async () => {
+    await open(null, { inheritedTurnCount: 1 });
+    const divider = screen.getByRole('separator', { name: 'Forked here' });
+    const [inherited, own] = screen.getAllByRole('article');
+    expect(inherited.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(divider.compareDocumentPosition(own) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('starts a fork made before a message with that message in its composer, once', async () => {
+    const key = conversationKey(claudeRef);
+    setForkDraft(key, { text: 'Why is the parser slow?', files: [{ filename: 'notes.md', mediaType: 'application/octet-stream', url: '', path: '/work/fractal/notes.md' }] });
+    await open(null);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('Why is the parser slow?');
+    expect(screen.getByText('notes.md')).toBeTruthy();
+    expect(forkDraft(key)).toBeUndefined();
   });
 });

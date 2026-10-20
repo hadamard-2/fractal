@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, test } from 'vitest';
-import type { ConversationTurn as ConversationTurnData, TurnBlock } from '@/shared/conversation-contract';
-import { ConversationTurn, splitTurnWork } from './conversation-turn';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { ConversationTurn as ConversationTurnData, ForkPoint, TurnBlock } from '@/shared/conversation-contract';
+import { ConversationTurn, splitTurnWork, TurnForkContext, type TurnForkActions } from './conversation-turn';
 
 afterEach(cleanup);
 
@@ -80,6 +80,50 @@ describe('ConversationTurn copy button', () => {
       expect(button?.parentElement?.className).toContain('opacity-0');
       expect(button?.parentElement?.className).toContain('group-hover/copy:opacity-100');
     }
+  });
+});
+
+describe('ConversationTurn fork button', () => {
+  const forkButtons = () => screen.queryAllByRole('button', { name: 'Fork from here' });
+  const renderWith = (actions: TurnForkActions | null, data: ConversationTurnData) => render(
+    <TurnForkContext.Provider value={actions}><ConversationTurn onResolve={() => undefined} turn={data} /></TurnForkContext.Provider>,
+  );
+
+  test('forks before the user message and after the reply', () => {
+    const fork = vi.fn<TurnForkActions['fork']>();
+    const data = turn([prose('a1', true)]);
+    renderWith({ can: () => true, fork }, data);
+    const message = screen.getByRole('button', { name: 'Copy message' }).closest('.group\\/copy') as HTMLElement;
+    const reply = screen.getByLabelText('Agent response');
+    const [before, after] = forkButtons();
+    expect(message.contains(before)).toBe(true);
+    expect(reply.contains(after)).toBe(true);
+    fireEvent.click(before);
+    expect(fork).toHaveBeenLastCalledWith(data, 'before');
+    fireEvent.click(after);
+    expect(fork).toHaveBeenLastCalledWith(data, 'after');
+  });
+
+  test('leaves out the button at a point the context refuses', () => {
+    const allow = (allowed: ForkPoint['position']): TurnForkActions => ({ can: (_turn, position) => position === allowed, fork: vi.fn() });
+    renderWith(allow('after'), turn([prose('a1', true)]));
+    expect(forkButtons()).toHaveLength(1);
+    expect(screen.getByLabelText('Agent response').contains(forkButtons()[0])).toBe(true);
+    cleanup();
+    renderWith(allow('before'), turn([prose('a1', true)]));
+    expect(forkButtons()).toHaveLength(1);
+    expect(screen.getByLabelText('Agent response').contains(forkButtons()[0])).toBe(false);
+  });
+
+  test('is absent without a context, as on the map', () => {
+    render(<ConversationTurn onResolve={() => undefined} turn={turn([prose('a1', true)])} />);
+    expect(forkButtons()).toHaveLength(0);
+  });
+
+  test('shows on a reply with no copyable text', () => {
+    renderWith({ can: () => true, fork: vi.fn() }, turn([packet('p1')]));
+    expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull();
+    expect(screen.getByLabelText('Agent response').contains(forkButtons().at(-1) ?? null)).toBe(true);
   });
 });
 

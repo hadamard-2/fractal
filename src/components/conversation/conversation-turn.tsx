@@ -1,9 +1,9 @@
-import { Check, ChevronRight, Copy } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Check, ChevronRight, Copy, GitFork } from 'lucide-react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from '@/components/ai-elements/message';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-import type { ConversationTurn as ConversationTurnData, TurnBlock, UserDecision } from '@/shared/conversation-contract';
+import type { ConversationTurn as ConversationTurnData, ForkPoint, TurnBlock, UserDecision } from '@/shared/conversation-contract';
 import { AgentAction, UnsupportedActivity } from './agent-action';
 import { BlockingRequest } from './blocking-request';
 import { ConversationImages } from './conversation-images';
@@ -95,8 +95,15 @@ function TurnWork({ blocks, onResolve }: { blocks: TurnBlock[]; onResolve: Resol
   );
 }
 
-/** Copies `text`; it stays transparent until the pointer is over the enclosing `group/copy`, or it has focus. */
-function CopyMessage({ className, label, text }: { className?: string; label: string; text: string }) {
+/** "Fork from here" on a turn's message and reply. Absent where nothing provides it, as on the map's nodes. */
+export interface TurnForkActions {
+  can(turn: ConversationTurnData, position: ForkPoint['position']): boolean;
+  fork(turn: ConversationTurnData, position: ForkPoint['position']): void;
+}
+
+export const TurnForkContext = createContext<TurnForkActions | null>(null);
+
+function CopyAction({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -104,10 +111,28 @@ function CopyMessage({ className, label, text }: { className?: string; label: st
     return () => clearTimeout(timer);
   }, [copied]);
   return (
+    <MessageAction className="text-muted-foreground" label={label} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} tooltip={copied ? 'Copied' : 'Copy'}>
+      {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+    </MessageAction>
+  );
+}
+
+/**
+ * Copies `copy.text` when there is any, and forks at `position` where the context allows it. The row
+ * stays transparent until the pointer is over the enclosing `group/copy`, or it has focus.
+ */
+function HoverActions({ className, copy, position, turn }: { className?: string; copy?: { label: string; text: string }; position: ForkPoint['position']; turn: ConversationTurnData }) {
+  const forking = useContext(TurnForkContext);
+  const canFork = forking !== null && forking.can(turn, position);
+  if (!copy && !canFork) return null;
+  return (
     <MessageActions className={cn('opacity-0 transition-opacity group-hover/copy:opacity-100 focus-within:opacity-100', className)}>
-      <MessageAction className="text-muted-foreground" label={label} onClick={() => { void navigator.clipboard.writeText(text).then(() => setCopied(true)); }} tooltip={copied ? 'Copied' : 'Copy'}>
-        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-      </MessageAction>
+      {copy && <CopyAction label={copy.label} text={copy.text} />}
+      {canFork && (
+        <MessageAction className="text-muted-foreground" label="Fork from here" onClick={() => forking.fork(turn, position)} tooltip="Fork from here">
+          <GitFork className="size-4" />
+        </MessageAction>
+      )}
     </MessageActions>
   );
 }
@@ -121,7 +146,7 @@ export function UserMessageBody({ turn }: { turn: ConversationTurnData }) {
       {images && <ConversationImages className="justify-end" images={images} />}
       {attachments && <MessageAttachments attachments={attachments} sentAt={turn.userMessage.createdAt} />}
       {text && <MessageContent><CodeBlockTerminalActions><MessageResponse className={MESSAGE_TEXT}>{text}</MessageResponse></CodeBlockTerminalActions></MessageContent>}
-      {text && <CopyMessage className="justify-end" label="Copy message" text={text} />}
+      <HoverActions className="justify-end" copy={text ? { label: 'Copy message', text } : undefined} position="before" turn={turn} />
     </Message>
   );
 }
@@ -141,7 +166,7 @@ export function AgentReplyBody({ turn, onResolve }: { turn: ConversationTurnData
       {questions.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
       {work.length > 0 && <TurnWork blocks={work} onResolve={onResolve} />}
       {answer.map((block) => <TurnBlockView block={block} key={block.id} onResolve={onResolve} />)}
-      {responseText && <CopyMessage label="Copy response" text={responseText} />}
+      <HoverActions copy={responseText ? { label: 'Copy response', text: responseText } : undefined} position="after" turn={turn} />
     </div>
   );
 }
