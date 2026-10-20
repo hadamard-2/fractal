@@ -50,7 +50,7 @@ function createFakeAppServer(pages = [[thread('newer')], [thread('older')]], rep
         ] }], connectors: [] };
       }
       if (method === 'thread/read') return { thread: threadRead.thread };
-      if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd } };
+      if (method === 'thread/start') return { thread: { ...threadRead.thread, id: 'created-thread', cwd: params.cwd }, model: 'gpt-5.5', reasoningEffort: 'medium', ...resumeAccess };
       if (method === 'thread/resume') return { thread: { ...threadRead.thread, id: params.threadId }, model: 'gpt-5.6-terra', reasoningEffort: 'high', ...resumeAccess };
       if (method === 'model/list') return params.cursor === 'models-2'
         ? { data: [codexModel('gpt-5.5', ['low', 'medium', 'high', 'xhigh'])], nextCursor: null }
@@ -1059,5 +1059,93 @@ describe('Codex failed turns', () => {
     server.emit(failedCompletion);
     await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-finished', status: 'failed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ done: true });
+  });
+});
+
+describe('Codex thread this process started, before its first turn', () => {
+  const created = { provider: 'codex' as const, nativeSessionId: 'created-thread', projectPath: '/work/fractal' };
+  const unsupported = () => new JsonRpcError(-32601, 'list_turns is not supported yet');
+
+  // The app server that started a thread refuses to list its turns or resume it until it has a turn.
+  function refusesUntilFirstTurn(server: ReturnType<typeof createFakeAppServer>) {
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    let turned = false;
+    server.request.mockImplementation(async (method, params) => {
+      if (method === 'turn/start') turned = true;
+      if (params?.threadId === 'created-thread' && !turned) {
+        if (method === 'thread/resume' || (method === 'thread/read' && params.includeTurns === true)) { server.requests.push({ method, params }); throw unsupported(); }
+        if (method === 'thread/read') { server.requests.push({ method, params }); return { thread: { ...threadRead.thread, id: 'created-thread', preview: '', name: null, turns: [] } }; }
+      }
+      const result = await request(method, params);
+      return method === 'thread/read' && params.threadId === 'created-thread' ? { thread: { ...threadRead.thread, id: 'created-thread' } } : result;
+    });
+  }
+
+  async function started() {
+    const server = createFakeAppServer();
+    refusesUntilFirstTurn(server);
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    await adapter.createConversation('/work/fractal');
+    return { server, adapter };
+  }
+
+  test('loads as an empty, complete conversation', async () => {
+    const { server, adapter } = await started();
+    const loaded = await adapter.loadConversation(created);
+    const events = []; for await (const event of loaded.events) events.push(event);
+    expect(events).toEqual([]);
+    expect(loaded.summary).toMatchObject({ ref: created, runtime: 'idle', captureCompleteness: 'complete' });
+    expect(server.requests.filter((entry) => entry.method === 'thread/read').map((entry) => entry.params)).toEqual([
+      { threadId: 'created-thread', includeTurns: true }, { threadId: 'created-thread', includeTurns: false },
+    ]);
+  });
+
+  test('watches it from an empty history', async () => {
+    const { adapter } = await started();
+    const sink = vi.fn();
+    const unsubscribe = await adapter.watchConversation(created, sink);
+    expect(sink).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  test('reads its model, effort and access from the thread/start response', async () => {
+    const { adapter } = await started();
+    await expect(adapter.readLastRun(created)).resolves.toEqual({ model: 'gpt-5.5', effort: 'medium' });
+    await expect(adapter.readAccess(created)).resolves.toEqual(await new CodexAdapter(createFakeAppServer() as never, { realpath: async (value) => value }).readAccess(created));
+  });
+
+  test('takes its first message, then reads and resumes it like any thread', async () => {
+    const { server, adapter } = await started();
+    const run = await adapter.continueConversation(created, { text: 'First message' });
+    expect(server.requests.at(-1)).toEqual({ method: 'turn/start', params: { threadId: 'created-thread', input: [{ type: 'text', text: 'First message', text_elements: [] }] } });
+    await run.dispose();
+    await adapter.loadConversation(created);
+    expect(server.requests.filter((entry) => entry.method === 'thread/read').at(-1)?.params).toEqual({ threadId: 'created-thread', includeTurns: true });
+  });
+
+  test('does not stand in for a refusal once the first turn has started', async () => {
+    const { server, adapter } = await started();
+    const run = await adapter.continueConversation(created, { text: 'First message' });
+    await run.dispose();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'thread/resume' || method === 'thread/read') throw unsupported(); return request(method, params); });
+    await expect(adapter.loadConversation(created)).rejects.toThrow('list_turns is not supported yet');
+    await expect(adapter.readLastRun(created)).rejects.toThrow('list_turns is not supported yet');
+  });
+
+  test('passes on any other refusal', async () => {
+    const { server, adapter } = await started();
+    const request = server.request.getMockImplementation() as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+    server.request.mockImplementation(async (method, params) => { if (method === 'thread/resume' || method === 'thread/read') throw new JsonRpcError(-32603, 'internal error'); return request(method, params); });
+    await expect(adapter.loadConversation(created)).rejects.toThrow('internal error');
+    await expect(adapter.continueConversation(created, { text: 'First message' })).rejects.toThrow('internal error');
+  });
+
+  test('does not stand in for a thread it did not start', async () => {
+    const server = createFakeAppServer();
+    refusesUntilFirstTurn(server);
+    const adapter = new CodexAdapter(server as never, { realpath: async (value) => value });
+    await expect(adapter.loadConversation(created)).rejects.toThrow('list_turns is not supported yet');
+    await expect(adapter.readLastRun(created)).rejects.toThrow('list_turns is not supported yet');
   });
 });

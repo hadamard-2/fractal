@@ -13,6 +13,7 @@ import type { UserInput } from '@/main/harness/codex/generated/v2/UserInput';
 import type { JsonValue } from '@/main/harness/codex/generated/serde_json/JsonValue';
 import type { SandboxMode } from '@/main/harness/codex/generated/v2/SandboxMode';
 import type { ThreadResumeResponse as CodexResumeResponse } from '@/main/harness/codex/generated/v2/ThreadResumeResponse';
+import type { ThreadStartResponse as CodexStartResponse } from '@/main/harness/codex/generated/v2/ThreadStartResponse';
 
 type CodexServer = Pick<CodexAppServer, 'request' | 'onNotification' | 'onServerRequest' | 'respond' | 'respondError' | 'status'> & Partial<Pick<CodexAppServer, 'onStatus'>>;
 type BufferedObservation = { normalize: () => NativeEvent[]; delta?: { key: string; text: string } };
@@ -38,6 +39,10 @@ export class CodexAdapter implements HarnessAdapter {
   private readonly readOnlyThreads = new Set<string>();
   // Threads this process resumed without those overrides, so their tools are already fixed.
   private readonly resumedWithoutOverrides = new Set<string>();
+  // Threads this process started that have not had a turn yet, with what thread/start said about them. Until a thread has a
+  // turn, the server that started it refuses to resume it or list its turns (codex-cli 0.162.1 answers -32601); it already has the
+  // thread loaded, and there are no turns. A server started later reads and resumes the same thread normally.
+  private readonly startedWithoutTurns = new Map<string, CodexStartResponse>();
 
   constructor(private readonly server: CodexServer, private readonly dependencies: { realpath?: Realpath; /** Says whether a thread is a side chat, for threads this process has not itself forked or run read-only. */ isReadOnlyThread?: (threadId: string) => boolean } = {}) {}
 
@@ -164,6 +169,7 @@ export class CodexAdapter implements HarnessAdapter {
     const response = await this.server.request('thread/start', { cwd: canonical });
     const returnedPath = await this.canonicalPath(response.thread.cwd);
     if (returnedPath !== canonical) throw new Error('Created Codex project does not match the selected project');
+    this.startedWithoutTurns.set(response.thread.id, response);
     return { provider: 'codex', nativeSessionId: response.thread.id, projectPath: canonical };
   }
 
@@ -213,6 +219,7 @@ export class CodexAdapter implements HarnessAdapter {
     await this.server.request('thread/delete', { threadId: ref.nativeSessionId });
     this.readOnlyThreads.delete(ref.nativeSessionId);
     this.resumedWithoutOverrides.delete(ref.nativeSessionId);
+    this.startedWithoutTurns.delete(ref.nativeSessionId);
   }
 
   async listModels(): Promise<AgentModel[]> {
@@ -268,6 +275,11 @@ export class CodexAdapter implements HarnessAdapter {
         threadId: ref.nativeSessionId, cwd,
         ...(readOnly ? { config: await this.readOnlyConfig(cwd) } : {}),
       }))
+      .catch((error: unknown) => {
+        const started = this.startedWithoutTurns.get(ref.nativeSessionId);
+        if (started && !readOnly && isUnsupported(error)) return started;
+        throw error;
+      })
       .finally(() => { this.resumes.delete(ref.nativeSessionId); });
     this.resumes.set(ref.nativeSessionId, resume);
     return resume;
@@ -401,6 +413,7 @@ export class CodexAdapter implements HarnessAdapter {
           : prompt.access?.picked && prompt.access.state.kind === 'level' ? codexAccessOverrides(prompt.access.state.level, resumed.sandbox) : {}),
       });
       turnId = started.turn.id;
+      this.startedWithoutTurns.delete(ref.nativeSessionId);
       for (const traffic of bufferedTraffic.splice(0)) {
         if (traffic.kind === 'notification') receiveNotification(traffic.value);
         else receiveRequest(traffic.value);
@@ -479,7 +492,10 @@ export class CodexAdapter implements HarnessAdapter {
   }
 
   private async readThread(ref: ConversationRef) {
-    const thread = await this.requestThread(ref, true);
+    const thread = await this.requestThread(ref, true).catch((error: unknown) => {
+      if (this.startedWithoutTurns.has(ref.nativeSessionId) && isUnsupported(error)) return this.requestThread(ref, false);
+      throw error;
+    });
     if (await this.canonicalPath(thread.cwd) !== await this.canonicalPath(ref.projectPath)) throw new Error('Requested Codex project does not match the discovered thread');
     return thread;
   }
@@ -550,6 +566,11 @@ function runtimeFor(status: Awaited<CodexRequestMap['thread/read']['result']>['t
 /** How Codex answers `thread/read` for a thread it does not have, as observed after `thread/delete`. */
 function isThreadNotLoaded(error: unknown): boolean {
   return error instanceof JsonRpcError && error.code === -32600 && error.message.startsWith('thread not loaded:');
+}
+
+/** How the server refuses to resume, or list the turns of, a thread it started that has no turn yet. */
+function isUnsupported(error: unknown): boolean {
+  return error instanceof JsonRpcError && error.code === -32601;
 }
 
 function hasThreadId(value: unknown): value is { params: { threadId: string } } {
