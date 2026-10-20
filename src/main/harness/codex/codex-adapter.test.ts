@@ -1024,3 +1024,40 @@ describe('Codex fork and read-only runs', () => {
     await run.dispose();
   });
 });
+
+describe('Codex failed turns', () => {
+  const ref = { provider: 'codex' as const, nativeSessionId: 'thread-1', projectPath: '/work/fractal' };
+  // What codex-cli 0.162.1 sends when a turn fails before producing anything, e.g. on a model the account cannot use.
+  const failedCompletion = { method: 'turn/completed', params: { threadId: 'thread-1', turn: {
+    id: 'turn-live', items: [] as unknown[], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null as unknown, additionalDetails: null as unknown },
+    startedAt: 1, completedAt: 2, durationMs: 1_000,
+  } } };
+
+  test('ends the run on a failed completion whose items are not loaded', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    server.emit(failedCompletion);
+    const events = []; for await (const event of run.events) events.push(event);
+    expect(events.at(-1)).toMatchObject({ payload: { kind: 'turn-finished', turnId: 'turn-live', status: 'failed' } });
+    expect(server.listenerCount()).toBe(0);
+  });
+
+  test('settles a stop requested before the failed completion arrives', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const interrupted = run.interrupt();
+    server.emit(failedCompletion);
+    await expect(interrupted).resolves.toBeUndefined();
+  });
+
+  test('still ignores a notLoaded completion that is otherwise malformed', async () => {
+    const server = createFakeAppServer();
+    const run = await new CodexAdapter(server as never, { realpath: async (value) => value }).continueConversation(ref, { text: 'Run' });
+    const iterator = run.events[Symbol.asyncIterator]();
+    server.emit({ ...failedCompletion, params: { ...failedCompletion.params, turn: { ...failedCompletion.params.turn, items: null } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'unsupported' } } });
+    server.emit(failedCompletion);
+    await expect(iterator.next()).resolves.toMatchObject({ value: { payload: { kind: 'turn-finished', status: 'failed' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+  });
+});

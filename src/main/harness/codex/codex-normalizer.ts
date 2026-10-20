@@ -257,7 +257,8 @@ function isCompleteTurn(value: unknown): value is { id: string; status: 'complet
   return typeof value.id === 'string'
     && (value.status === 'completed' || value.status === 'interrupted' || value.status === 'failed')
     && Array.isArray(value.items)
-    && (value.itemsView === 'full' || value.itemsView === 'summary')
+    // A completion's items are not what ends a run, so any view will do: a turn that fails before producing anything completes as notLoaded.
+    && (value.itemsView === 'full' || value.itemsView === 'summary' || value.itemsView === 'notLoaded')
     && (value.error === null || isObject(value.error))
     && validNullableNumber(value.startedAt)
     && validNullableNumber(value.completedAt)

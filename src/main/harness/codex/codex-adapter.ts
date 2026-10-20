@@ -680,7 +680,8 @@ function isValidRunCompletion(notification: unknown, threadId: string, turnId: s
   return turn.id === turnId
     && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed')
     && Array.isArray(turn.items)
-    && (turn.itemsView === 'full' || turn.itemsView === 'summary')
+    // A completion's items are not what ends a run, so any view will do: a turn that fails before producing anything completes as notLoaded.
+    && (turn.itemsView === 'full' || turn.itemsView === 'summary' || turn.itemsView === 'notLoaded')
     && (turn.error === null || isObject(turn.error))
     && validNullableNumber(turn.startedAt)
     && validNullableNumber(turn.completedAt)

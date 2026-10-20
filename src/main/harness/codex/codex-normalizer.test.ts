@@ -164,6 +164,13 @@ describe('Codex native normalization', () => {
     expect(afterInterrupt[0]?.payload).toMatchObject({ text: 'new' });
   });
 
+  test('finishes a failed turn whose completion carries no loaded items', () => {
+    const events = normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
+      id: 'turn-1', items: [], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null, additionalDetails: null }, startedAt: 1, completedAt: 2, durationMs: 1_000,
+    } } } as never, createCodexLiveNormalizationContext());
+    expect(events.map((event) => event.payload)).toEqual([{ kind: 'turn-finished', turnId: 'turn-1', status: 'failed' }]);
+  });
+
   test('validates malformed live envelopes and requests without blocking later valid activity', () => {
     const context = createCodexLiveNormalizationContext();
     const malformed = normalizeCodexNotification({ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', startedAtMs: 'bad', item: { type: 'agentMessage', id: 'bad', text: 'hidden' } } } as never, context);
