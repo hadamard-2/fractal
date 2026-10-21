@@ -8,25 +8,49 @@ export function normalizeCodexThread(thread: Thread): NativeEvent[] {
   return thread.turns.flatMap((turn, index) => normalizeTurn(turn, index));
 }
 
+/** A warning for a thread that had no turn running when it arrived. */
+export interface HeldWarning { nativeId: string; nativeType: string; message: string }
+
 export interface CodexLiveNormalizationContext {
   append(key: string, delta: string): string;
   replace(key: string, text: string): void;
   clearTurn(threadId: string, turnId: string): void;
+  /** Notes the turn a thread is running once its user message has anchored it, until clearTurn ends it, and hands back the warnings held for that thread. */
+  startTurn(threadId: string, turnId: string): HeldWarning[];
+  runningTurn(threadId: string): string | undefined;
+  holdWarning(threadId: string, warning: HeldWarning): void;
   unknownId(method: string): string;
   seed(thread: Thread): void;
 }
 
 class LiveNormalizationContext implements CodexLiveNormalizationContext {
   private readonly text = new Map<string, string>();
+  private readonly running = new Map<string, string>();
+  private readonly held = new Map<string, HeldWarning[]>();
   private unknown = 0;
   append(key: string, delta: string): string { const text = `${this.text.get(key) ?? ''}${delta}`; this.text.set(key, text); return text; }
   replace(key: string, text: string): void { this.text.set(key, text); }
-  clearTurn(threadId: string, turnId: string): void { for (const key of this.text.keys()) if (key.startsWith(`${threadId}:${turnId}:`)) this.text.delete(key); }
+  clearTurn(threadId: string, turnId: string): void {
+    for (const key of this.text.keys()) if (key.startsWith(`${threadId}:${turnId}:`)) this.text.delete(key);
+    if (this.running.get(threadId) === turnId) this.running.delete(threadId);
+  }
+  startTurn(threadId: string, turnId: string): HeldWarning[] {
+    this.running.set(threadId, turnId);
+    const held = this.held.get(threadId) ?? [];
+    this.held.delete(threadId);
+    return held;
+  }
+  runningTurn(threadId: string): string | undefined { return this.running.get(threadId); }
+  holdWarning(threadId: string, warning: HeldWarning): void {
+    const held = this.held.get(threadId) ?? [];
+    if (!held.some((prior) => prior.nativeType === warning.nativeType && prior.message === warning.message)) this.held.set(threadId, [...held, warning]);
+  }
   unknownId(method: string): string { return `notification:${method}:${this.unknown++}`; }
   seed(thread: Thread): void {
     if (!isObject(thread) || typeof thread.id !== 'string' || !Array.isArray(thread.turns)) return;
     for (const turn of thread.turns) {
       if (!isObject(turn) || typeof turn.id !== 'string' || !Array.isArray(turn.items)) continue;
+      if (turn.status === 'inProgress') this.running.set(thread.id, turn.id);
       for (const item of turn.items) {
         if (!isObject(item) || typeof item.id !== 'string') continue;
         if (item.type === 'agentMessage' && typeof item.text === 'string') this.replace(textKey(thread.id, turn.id, item.id), item.text);
@@ -51,13 +75,14 @@ export function normalizeCodexNotification(notification: ServerNotification, con
       })];
     case 'item/started':
       if (!hasStrings(notification.params, 'threadId', 'turnId') || !Number.isFinite(notification.params.startedAtMs) || !isObject(notification.params.item)) return [unsupported(notificationId(notification, context), notification.method, 0)];
-      return normalizeItem(notification.params.item, notification.params.turnId, notification.params.startedAtMs, false);
+      return [...normalizeItem(notification.params.item, notification.params.turnId, notification.params.startedAtMs, false), ...anchoredWarnings(notification.params, context)];
     case 'item/completed':
       if (!hasStrings(notification.params, 'threadId', 'turnId') || !Number.isFinite(notification.params.completedAtMs)) return [unsupported(notificationId(notification, context), notification.method, 0)];
       if (isObject(notification.params.item) && notification.params.item.type === 'agentMessage' && typeof notification.params.item.id === 'string' && typeof notification.params.item.text === 'string') context.replace(textKey(notification.params.threadId, notification.params.turnId, notification.params.item.id), notification.params.item.text);
-      return normalizeItem(notification.params.item, notification.params.turnId, notification.params.completedAtMs, true);
+      return [...normalizeItem(notification.params.item, notification.params.turnId, notification.params.completedAtMs, true), ...anchoredWarnings(notification.params, context)];
     case 'turn/started':
-      return normalizeTurn(notification.params.turn, 0);
+      // The turn arrives before its userMessage item, which anchors it next.
+      return normalizeTurn(notification.params.turn, 0, true);
     case 'turn/completed':
       if (!hasStrings(notification.params, 'threadId') || !isCompleteTurn(notification.params.turn)) return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnIdFromTurn(notification))];
       context.clearTurn(notification.params.threadId, notification.params.turn.id);
@@ -94,6 +119,23 @@ export function normalizeCodexNotification(notification: ServerNotification, con
     case 'item/autoApprovalReview/completed':
       // Codex's automatic check of an action before it runs; the action's own item carries what happened.
       return [];
+    case 'turn/diff/updated':
+      // The turn's combined diff, re-sent as it grows; each file change already carries its own.
+      return [];
+    case 'thread/goal/cleared':
+      // Thread state, not conversation content.
+      return [];
+    case 'mcpServer/startupStatus/updated': {
+      if (!hasStrings(notification.params, 'name', 'status')) return [unsupported(notificationId(notification, context), notification.method, 0)];
+      // Only a failure changes what the agent can do; the other states are progress.
+      if (notification.params.status !== 'failed') return [];
+      const { name, error } = notification.params;
+      return runningTurnWarning(notification, context, notification.params.threadId, typeof error === 'string' && error ? `MCP server ${name} failed to start: ${error}` : `MCP server ${name} failed to start.`);
+    }
+    case 'guardianWarning':
+      // Written by Codex's automatic reviewer for the user to read.
+      if (!hasStrings(notification.params, 'threadId', 'message')) return [unsupported(notificationId(notification, context), notification.method, 0)];
+      return runningTurnWarning(notification, context, notification.params.threadId, notification.params.message);
     default:
       return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnId(notification))];
   }
@@ -147,13 +189,13 @@ function redactApprovalSecrets(value: string): string {
     .replace(/\b(token|api[-_ ]?key|secret)\s*[:=]\s*[^\s"']+/gi, '$1=[redacted]');
 }
 
-function normalizeTurn(turn: unknown, ordinal: number): NativeEvent[] {
+function normalizeTurn(turn: unknown, ordinal: number, userMessageFollows = false): NativeEvent[] {
   if (!isObject(turn) || typeof turn.id !== 'string' || !Array.isArray(turn.items) || typeof turn.status !== 'string') return [unsupported(`turn:malformed:${ordinal}`, 'turn', 0)];
   const turnId = turn.id;
   const final = turn.status !== 'inProgress';
   const events = turn.items.flatMap((item, index) => normalizeItem(item, turnId, secondsToMilliseconds(numberOrNull(turn.startedAt)), final, index));
   if (turn.status === 'inProgress' && !events.some((event) => event.payload.kind === 'turn-started')) {
-    events.unshift(unsupported(`${turnId}:missing-user`, 'missing-user-anchor', secondsToMilliseconds(numberOrNull(turn.startedAt)), turnId));
+    if (!userMessageFollows) events.unshift(unsupported(`${turnId}:missing-user`, 'missing-user-anchor', secondsToMilliseconds(numberOrNull(turn.startedAt)), turnId));
     events.unshift(event(`${turnId}:started`, 'turn-status', secondsToMilliseconds(numberOrNull(turn.startedAt)), { kind: 'turn-started', turnId, userMessageId: `${turnId}:missing-user`, text: '' }));
   }
   if (turn.status !== 'inProgress') {
@@ -237,6 +279,28 @@ function turnStatus(status: string): 'completed' | 'interrupted' | 'failed' {
 }
 
 /** Why a turn failed, as a notice on that turn. One id per turn, so the live error, the completion and the history show one notice. */
+/**
+ * A warning for a notification that names only its thread, placed on the turn that thread is running, or held for its next
+ * turn, since a notice without a turn would be dropped. One that names no thread stays unsupported activity.
+ */
+function runningTurnWarning(notification: { method: string; params: object }, context: CodexLiveNormalizationContext, threadId: unknown, message: string): NativeEvent[] {
+  const warning = { nativeId: notificationId(notification, context), nativeType: notification.method, message };
+  if (typeof threadId !== 'string') return [unsupported(warning.nativeId, warning.nativeType, 0)];
+  const turnId = context.runningTurn(threadId);
+  if (!turnId) { context.holdWarning(threadId, warning); return []; }
+  return [warningOn(turnId, warning)];
+}
+
+/** The userMessage item starts its turn afresh, so the thread's turn counts as running, and takes held warnings, only from then on. */
+function anchoredWarnings(params: { threadId: string; turnId: string; item: unknown }, context: CodexLiveNormalizationContext): NativeEvent[] {
+  if (!isObject(params.item) || params.item.type !== 'userMessage') return [];
+  return context.startTurn(params.threadId, params.turnId).map((warning) => warningOn(params.turnId, warning));
+}
+
+function warningOn(turnId: string, { nativeId, nativeType, message }: HeldWarning): NativeEvent {
+  return event(nativeId, nativeType, 0, { kind: 'system-notice', turnId, tone: 'warning', message });
+}
+
 function turnErrorNotice(turnId: string, error: unknown, nativeType: string, observedAt: number | undefined, tone: 'warning' | 'error'): NativeEvent[] {
   if (!isObject(error) || typeof error.message !== 'string' || !error.message.trim()) return [];
   return [event(`${turnId}:error`, nativeType, observedAt, { kind: 'system-notice', turnId, message: turnErrorMessage(error.message), tone })];

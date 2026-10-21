@@ -187,6 +187,86 @@ describe('Codex native normalization', () => {
     } } as never, context)).toEqual([]);
   });
 
+  test('starts a live turn without flagging the user message that follows it', () => {
+    // Shaped after the generated TurnStartedNotification: the turn arrives before its userMessage item.
+    const events = normalizeCodexNotification({ method: 'turn/started', params: { threadId: 'thread-1', turn: {
+      id: 'turn-1', items: [], itemsView: 'full', status: 'inProgress', error: null, startedAt: 1, completedAt: null, durationMs: null,
+    } } } as never, createCodexLiveNormalizationContext());
+    expect(events.map((event) => event.payload.kind)).toEqual(['turn-started']);
+  });
+
+  test('drops the turn diff, the cleared goal and MCP servers starting up', () => {
+    // Shaped after the generated TurnDiffUpdated, ThreadGoalCleared and McpServerStatusUpdated notifications.
+    const context = createCodexLiveNormalizationContext();
+    expect(normalizeCodexNotification({ method: 'turn/diff/updated', params: { threadId: 'thread-1', turnId: 'turn-1', diff: '--- a/x\n+++ b/x\n' } } as never, context)).toEqual([]);
+    expect(normalizeCodexNotification({ method: 'thread/goal/cleared', params: { threadId: 'thread-1' } } as never, context)).toEqual([]);
+    for (const status of ['starting', 'ready', 'cancelled']) {
+      expect(normalizeCodexNotification({ method: 'mcpServer/startupStatus/updated', params: { threadId: 'thread-1', name: 'docs', status, error: null, failureReason: null } } as never, context)).toEqual([]);
+    }
+  });
+
+  // Both notifications name only the thread, so their notices go on the turn it is running, once that turn's user message
+  // has anchored it: the userMessage item starts the turn afresh, which would drop anything placed on it before.
+  type Context = ReturnType<typeof createCodexLiveNormalizationContext>;
+  const startTurn = (context: Context, threadId = 'thread-1', turnId = 'turn-1') => normalizeCodexNotification({ method: 'turn/started', params: { threadId, turn: {
+    id: turnId, items: [], itemsView: 'full', status: 'inProgress', error: null, startedAt: 1, completedAt: null, durationMs: null,
+  } } } as never, context);
+  const anchorTurn = (context: Context, threadId = 'thread-1', turnId = 'turn-1') => normalizeCodexNotification({ method: 'item/started', params: {
+    threadId, turnId, startedAtMs: 2_000, item: { type: 'userMessage', id: `${turnId}:user`, content: [{ type: 'text', text: 'Write the file.', text_elements: [] }] },
+  } } as never, context);
+  const runTurn = (context: Context, threadId = 'thread-1', turnId = 'turn-1') => { startTurn(context, threadId, turnId); return anchorTurn(context, threadId, turnId); };
+  const completeTurn = (context: Context, turnId = 'turn-1') => normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
+    id: turnId, items: [], itemsView: 'notLoaded', status: 'completed', error: null, startedAt: 1, completedAt: 2, durationMs: 1_000,
+  } } } as never, context);
+  const mcpFailed = (context: Context, error: string | null) => normalizeCodexNotification({ method: 'mcpServer/startupStatus/updated', params: { threadId: 'thread-1', name: 'docs', status: 'failed', error, failureReason: null } } as never, context).map((event) => event.payload);
+  const guardianWarning = (context: Context, threadId = 'thread-1') => normalizeCodexNotification({ method: 'guardianWarning', params: { threadId, message: 'Automatic approval review approved (risk: low): a narrow local write.' } } as never, context).map((event) => event.payload);
+
+  test('warns on the running turn when an MCP server fails to start', () => {
+    const context = createCodexLiveNormalizationContext();
+    runTurn(context);
+    expect(mcpFailed(context, 'connection refused')).toEqual([{ kind: 'system-notice', turnId: 'turn-1', tone: 'warning', message: 'MCP server docs failed to start: connection refused' }]);
+    expect(mcpFailed(context, null)).toEqual([{ kind: 'system-notice', turnId: 'turn-1', tone: 'warning', message: 'MCP server docs failed to start.' }]);
+  });
+
+  test('shows the automatic reviewer’s message on the running turn', () => {
+    // Shaped after the generated GuardianWarningNotification; the message is one Codex 0.162.1 sent.
+    const context = createCodexLiveNormalizationContext();
+    runTurn(context);
+    runTurn(context, 'thread-2', 'turn-9');
+    expect(guardianWarning(context)).toEqual([{ kind: 'system-notice', turnId: 'turn-1', tone: 'warning', message: 'Automatic approval review approved (risk: low): a narrow local write.' }]);
+    expect(guardianWarning(context, 'thread-2')).toMatchObject([{ kind: 'system-notice', turnId: 'turn-9' }]);
+  });
+
+  test('holds a warning until the next turn’s user message has arrived', () => {
+    // MCP servers report their startup when the thread is resumed, before any turn runs, and can fail just after it starts.
+    const context = createCodexLiveNormalizationContext();
+    runTurn(context);
+    completeTurn(context);
+    expect(mcpFailed(context, 'connection refused')).toEqual([]);
+    expect(guardianWarning(context, 'thread-2')).toEqual([]);
+    expect(startTurn(context, 'thread-1', 'turn-2').map((event) => event.payload.kind)).toEqual(['turn-started']);
+    expect(mcpFailed(context, 'not logged in')).toEqual([]);
+    expect(anchorTurn(context, 'thread-1', 'turn-2').map((event) => event.payload)).toEqual([
+      { kind: 'turn-started', turnId: 'turn-2', userMessageId: 'turn-2:user', text: 'Write the file.', createdAt: 2_000 },
+      { kind: 'system-notice', turnId: 'turn-2', tone: 'warning', message: 'MCP server docs failed to start: connection refused' },
+      { kind: 'system-notice', turnId: 'turn-2', tone: 'warning', message: 'MCP server docs failed to start: not logged in' },
+    ]);
+    expect(runTurn(context, 'thread-1', 'turn-3').map((event) => event.payload.kind)).toEqual(['turn-started']);
+  });
+
+  test('holds a repeated warning once', () => {
+    // Codex 0.162.1 reported the same MCP failure twice while one thread resumed.
+    const context = createCodexLiveNormalizationContext();
+    mcpFailed(context, 'not logged in');
+    mcpFailed(context, 'not logged in');
+    expect(runTurn(context).filter((event) => event.payload.kind === 'system-notice')).toHaveLength(1);
+  });
+
+  test('keeps an MCP failure that names no thread as unsupported activity', () => {
+    expect(normalizeCodexNotification({ method: 'mcpServer/startupStatus/updated', params: { threadId: null, name: 'docs', status: 'failed', error: 'boom', failureReason: null } } as never, createCodexLiveNormalizationContext()))
+      .toMatchObject([{ payload: { kind: 'unsupported', summary: 'Unsupported Codex activity: mcpServer/startupStatus/updated' } }]);
+  });
+
   test('finishes a failed turn whose completion carries no loaded items', () => {
     const events = normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
       id: 'turn-1', items: [], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null, additionalDetails: null }, startedAt: 1, completedAt: 2, durationMs: 1_000,
