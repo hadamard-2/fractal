@@ -5,6 +5,7 @@ import type {
   ConversationStreamEvent,
   ConversationSummary,
   ConversationTurn,
+  ForkLineage,
   HarnessCapabilities,
   TurnBlock,
 } from '@/shared/conversation-contract';
@@ -24,6 +25,8 @@ export interface ConversationState {
   nextHistoryChunkIndex: number;
   streamedRuntime: boolean;
   streamedSummary: boolean;
+  /** Where this conversation branched from, when it is a fork; a side chat has none. */
+  forkedFrom: ForkLineage | null;
 }
 
 export const initialConversationState: ConversationState = {
@@ -42,12 +45,13 @@ export const initialConversationState: ConversationState = {
   nextHistoryChunkIndex: 0,
   streamedRuntime: false,
   streamedSummary: false,
+  forkedFrom: null,
 };
 
 type LocalAction =
   | { type: 'opened'; ref: ConversationRef; loadId: string }
   | { type: 'reset' }
-  | { type: 'open.succeeded'; ref: ConversationRef; loadId: string; summary: ConversationSummary; capabilities: HarnessCapabilities }
+  | { type: 'open.succeeded'; ref: ConversationRef; loadId: string; summary: ConversationSummary; capabilities: HarnessCapabilities; forkedFrom?: ForkLineage }
   | { type: 'open.failed'; ref: ConversationRef; loadId: string; message: string };
 
 export type ConversationAction = ConversationStreamEvent | LocalAction;
@@ -167,6 +171,7 @@ export function conversationReducer(state: ConversationState, action: Conversati
         ? {
           ...state,
           capabilities: action.capabilities,
+          forkedFrom: action.forkedFrom ?? null,
           summary: state.streamedSummary ? state.summary : action.summary,
           runtime: state.sync === 'gap' ? 'unknown' : state.streamedRuntime ? state.runtime : action.summary.runtime,
         }

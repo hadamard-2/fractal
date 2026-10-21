@@ -75,6 +75,21 @@ describe('conversationReducer', () => {
     expect(state).toMatchObject({ summary: streamedSummary, runtime: 'unknown', sync: 'gap', capabilities });
   });
 
+  test('keeps the lineage an open reports through later stream updates, and drops it when another conversation opens', () => {
+    const forkedFrom = { parentKey: 'codex:thread-0', inheritedTurnCount: 2 };
+    let state = loadedState();
+    expect(state.forkedFrom).toBeNull();
+
+    state = conversationReducer(state, { type: 'open.succeeded', ref, loadId, summary: openSummary, capabilities, forkedFrom });
+    expect(state.forkedFrom).toEqual(forkedFrom);
+
+    state = conversationReducer(state, event(0, { type: 'summary.updated', summary: { ...openSummary, title: 'Renamed' } }));
+    expect(state.forkedFrom).toEqual(forkedFrom);
+
+    state = conversationReducer(state, open('load-3', otherRef));
+    expect(state.forkedFrom).toBeNull();
+  });
+
   test('keeps an ordered load failure terminal when open resolves late', () => {
     let state = loadedState();
     state = conversationReducer(state, event(0, { type: 'load.failed', message: 'Native load failed' }));

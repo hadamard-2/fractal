@@ -69,6 +69,7 @@ export function AppShell({
   onProjectPathChange,
   onConversationChange,
   showAgentColorTags,
+  openRequest,
   children,
 }: {
   // Controlled by App so the open/collapsed state remains stable.
@@ -87,6 +88,8 @@ export function AppShell({
   onConversationChange?: (conversation: { ref: ConversationRef; readOnly: boolean } | null) => void;
   // The agent-color-tags setting, held by App beside the settings dialog.
   showAgentColorTags?: boolean;
+  // A conversation made outside the shell, such as a fork, to select. Each new id is applied once.
+  openRequest?: { ref: ConversationRef; id: number } | null;
   children: (context: ShellContext) => ReactNode;
 }) {
   const [selectedRef, setSelectedRef] = useState<ConversationRef | null>(null);
@@ -148,6 +151,14 @@ export function AppShell({
   };
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
+  // Selected like any conversation started here, and listed again so the sidebar shows it.
+  const appliedOpenRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openRequest || openRequest.id === appliedOpenRequest.current) return;
+    appliedOpenRequest.current = openRequest.id;
+    selectCreated(openRequest.ref);
+    refreshHistory();
+  }, [openRequest]);
   // Read by the listener below, which subscribes once.
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
@@ -181,6 +192,8 @@ export function AppShell({
     const key = conversationKey(ref);
     setOpenRuntime((current) => runtime ? { key, runtime } : current?.key === key ? null : current);
   }, []);
+  // A conversation selected without a sidebar pick, such as a fork just made, takes its breadcrumb from the history once it is listed there.
+  const crumb = selectedItem ?? (currentSummary && selectedProject ? { section: selectedProject.displayName, title: currentSummary.title, ref: currentSummary.ref } : null);
   const liveRuntime = selectedRef && openRuntime?.key === conversationKey(selectedRef) ? openRuntime.runtime : undefined;
   const selectedRuntime = liveRuntime ?? currentSummary?.runtime ?? selectedItem?.runtime;
 
@@ -239,7 +252,7 @@ export function AppShell({
           alone in an otherwise empty app bar.
         */}
         <SidebarTrigger className="app-region-no-drag" />
-        {selectedItem && (
+        {crumb && (
           <>
             <Separator
               orientation="vertical"
@@ -247,19 +260,19 @@ export function AppShell({
             />
             <Breadcrumb className="min-w-0">
               <BreadcrumbList className="min-w-0 flex-nowrap">
-                {selectedItem.section && (
+                {crumb.section && (
                   <>
-                    <BreadcrumbItem className="shrink-0 whitespace-nowrap">{selectedItem.section}</BreadcrumbItem>
+                    <BreadcrumbItem className="shrink-0 whitespace-nowrap">{crumb.section}</BreadcrumbItem>
                     <BreadcrumbSeparator />
                   </>
                 )}
                 <BreadcrumbItem className="min-w-0">
                   <BreadcrumbPage className="min-w-0 truncate font-medium">
-                    {currentSummary?.title ?? selectedItem.title}
+                    {currentSummary?.title ?? crumb.title}
                   </BreadcrumbPage>
                   {selectedRuntime && (
                     <span className="shrink-0 text-xs text-subtle-foreground">
-                      ({providerName(selectedItem.ref.provider)} · {runtimeLabel(selectedRuntime)})
+                      ({providerName(crumb.ref.provider)} · {runtimeLabel(selectedRuntime)})
                     </span>
                   )}
                 </BreadcrumbItem>

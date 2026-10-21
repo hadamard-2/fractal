@@ -46,6 +46,16 @@ export interface ConversationSummary {
   captureCompleteness: CaptureCompleteness;
   /** Set when another conversation spawned this one; the parent's `ref.nativeSessionId` under the same provider. */
   parentId?: string;
+  /** Set when this conversation is a fork: a writable continuation of another one. */
+  forkedFrom?: ForkLineage;
+}
+
+/** Where a fork came from, as the sidebar and the divider need it. */
+export interface ForkLineage {
+  /** conversationKey() of the conversation it nests under: the one it was forked from, or the main conversation of the side chat it was forked from. */
+  parentKey: string;
+  /** How many of its leading turns are the parent's. Absent when only the agent's own history records the fork. */
+  inheritedTurnCount?: number;
 }
 
 export interface ProjectConversationGroup {
@@ -298,7 +308,8 @@ export interface SideChatSummary {
 
 export interface ConversationApi {
   list(): Promise<{ projects: ProjectConversationGroup[]; providers: HarnessStatus[] }>;
-  open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities }>;
+  /** `forkedFrom` is set when the conversation is a fork; `summary` never carries it. */
+  open(ref: ConversationRef, loadId: string): Promise<{ summary: ConversationSummary; capabilities: HarnessCapabilities; forkedFrom?: ForkLineage }>;
   close(ref: ConversationRef): Promise<void>;
   create(input: { provider: ProviderId; projectPath?: string }): Promise<ConversationRef | null>;
   continue(ref: ConversationRef, prompt: PromptInput): Promise<void>;

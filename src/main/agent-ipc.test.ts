@@ -46,12 +46,12 @@ class Sender extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   destroy() { this.destroyed = true; this.emit('destroyed'); }
 }
-function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget'>) {
+function fixture(modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>, accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget' | 'inherit'>) {
   const service = {
     list: vi.fn(async () => ({ projects: [], providers: [] })),
     open: vi.fn(async () => ({ summary: { ref }, capabilities: {} })), close: vi.fn(async () => undefined),
     create: vi.fn(async () => ref), continue: vi.fn(async () => undefined), interrupt: vi.fn(async () => undefined), rename: vi.fn(async () => undefined),
-    fork: vi.fn(async () => ({ ...ref, nativeSessionId: 'forked' })), sideChats: vi.fn((): unknown[] => []), deleteSideChat: vi.fn(async (): Promise<unknown[]> => []), branchKind: vi.fn((): 'side-chat' | 'fork' | undefined => undefined),
+    fork: vi.fn(async () => ({ ...ref, nativeSessionId: 'forked' })), sideChats: vi.fn((): unknown[] => []), deleteSideChat: vi.fn(async (): Promise<unknown[]> => []), branchKind: vi.fn((): 'side-chat' | 'fork' | undefined => undefined), mainConversationOf: vi.fn((input: typeof ref) => input),
     resolveRequest: vi.fn(async () => undefined), denyRequestsForOwner: vi.fn(async () => undefined),
     attachmentAllowed: vi.fn((_ref: unknown, path: string) => path === '/repo/notes.md'),
   };
@@ -361,6 +361,49 @@ describe('conversation IPC', () => {
       expect(f.service.fork).not.toHaveBeenCalled();
     });
 
+    describe('access', () => {
+      const main = { ...ref, nativeSessionId: 'main' };
+      const forked = { ...ref, nativeSessionId: 'forked' };
+      const accessChoices = () => ({ validateSend: vi.fn(), recordSend: vi.fn(), forget: vi.fn(), inherit: vi.fn(async (): Promise<void> => undefined) });
+
+      test('gives a fork of a side chat the access of its main conversation', async () => {
+        const choices = accessChoices();
+        const f = fixture(undefined, choices);
+        f.service.mainConversationOf.mockReturnValue(main);
+        await f.invoke('open', ref, loadId);
+        await expect(f.invoke('fork', ref, point, 'fork')).resolves.toEqual(forked);
+        expect(f.service.mainConversationOf).toHaveBeenCalledWith(ref);
+        expect(choices.inherit).toHaveBeenCalledWith(forked, main);
+      });
+
+      test('gives a fork of a main conversation that conversation\'s access', async () => {
+        const choices = accessChoices();
+        const f = fixture(undefined, choices);
+        f.service.mainConversationOf.mockReturnValue(ref);
+        await f.invoke('open', ref, loadId);
+        await expect(f.invoke('fork', ref, point, 'fork')).resolves.toEqual(forked);
+        expect(choices.inherit).toHaveBeenCalledWith(forked, ref);
+      });
+
+      test('inherits nothing for a side chat', async () => {
+        const choices = accessChoices();
+        const f = fixture(undefined, choices);
+        await f.invoke('open', ref, loadId);
+        f.service.mainConversationOf.mockReturnValue(main);
+        await f.invoke('fork', ref, point, 'side-chat');
+        expect(choices.inherit).not.toHaveBeenCalled();
+      });
+
+      test('still returns the fork when the access cannot be inherited', async () => {
+        const choices = accessChoices();
+        choices.inherit.mockRejectedValue(new Error('disk full'));
+        const f = fixture(undefined, choices);
+        f.service.mainConversationOf.mockReturnValue(main);
+        await f.invoke('open', ref, loadId);
+        await expect(f.invoke('fork', ref, point, 'fork')).resolves.toEqual(forked);
+      });
+    });
+
     test('hides why a fork failed', async () => {
       const f = fixture();
       f.service.fork.mockRejectedValue(new Error('/private/path'));
@@ -436,7 +479,7 @@ describe('conversation IPC', () => {
     const access = { state: { kind: 'level' as const, level: 'plan' }, picked: true };
     test('validates before sending and records after', async () => {
       const order: string[] = [];
-      const accessChoices = { validateSend: vi.fn(() => { order.push('validate'); }), recordSend: vi.fn(() => { order.push('record'); }), forget: vi.fn() };
+      const accessChoices = { validateSend: vi.fn(() => { order.push('validate'); }), recordSend: vi.fn(() => { order.push('record'); }), inherit: vi.fn(async () => undefined), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       f.service.continue.mockImplementation(async () => { order.push('continue'); });
       await f.invoke('open', ref, loadId);
@@ -449,7 +492,7 @@ describe('conversation IPC', () => {
     });
 
     test('a side chat neither validates nor remembers the access choice', async () => {
-      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), forget: vi.fn() };
+      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), inherit: vi.fn(async () => undefined), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       f.service.branchKind.mockReturnValue('side-chat');
       await f.invoke('open', ref, loadId);
@@ -460,7 +503,7 @@ describe('conversation IPC', () => {
     });
 
     test('a rejected access reaches the renderer verbatim and nothing is sent', async () => {
-      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), forget: vi.fn() };
+      const accessChoices = { validateSend: vi.fn(() => { throw new Error('Bypass is turned off in Settings'); }), recordSend: vi.fn(), inherit: vi.fn(async () => undefined), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       await f.invoke('open', ref, loadId);
       await expect(f.invoke('continue', ref, { text: 'Go', access })).rejects.toThrow('Bypass is turned off in Settings');
@@ -469,7 +512,7 @@ describe('conversation IPC', () => {
     });
 
     test('a failing record does not fail the send', async () => {
-      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(() => { throw new Error('disk full'); }), forget: vi.fn() };
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(() => { throw new Error('disk full'); }), inherit: vi.fn(async () => undefined), forget: vi.fn() };
       const f = fixture(undefined, accessChoices);
       await f.invoke('open', ref, loadId);
       await expect(f.invoke('continue', ref, { text: 'Go', access })).resolves.toBeUndefined();
@@ -478,7 +521,7 @@ describe('conversation IPC', () => {
 
     test('drops the read-back before passing on history that loaded or gained a turn', async () => {
       const order: string[] = [];
-      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), forget: vi.fn(() => { order.push('forget'); }) };
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), inherit: vi.fn(async () => undefined), forget: vi.fn(() => { order.push('forget'); }) };
       const f = fixture(undefined, accessChoices);
       f.sender.send.mockImplementation((_channel: string, event: { type: string }) => { order.push(event.type); });
       await f.invoke('open', ref, loadId);
@@ -491,7 +534,7 @@ describe('conversation IPC', () => {
     });
 
     test('a failing forget still passes the event on', async () => {
-      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), forget: vi.fn(() => { throw new Error('boom'); }) };
+      const accessChoices = { validateSend: vi.fn(), recordSend: vi.fn(), inherit: vi.fn(async () => undefined), forget: vi.fn(() => { throw new Error('boom'); }) };
       const f = fixture(undefined, accessChoices);
       await f.invoke('open', ref, loadId);
       f.registration.emit(complete);

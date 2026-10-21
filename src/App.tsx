@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { PanelRight } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
+import { ForkLauncherContext, useForkLauncherValue } from '@/components/conversation/fork-launcher';
 import { ExecuteMode } from '@/components/execute-mode';
 import { ExplainMode } from '@/components/explain-mode';
 import { MapMode } from '@/components/map/map-mode';
@@ -37,6 +38,13 @@ export default function App() {
   // Execute's selected conversation; Side chat in the panel branches from it.
   const [conversation, setConversation] = useState<{ ref: ConversationRef; readOnly: boolean } | null>(null);
   const shellInsetRef = useRef<HTMLElement>(null);
+  // A new fork opens in Execute from whichever mode made it; the shell selects it.
+  const [openRequest, setOpenRequest] = useState<{ ref: ConversationRef; id: number } | null>(null);
+  const openFork = useCallback((ref: ConversationRef) => {
+    setMode('execute');
+    setOpenRequest((current) => ({ ref, id: (current?.id ?? 0) + 1 }));
+  }, []);
+  const forkLauncher = useForkLauncherValue(openFork);
   // The home screen is Execute with nothing selected; the selected project is
   // null exactly then. The mode toggle stays out of it.
   const onHomeScreen = mode === 'execute' && projectPath === null;
@@ -151,36 +159,40 @@ export default function App() {
         sidebar and right panel each hang themselves below it.
       */}
       <div className="flex h-full flex-col">
-        <RightWorkspace
-          conversation={conversation}
-          leftInsetRef={shellInsetRef}
-          onOpenChange={setRightOpen}
-          onResizingChange={setRightResizing}
-          onWidthChange={setRightWidth}
-          open={panelOpen}
-          projectPath={projectPath}
-          width={rightWidth}
-        >
-          <AppShell
-            insetRef={shellInsetRef}
-            onConversationChange={setConversation}
-            onProjectPathChange={setProjectPath}
-            sidebarOpen={sidebarOpen}
-            onSidebarOpenChange={setSidebarOpen}
-            sidebarWidth={sidebarWidth}
-            onSidebarWidthChange={setSidebarWidth}
-            onOpenSettings={() => setSettingsOpen(true)}
-            showAgentColorTags={showAgentColorTags}
+        {/* Above the right workspace, so side chats in the panel can fork too. */}
+        <ForkLauncherContext.Provider value={forkLauncher}>
+          <RightWorkspace
+            conversation={conversation}
+            leftInsetRef={shellInsetRef}
+            onOpenChange={setRightOpen}
+            onResizingChange={setRightResizing}
+            onWidthChange={setRightWidth}
+            open={panelOpen}
+            projectPath={projectPath}
+            width={rightWidth}
           >
-            {(shell) => (
-              <>
-                <ExecuteMode active={mode === 'execute'} {...shell} />
-                {mode === 'map' && <MapMode {...shell} />}
-                {mode === 'explain' && <ExplainMode />}
-              </>
-            )}
-          </AppShell>
-        </RightWorkspace>
+            <AppShell
+              insetRef={shellInsetRef}
+              onConversationChange={setConversation}
+              onProjectPathChange={setProjectPath}
+              sidebarOpen={sidebarOpen}
+              onSidebarOpenChange={setSidebarOpen}
+              sidebarWidth={sidebarWidth}
+              onSidebarWidthChange={setSidebarWidth}
+              onOpenSettings={() => setSettingsOpen(true)}
+              openRequest={openRequest}
+              showAgentColorTags={showAgentColorTags}
+            >
+              {(shell) => (
+                <>
+                  <ExecuteMode active={mode === 'execute'} {...shell} />
+                  {mode === 'map' && <MapMode {...shell} />}
+                  {mode === 'explain' && <ExplainMode />}
+                </>
+              )}
+            </AppShell>
+          </RightWorkspace>
+        </ForkLauncherContext.Provider>
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onShowAgentColorTagsChange={setShowAgentColorTags} />

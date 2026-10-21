@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { ShellContext } from '@/components/app-shell';
+import { ForkLauncherContext, type ForkLauncher } from '@/components/conversation/fork-launcher';
 import { SideChatLauncherContext, type SideChatLauncher } from '@/components/right-panel/side-chat-launcher';
 import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { announceSideChats, onSideChatsChanged } from '@/renderer/side-chat-events';
@@ -580,4 +581,80 @@ test('a successful delete announces the root, so other views of its side chats l
   await waitFor(() => expect(heard).toHaveBeenCalledWith(conversationKey(root)));
   await waitFor(() => expect(screen.queryByText('More.')).toBeNull());
   stop();
+});
+
+const forkAction = (text: string) => within(nodeOf(text)).queryByLabelText('Fork from here');
+
+test('each message forks from the conversation it belongs to, through a ghost button with a tooltip', async () => {
+  const launcher: ForkLauncher = { fork: vi.fn(async () => undefined), pending: false };
+  const fixture = install({ sideChats: [sideChat] });
+  render(<ForkLauncherContext.Provider value={launcher}><MapMode {...shell(root)} /></ForkLauncherContext.Provider>);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await loadHistory(fixture, side, [turn('t1', 'Hello', 'Hi there.'), turn('s1', 'And?', 'More.')]);
+  await screen.findByText('More.');
+
+  for (const text of ['Hello', 'Hi there.', 'And?', 'More.']) expect(forkAction(text)).not.toBeNull();
+  const button = forkAction('More.');
+  if (!button) throw new Error('No fork action');
+  expect(button.getAttribute('data-variant')).toBe('ghost');
+  act(() => { button.focus(); });
+  expect((await screen.findByRole('tooltip')).textContent).toBe('Fork from here');
+  act(() => { button.blur(); });
+  expect(document.querySelectorAll('[title]')).toHaveLength(0);
+
+  const user = userEvent.setup();
+  await user.click(button);
+  expect(launcher.fork).toHaveBeenLastCalledWith(side, expect.objectContaining({ id: 's1' }), 'after');
+  await user.click(forkAction('Hello') ?? document.body);
+  expect(launcher.fork).toHaveBeenLastCalledWith(root, expect.objectContaining({ id: 't1' }), 'before');
+});
+
+test('a failed fork shows the agent\'s error until it is dismissed or the next fork starts', async () => {
+  const launcher: ForkLauncher = { fork: vi.fn(async () => { throw new Error('Claude could not fork this session'); }), pending: false };
+  const fixture = install();
+  render(<ForkLauncherContext.Provider value={launcher}><MapMode {...shell(root)} /></ForkLauncherContext.Provider>);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await screen.findByText('Hi there.');
+
+  const user = userEvent.setup();
+  await user.click(forkAction('Hi there.') ?? document.body);
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('Claude could not fork this session');
+  await user.click(within(alert).getByRole('button', { name: 'Dismiss' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  await user.click(forkAction('Hi there.') ?? document.body);
+  await screen.findByRole('alert');
+  let finish: () => void = () => undefined;
+  vi.mocked(launcher.fork).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  await user.click(forkAction('Hello') ?? document.body);
+  expect(screen.queryByRole('alert')).toBeNull();
+  await act(async () => finish());
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('no fork without a launcher, while one is being made, or in a subagent conversation', async () => {
+  const fixture = install();
+  const view = render(<MapMode {...shell(root)} />);
+  await loadHistory(fixture, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await screen.findByText('Hi there.');
+  expect(forkAction('Hello')).toBeNull();
+  expect(forkAction('Hi there.')).toBeNull();
+  view.unmount();
+
+  const pending = install();
+  const busy = render(<ForkLauncherContext.Provider value={{ fork: vi.fn(), pending: true }}><MapMode {...shell(root)} /></ForkLauncherContext.Provider>);
+  await loadHistory(pending, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await screen.findByText('Hi there.');
+  expect(forkAction('Hello')).toBeNull();
+  expect(forkAction('Hi there.')).toBeNull();
+  busy.unmount();
+
+  const subagent: ConversationSummary = { ref: root, title: 'Delegated', updatedAt: 1, runtime: 'idle', captureCompleteness: 'complete', parentId: 'parent' };
+  const delegated = install();
+  render(<ForkLauncherContext.Provider value={{ fork: vi.fn(), pending: false }}><MapMode {...shell(root, [subagent])} /></ForkLauncherContext.Provider>);
+  await loadHistory(delegated, root, [turn('t1', 'Hello', 'Hi there.')]);
+  await screen.findByText('Hi there.');
+  expect(forkAction('Hello')).toBeNull();
+  expect(forkAction('Hi there.')).toBeNull();
 });

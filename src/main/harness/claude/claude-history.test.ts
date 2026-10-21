@@ -124,6 +124,26 @@ describe('Claude native history', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  test('reads the session a transcript was forked from off its first records', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'fractal-claude-fork-'));
+    const project = path.join(directory, '-work-fork');
+    await mkdir(path.join(project, 'forked', 'subagents'), { recursive: true });
+    const record = (uuid: string, sessionId: string, extra: Record<string, unknown> = {}) => `${JSON.stringify({ type: 'user', uuid, sessionId, cwd: '/work/fork', message: { role: 'user', content: 'Hi' }, ...extra })}\n`;
+    await writeFile(path.join(project, 'plain.jsonl'), record('a', 'plain'));
+    await writeFile(path.join(project, 'forked.jsonl'), record('b', 'forked', { forkedFrom: { sessionId: 'parent-uuid', messageUuid: 'm1' } }));
+    await writeFile(path.join(project, 'self.jsonl'), record('c', 'self', { forkedFrom: { sessionId: 'self', messageUuid: 'm1' } }));
+    await writeFile(path.join(project, 'forked', 'subagents', 'agent-a1.jsonl'), record('d', 'forked', { isSidechain: true, forkedFrom: { sessionId: 'parent-uuid', messageUuid: 'm1' } }));
+
+    const found = await discoverClaudeConversations(directory);
+    expect(found.map((item) => [item.ref.nativeSessionId, item.summary.forkedFrom]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ['forked', { parentKey: 'claude:parent-uuid' }],
+      ['forked/agent-a1', undefined],
+      ['plain', undefined],
+      ['self', undefined],
+    ]);
+    await rm(directory, { recursive: true, force: true });
+  });
+
   test('streams valid UTF-8 records, continues after malformed lines, and marks a truncated tail partial', async () => {
     const result = readClaudeConversation(partialFixturePath);
     const events = await collect(result.events);

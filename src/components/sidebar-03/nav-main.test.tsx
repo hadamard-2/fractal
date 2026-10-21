@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ConversationRef, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
+import type { ConversationRef, ConversationSummary, HarnessStatus, ProjectConversationGroup } from '@/shared/conversation-contract';
 import type { FractalSettings } from '@/shared/settings-contract';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import NavMain, { sidebarMoveAtIndices, type NavSelection } from './nav-main';
@@ -362,5 +362,86 @@ describe('NavMain', () => {
     await user.click(screen.getByRole('button', { name: 'Fractal' }));
     expect(screen.queryByRole('button', { name: /Chat 6/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy();
+  });
+
+  describe('forks', () => {
+    const fork = (nativeSessionId: string, title: string, parent: ConversationSummary): ConversationSummary => ({
+      ...parent,
+      ref: { ...parent.ref, nativeSessionId },
+      title,
+      runtime: 'idle',
+      forkedFrom: { parentKey: `${parent.ref.provider}:${parent.ref.nativeSessionId}` },
+    });
+    const [fixParser, reviewIpc] = fractalGroup.conversations;
+    const parserFork = fork('claude-fork-1', 'Try a lexer', fixParser);
+    const forked: ProjectConversationGroup = { ...fractalGroup, conversations: [fixParser, parserFork, reviewIpc] };
+
+    test('nests a fork under its parent row and selects it like any chat', async () => {
+      const user = userEvent.setup();
+      const onSelect = vi.fn();
+      renderNav([forked], null, onSelect);
+      await user.click(screen.getByRole('button', { name: 'Fractal' }));
+
+      const forks = screen.getByRole('group', { name: 'Forks of Fix parser' });
+      const parentRow = screen.getByRole('button', { name: /^Fix parser,/ }).closest('li');
+      expect(parentRow?.contains(forks)).toBe(true);
+      const forkRow = within(forks).getByRole('button', { name: 'Try a lexer, Claude Code conversation, Idle' });
+      expect(within(forks).queryByRole('button', { name: /Review IPC/ })).toBeNull();
+
+      await user.click(forkRow);
+      expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ ref: parserFork.ref, title: 'Try a lexer', section: 'Fractal' }));
+    });
+
+    test('counts only top-level rows toward Show more', async () => {
+      const user = userEvent.setup();
+      const chats = Array.from({ length: 5 }, (_, index) => ({ ...fixParser, ref: { ...fixParser.ref, nativeSessionId: `session-${index + 1}` }, title: `Chat ${index + 1}` }));
+      const forks = Array.from({ length: 3 }, (_, index) => fork(`fork-${index + 1}`, `Fork ${index + 1}`, chats[0]));
+      renderNav([{ ...fractalGroup, conversations: [...chats, ...forks] }]);
+      await user.click(screen.getByRole('button', { name: 'Fractal' }));
+      expect(screen.getByRole('button', { name: /Chat 5/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Fork 3/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+      cleanup();
+
+      const sixth = { ...fixParser, ref: { ...fixParser.ref, nativeSessionId: 'session-6' }, title: 'Chat 6' };
+      renderNav([{ ...fractalGroup, conversations: [...chats, ...forks, sixth] }]);
+      await user.click(screen.getByRole('button', { name: 'Fractal' }));
+      expect(screen.queryByRole('button', { name: /Chat 6/ })).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Show more' }));
+      expect(screen.getByRole('button', { name: /Chat 6/ })).toBeTruthy();
+    });
+
+    test('shows the row holding the selected fork past the first five, without Show more', () => {
+      const chats = Array.from({ length: 7 }, (_, index) => ({ ...fixParser, ref: { ...fixParser.ref, nativeSessionId: `session-${index + 1}` }, title: `Chat ${index + 1}` }));
+      const child = fork('fork-1', 'Fork of 7', chats[6]);
+      const grandchild = fork('fork-2', 'Fork of fork', child);
+      renderNav([{ ...fractalGroup, conversations: [...chats, child, grandchild] }], grandchild.ref);
+      expect(screen.getByRole('button', { name: /^Fork of fork,/ }).getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('button', { name: /^Chat 7,/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^Chat 6,/ })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy();
+    });
+
+    test('maps sortable positions to top-level rows', () => {
+      expect(sidebarMoveAtIndices([forked], 'chat:/work/fractal', 1, 0)).toEqual({
+        kind: 'chat', projectPath: '/work/fractal', source: 'codex:codex-thread-1', target: 'claude:claude-session-1',
+      });
+      expect(sidebarMoveAtIndices([forked], 'chat:/work/fractal', 2, 0)).toBeNull();
+    });
+
+    test('gives a fork row the same right-click menu as any chat', async () => {
+      const user = userEvent.setup();
+      const onToggleArchive = vi.fn();
+      render(
+        <SidebarProvider>
+          <NavMain chatMenu={{ isArchived: () => false, onToggleArchive }} groups={[forked]} onCreated={vi.fn()} onRenameChat={vi.fn()} onSelect={vi.fn()} providers={[codex]} selected={null} />
+        </SidebarProvider>
+      );
+      await user.click(screen.getByRole('button', { name: 'Fractal' }));
+      fireEvent.contextMenu(screen.getByRole('button', { name: /Try a lexer/ }));
+      await waitFor(() => expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Rename', 'Archive']));
+      await user.click(screen.getByRole('menuitem', { name: 'Archive' }));
+      expect(onToggleArchive).toHaveBeenCalledWith(parserFork.ref);
+    });
   });
 });

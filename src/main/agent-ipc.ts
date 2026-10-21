@@ -16,7 +16,7 @@ type OwnedLoad = { owner: Owner; ref: ConversationRef; loadId: string };
 type Registration = { emit: (payload: unknown) => void; dispose: () => Promise<void> };
 let activeRegistration: { service: ConversationService; registration: Registration } | undefined;
 
-export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>; accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget'> }): Registration {
+export function registerConversationIpc(service: ConversationService, getWindow: () => BrowserWindow | null, options: { attachmentsRoot: string; modelChoices?: Pick<ModelChoices, 'seed' | 'recordSend'>; accessChoices?: Pick<AccessChoices, 'validateSend' | 'recordSend' | 'forget' | 'inherit'> }): Registration {
   if (activeRegistration) {
     if (activeRegistration.service !== service) throw new Error('Conversation IPC is already registered');
     return activeRegistration.registration;
@@ -191,7 +191,12 @@ export function registerConversationIpc(service: ConversationService, getWindow:
     });
     invoke(CHANNELS.fork, 3, ([input, pointInput, kindInput], owner) => {
       const ref = parseConversationRef(input), point = parseForkPoint(pointInput), kind = parseBranchKind(kindInput); requireLoad(owner, ref);
-      return async () => parseConversationRef(await service.fork(ref, point, kind));
+      return async () => {
+        const forked = parseConversationRef(await service.fork(ref, point, kind));
+        // A fork starts on the access of the conversation it came from, or, from a side chat, whose own access is read-only, of the main conversation. The fork exists either way.
+        if (kind === 'fork') await options.accessChoices?.inherit(forked, service.mainConversationOf(ref)).catch((): void => undefined);
+        return forked;
+      };
     });
     // Not tied to an open load: the map lists and deletes the side chats of a conversation it has not opened.
     invoke(CHANNELS.sideChats, 1, ([input]) => {

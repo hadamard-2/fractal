@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { ForkLauncherContext, type ForkLauncher } from '@/components/conversation/fork-launcher';
 import { resetConversationHubForTests } from '@/renderer/conversation-hub';
 import { announceSideChats } from '@/renderer/side-chat-events';
 import { quoteSelection } from '@/renderer/side-chat-start';
@@ -452,4 +453,34 @@ test('a dropped file isn\'t attached, and the pane says why', async () => {
   fireEvent.drop(composer().closest('form') as HTMLFormElement, { dataTransfer: { types: ['Files'], files: [file] } as unknown as DataTransfer });
   expect((await screen.findByRole('alert')).textContent).toBe('Too many files. Some were not added.');
   expect(screen.queryByText('notes.md')).toBeNull();
+});
+
+test('a bound pane forks from its own turns with the side chat as the source', async () => {
+  const fixture = install({ listing: [summaryOf(side)] });
+  const launcher: ForkLauncher = { fork: vi.fn(async () => undefined), pending: false };
+  render(<ForkLauncherContext.Provider value={launcher}><Tab initial={side} /></ForkLauncherContext.Provider>);
+  await loadHistory(fixture, side, [inherited, own]);
+  await screen.findByText('The lockfile.');
+  // Before its message and after its reply.
+  const forks = screen.getAllByRole('button', { name: 'Fork from here' });
+  expect(forks).toHaveLength(2);
+  fireEvent.click(forks[1]);
+  expect(launcher.fork).toHaveBeenCalledWith(side, own, 'after');
+});
+
+test('an unsent pane offers no fork', () => {
+  install();
+  render(<ForkLauncherContext.Provider value={{ fork: vi.fn(), pending: false }}><Tab initial={null} /></ForkLauncherContext.Provider>);
+  expect(screen.queryByRole('button', { name: 'Fork from here' })).toBeNull();
+});
+
+test('a fork that fails shows the agent\'s error in the pane', async () => {
+  const fixture = install({ listing: [summaryOf(side)] });
+  const launcher: ForkLauncher = { fork: vi.fn(async () => { throw new Error('Claude could not fork this session'); }), pending: false };
+  render(<ForkLauncherContext.Provider value={launcher}><Tab initial={side} /></ForkLauncherContext.Provider>);
+  await loadHistory(fixture, side, [inherited, own]);
+  await screen.findByText('The lockfile.');
+  fireEvent.click(screen.getAllByRole('button', { name: 'Fork from here' })[0]);
+  expect(launcher.fork).toHaveBeenCalledWith(side, own, 'before');
+  expect((await screen.findByRole('alert')).textContent).toBe('Claude could not fork this session');
 });

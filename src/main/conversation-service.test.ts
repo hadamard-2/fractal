@@ -5,7 +5,7 @@ import { ConversationRegistry } from '@/main/conversation-registry';
 import { ConversationService } from '@/main/conversation-service';
 import type { ConversationRun, HarnessAdapter, NativeEventSink } from '@/main/harness/types';
 import type { NativeEvent, NativeEventPayload } from '@/main/harness/reconciler';
-import type { ConversationStreamEvent, ConversationSummary, HarnessCapabilities } from '@/shared/conversation-contract';
+import type { ConversationRef, ConversationStreamEvent, ConversationSummary, HarnessCapabilities, ProviderId } from '@/shared/conversation-contract';
 import { parseConversationStreamEvent } from '@/shared/conversation-ipc';
 
 const ref = { provider: 'codex' as const, nativeSessionId: 'session', projectPath: '/repo' };
@@ -637,19 +637,20 @@ describe('ConversationService.knowsProject', () => {
 describe('ConversationService branches', () => {
   const forkedRef = { ...ref, nativeSessionId: 'forked' };
   const forkCapabilities: HarnessCapabilities = { ...capabilities, fork: true };
-  function branchFixture(history: NativeEvent[] = [start('t1'), finish('t1'), start('t2'), finish('t2')]) {
+  function branchFixture(history: NativeEvent[] = [start('t1'), finish('t1'), start('t2'), finish('t2')], { provider = 'codex', sourceId = 'session' }: { provider?: ProviderId; sourceId?: string } = {}) {
     const extra: ConversationSummary[] = [];
     const deleteConversation = vi.fn<NonNullable<HarnessAdapter['deleteConversation']>>(async () => undefined);
-    const source: ConversationSummary = { ...summary, title: 'Chat' };
-    const forked: ConversationSummary = { ...summary, ref: forkedRef, title: 'Chat (fork)', updatedAt: 0 };
+    const at = (nativeSessionId: string): ConversationRef => ({ provider, nativeSessionId, projectPath: '/repo' });
+    const source: ConversationSummary = { ...summary, ref: at(sourceId), title: 'Chat' };
+    const forked: ConversationSummary = { ...summary, ref: at('forked'), title: 'Chat (fork)', updatedAt: 0 };
     const adapter: HarnessAdapter = {
-      provider: 'codex', capabilities: () => forkCapabilities,
-      probe: vi.fn(async () => ({ provider: 'codex' as const, availability: 'available' as const, capabilities: forkCapabilities })),
+      provider, capabilities: () => forkCapabilities,
+      probe: vi.fn(async () => ({ provider, availability: 'available' as const, capabilities: forkCapabilities })),
       listConversations: vi.fn(async () => [source, forked, ...extra]),
-      loadConversation: vi.fn(async (loaded) => ({ summary: [forked, ...extra].find((item) => item.ref.nativeSessionId === loaded.nativeSessionId) ?? source, events: iterable(history) })),
+      loadConversation: vi.fn(async (loaded) => ({ summary: [forked, ...extra].find((item) => item.ref.nativeSessionId === loaded.nativeSessionId) ?? source, events: iterable(history.map((item) => ({ ...item, provider }))) })),
       watchConversation: vi.fn(async () => vi.fn()),
-      createConversation: vi.fn(async () => forkedRef), continueConversation: vi.fn(async () => runFixture()),
-      forkConversation: vi.fn(async () => forkedRef),
+      createConversation: vi.fn(async () => at('forked')), continueConversation: vi.fn(async () => runFixture()),
+      forkConversation: vi.fn(async () => at('forked')),
       deleteConversation,
     };
     const records = new Map<string, BranchRecord>();
@@ -657,6 +658,7 @@ describe('ConversationService branches', () => {
       get: (key: string) => records.get(key), set: (key: string, record: BranchRecord) => { records.set(key, record); },
       delete: (key: string) => { records.delete(key); },
       sideChatKeys: () => new Set([...records].filter(([, record]) => record.kind === 'side-chat').map(([key]) => key)),
+      forkKeys: () => new Set([...records].filter(([, record]) => record.kind === 'fork').map(([key]) => key)),
       descendants: (root: string) => {
         const found: Array<[string, BranchRecord]> = [];
         const queue = [root];
@@ -669,7 +671,7 @@ describe('ConversationService branches', () => {
     const events: ConversationStreamEvent[] = [];
     const registry = new ConversationRegistry([adapter], async (path) => path);
     const service = new ConversationService(registry, (value) => { events.push(parseConversationStreamEvent(value)); }, { branches });
-    return { adapter, service, records, events, branches, extra, deleteConversation };
+    return { adapter, service, records, events, branches, extra, deleteConversation, at, source, forked };
   }
   const record = (kind: 'side-chat' | 'fork', note?: string): BranchRecord => ({ kind, parentKey: 'codex:session', afterTurnId: 't1', inheritedTurnCount: 1, ...(note ? { note } : {}), createdAt: 1 });
 
@@ -721,6 +723,18 @@ describe('ConversationService branches', () => {
     expect(f.adapter.forkConversation).not.toHaveBeenCalled();
     expect(f.adapter.createConversation).toHaveBeenCalledWith('/repo');
     expect(f.records.get('codex:forked')).toMatchObject({ kind: 'fork', afterTurnId: null, inheritedTurnCount: 0 });
+    await f.service.dispose();
+  });
+
+  test('titles a fork before the first turn like any fork, and still makes it when the title cannot be set', async () => {
+    const f = branchFixture();
+    const renameConversation = vi.fn<NonNullable<HarnessAdapter['renameConversation']>>(async () => undefined);
+    f.adapter.renameConversation = renameConversation;
+    await f.service.open(ref, loadId);
+    await f.service.fork(ref, { turnId: 't1', position: 'before' }, 'fork');
+    expect(renameConversation).toHaveBeenCalledWith(forkedRef, 'Chat (fork)');
+    renameConversation.mockRejectedValueOnce(new Error('rename failed'));
+    await expect(f.service.fork(ref, { turnId: 't1', position: 'before' }, 'fork')).resolves.toEqual(forkedRef);
     await f.service.dispose();
   });
 
@@ -821,6 +835,202 @@ describe('ConversationService branches', () => {
     expect((await f.service.list()).projects[0].conversations.map((item) => item.ref.nativeSessionId)).toEqual(['session', 'forked']);
     f.records.set('codex:forked', record('side-chat'));
     expect((await f.service.list()).projects[0].conversations.map((item) => item.ref.nativeSessionId)).toEqual(['session']);
+  });
+
+  describe('fork lineage', () => {
+    const claude = { provider: 'claude' as const, sourceId: 'main' };
+    const conversations = async (f: ReturnType<typeof branchFixture>) => (await f.service.list()).projects.flatMap((project) => project.conversations);
+    const lineageOf = async (f: ReturnType<typeof branchFixture>, id: string) => (await conversations(f)).find((item) => item.ref.nativeSessionId === id)?.forkedFrom;
+    const fork = (parentKey: string, more: Partial<BranchRecord> = {}): BranchRecord => ({ kind: 'fork', parentKey, afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 1, ...more });
+    const side = (parentKey: string): BranchRecord => ({ kind: 'side-chat', parentKey, afterTurnId: 't1', inheritedTurnCount: 1, createdAt: 1 });
+
+    test('lists a fork with the conversation it came from and the turns it inherited', async () => {
+      const f = branchFixture(undefined, claude);
+      await f.service.open(f.at('main'), loadId);
+      await f.service.fork(f.at('main'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(await lineageOf(f, 'forked')).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 2 });
+      expect((await conversations(f)).find((item) => item.ref.nativeSessionId === 'main')).not.toHaveProperty('forkedFrom');
+      await f.service.dispose();
+    });
+
+    test('nests a fork of a side chat under the main conversation, even after the side chat is deleted', async () => {
+      const f = branchFixture(undefined, claude);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      f.deleteConversation.mockImplementation(async (deleted) => { f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item.ref.nativeSessionId !== deleted.nativeSessionId)); });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.records.get('claude:forked')).toMatchObject({ kind: 'fork', parentKey: 'claude:side', nestsUnder: 'claude:main' });
+      expect(await lineageOf(f, 'forked')).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 2 });
+      await f.service.deleteSideChat(f.at('side'));
+      expect(await lineageOf(f, 'forked')).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 2 });
+      await f.service.dispose();
+    });
+
+    test('titles a fork of a side chat after the main conversation, and a side chat of a side chat after the side chat', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [{ ...f.source, title: 'Plan' }, f.forked, ...f.extra]);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Plan (side chat)' });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ title: 'Plan (fork)' }));
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'side-chat');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ title: 'Plan (side chat) (side chat)' }));
+      await f.service.dispose();
+    });
+
+    test('forks a side chat with the settings of its main conversation, and a main conversation with none', async () => {
+      const f = branchFixture(undefined, claude);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.objectContaining({ readOnly: false, settingsFrom: f.at('main') }));
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'side-chat');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('side'), 't2', expect.not.objectContaining({ settingsFrom: expect.anything() }));
+      await f.service.open(f.at('main'), nextLoadId);
+      await f.service.fork(f.at('main'), { turnId: 't2', position: 'after' }, 'fork');
+      expect(f.adapter.forkConversation).toHaveBeenLastCalledWith(f.at('main'), 't2', expect.not.objectContaining({ settingsFrom: expect.anything() }));
+      await f.service.dispose();
+    });
+
+    test('records no nestsUnder for a fork of a main conversation', async () => {
+      const f = branchFixture(undefined, claude);
+      await f.service.open(f.at('main'), loadId);
+      await f.service.fork(f.at('main'), { turnId: 't1', position: 'after' }, 'fork');
+      expect(f.records.get('claude:forked')).not.toHaveProperty('nestsUnder');
+      await f.service.dispose();
+    });
+
+    test('reads a recorded fork the listing lacks under the project of its nearest listed ancestor, and leaves out one it cannot read', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source, ...f.extra]);
+      f.extra.push({ ...summary, ref: { ...f.at('elsewhere'), projectPath: '/elsewhere' }, title: 'Elsewhere', updatedAt: 9 });
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      f.records.set('claude:side', side('claude:main'));
+      f.records.set('claude:unlisted', fork('claude:unlisted-parent'));
+      f.records.set('claude:unlisted-parent', fork('claude:side', { nestsUnder: 'claude:main' }));
+      f.records.set('claude:gone', fork('claude:main'));
+      f.records.set('claude:broken', fork('claude:main'));
+      f.records.set('claude:orphan', fork('claude:nowhere'));
+      const read = vi.fn(async (unlisted: ConversationRef) => {
+        if (unlisted.nativeSessionId === 'broken') throw new Error('unreadable');
+        if (unlisted.nativeSessionId === 'gone') return null;
+        return { ...summary, ref: unlisted, title: unlisted.nativeSessionId };
+      });
+      f.adapter.readSummary = read;
+      const listed = await f.service.list();
+      expect(read.mock.calls.map(([unlisted]) => unlisted).sort((a, b) => a.nativeSessionId.localeCompare(b.nativeSessionId))).toEqual([f.at('broken'), f.at('gone'), f.at('unlisted'), f.at('unlisted-parent')]);
+      expect(listed.projects.map((project) => [project.projectPath, project.conversations.map((item) => item.ref.nativeSessionId)])).toEqual([
+        ['/elsewhere', ['elsewhere']],
+        ['/repo', ['main', 'unlisted', 'unlisted-parent']],
+      ]);
+      const repo = listed.projects[1].conversations;
+      expect(repo[1].forkedFrom).toEqual({ parentKey: 'claude:unlisted-parent', inheritedTurnCount: 1 });
+      expect(repo[2].forkedFrom).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 1 });
+      await f.service.dispose();
+    });
+
+    test('keeps listing an unlisted fork of a side chat under the main conversation after the side chat is deleted', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source, ...f.extra]);
+      f.adapter.readSummary = vi.fn(async (unlisted: ConversationRef) => unlisted.nativeSessionId === 'forked' ? { ...f.forked, ref: unlisted } : null);
+      f.records.set('claude:side', side('claude:main'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side' });
+      f.deleteConversation.mockImplementation(async (deleted) => { f.extra.splice(0, f.extra.length, ...f.extra.filter((item) => item.ref.nativeSessionId !== deleted.nativeSessionId)); });
+      await f.service.open(f.at('side'), loadId);
+      await f.service.fork(f.at('side'), { turnId: 't2', position: 'after' }, 'fork');
+      await f.service.deleteSideChat(f.at('side'));
+      expect(f.records.has('claude:side')).toBe(false);
+      const listed = await conversations(f);
+      expect(listed.map((item) => item.ref.nativeSessionId)).toEqual(['main', 'forked']);
+      expect(listed[1].forkedFrom).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 2 });
+      await f.service.dispose();
+    });
+
+    test('lists a fork made before the first message of a Claude conversation while it is still a draft', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source]);
+      const read = vi.fn(async () => null);
+      f.adapter.readSummary = read;
+      await f.service.open(f.at('main'), loadId);
+      await f.service.fork(f.at('main'), { turnId: 't1', position: 'before' }, 'fork');
+      const draft = (await conversations(f)).find((item) => item.ref.nativeSessionId === 'forked');
+      expect(draft).toMatchObject({ ref: f.at('forked'), title: 'Chat (fork)', forkedFrom: { parentKey: 'claude:main', inheritedTurnCount: 0 } });
+      expect(read).not.toHaveBeenCalled();
+      await f.service.dispose();
+    });
+
+    test('lists a recorded fork with the time Fractal made it rather than the start of the history it copied', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [{ ...f.source, createdAt: 5 }, ...f.extra]);
+      f.extra.push({ ...summary, ref: f.at('older'), title: 'Older', createdAt: 5 }, { ...summary, ref: f.at('newer'), title: 'Newer', createdAt: 5 });
+      f.adapter.readSummary = vi.fn(async (unlisted: ConversationRef) => ({ ...summary, ref: unlisted, title: 'Unlisted', createdAt: 5 }));
+      f.records.set('claude:older', fork('claude:main', { createdAt: 10 }));
+      f.records.set('claude:newer', fork('claude:main', { createdAt: 20 }));
+      f.records.set('claude:unlisted', fork('claude:main', { createdAt: 30 }));
+      const createdAt = Object.fromEntries((await conversations(f)).map((item) => [item.ref.nativeSessionId, item.createdAt]));
+      expect(createdAt).toEqual({ main: 5, older: 10, newer: 20, unlisted: 30 });
+      await f.service.dispose();
+    });
+
+    test('keeps the lineage the agent reports when Fractal has no record, nested under a side chat\'s main conversation, and a record overrides it', async () => {
+      const f = branchFixture();
+      f.records.set('codex:side', side('codex:session'));
+      f.extra.push({ ...summary, ref: f.at('native'), title: 'Native', forkedFrom: { parentKey: 'claude:x' } });
+      f.extra.push({ ...summary, ref: f.at('of-side'), title: 'Of side', forkedFrom: { parentKey: 'codex:side' } });
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source, { ...f.forked, forkedFrom: { parentKey: 'codex:other' } }, ...f.extra]);
+      f.records.set('codex:forked', fork('codex:session', { inheritedTurnCount: 2 }));
+      expect(await lineageOf(f, 'native')).toEqual({ parentKey: 'claude:x' });
+      expect(await lineageOf(f, 'of-side')).toEqual({ parentKey: 'codex:session' });
+      expect(await lineageOf(f, 'forked')).toEqual({ parentKey: 'codex:session', inheritedTurnCount: 2 });
+    });
+
+    test('opens a fork with its lineage, and an ordinary conversation without one', async () => {
+      const f = branchFixture();
+      f.records.set('codex:forked', fork('codex:session', { inheritedTurnCount: 2 }));
+      await expect(f.service.open(forkedRef, loadId)).resolves.toEqual({ summary: f.forked, capabilities: forkCapabilities, forkedFrom: { parentKey: 'codex:session', inheritedTurnCount: 2 } });
+      const plain = await f.service.open(ref, nextLoadId);
+      expect(plain).not.toHaveProperty('forkedFrom');
+      expect(plain.summary).not.toHaveProperty('forkedFrom');
+      await f.service.dispose();
+    });
+
+    test('opens a side chat without lineage even when the agent reports one', async () => {
+      const f = branchFixture();
+      f.records.set('codex:side', side('codex:session'));
+      f.extra.push({ ...summary, ref: f.at('side'), title: 'Side', forkedFrom: { parentKey: 'codex:session' } });
+      const opened = await f.service.open(f.at('side'), loadId);
+      expect(opened).not.toHaveProperty('forkedFrom');
+      await f.service.dispose();
+    });
+
+    test('opens a draft fork with its lineage', async () => {
+      const f = branchFixture(undefined, claude);
+      vi.mocked(f.adapter.listConversations).mockImplementation(async () => [f.source]);
+      await f.service.open(f.at('main'), loadId);
+      await f.service.fork(f.at('main'), { turnId: 't1', position: 'before' }, 'fork');
+      expect((await f.service.open(f.at('forked'), nextLoadId)).forkedFrom).toEqual({ parentKey: 'claude:main', inheritedTurnCount: 0 });
+      await f.service.dispose();
+    });
+
+    test('finds the main conversation of a side chat of a side chat, under the given project', () => {
+      const f = branchFixture(undefined, claude);
+      f.records.set('claude:sc1', side('claude:main'));
+      f.records.set('claude:sc2', side('claude:sc1'));
+      f.records.set('claude:fk', fork('claude:sc2'));
+      expect(f.service.mainConversationOf({ ...f.at('sc2'), projectPath: '/elsewhere' })).toEqual({ ...f.at('main'), projectPath: '/elsewhere' });
+      expect(f.service.mainConversationOf(f.at('main'))).toEqual(f.at('main'));
+      expect(f.service.mainConversationOf(f.at('fk'))).toEqual(f.at('fk'));
+    });
+
+    test('stops walking side chats at a cycle', () => {
+      const f = branchFixture(undefined, claude);
+      f.records.set('claude:a', side('claude:b'));
+      f.records.set('claude:b', side('claude:a'));
+      expect(f.service.mainConversationOf(f.at('a'))).toEqual(f.at('b'));
+    });
   });
 
   describe('side chats', () => {

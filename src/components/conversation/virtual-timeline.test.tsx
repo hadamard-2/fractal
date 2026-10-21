@@ -145,3 +145,26 @@ test('hides the scroll-to-bottom button when the transcript cannot scroll', asyn
   expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'New activity' })).toBeNull();
 });
+
+test('marks where a fork begins: ahead of the turn it made itself, or after the last when it has made none', async () => {
+  const precedes = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const placement = async (dividerBefore?: number) => {
+    const view = render(<VirtualTimeline conversationId={`fork-divider-${dividerBefore}`} dividerBefore={dividerBefore} footer={<p>Footer</p>} turns={turns(3)} onResolve={() => undefined} />);
+    await screen.findByText('User anchor 2');
+    const articles = screen.getAllByRole('article');
+    expect(articles).toHaveLength(3);
+    const dividers = screen.queryAllByRole('separator', { name: 'Forked here' });
+    const result = dividers.length === 0 ? null : articles.filter((article) => precedes(article, dividers[0])).length;
+    if (dividers[0]) {
+      expect(dividers).toHaveLength(1);
+      expect(dividers[0].textContent).toBe('Forked here');
+      if (result === 3) expect(precedes(dividers[0], screen.getByText('Footer'))).toBe(true);
+    }
+    view.unmount();
+    return result;
+  };
+  expect(await placement(2)).toBe(2);
+  expect(await placement(0)).toBe(0);
+  expect(await placement(3)).toBe(3);
+  expect(await placement()).toBeNull();
+});

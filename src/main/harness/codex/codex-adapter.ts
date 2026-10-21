@@ -6,6 +6,7 @@ import { createCodexLiveNormalizationContext, normalizeCodexNotification, normal
 import { reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { canonicalizeProjectPath, type Realpath } from '@/main/harness/project-path';
 import { composePromptText } from '@/main/harness/attachment-block';
+import { conversationKey } from '@/shared/conversation-contract';
 import type { AccessState, AgentModel, ConversationRef, ConversationRuntime, ConversationSummary, HarnessCapabilities, HarnessStatus, ModelChoice, UserDecision } from '@/shared/conversation-contract';
 import type { AgentPrompt, ConversationRun, ForkOptions, HarnessAdapter, LoadedConversation, NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import { codexAccessOverrides, codexAccessState, codexReadOnlyOverrides } from '@/main/harness/codex/codex-access';
@@ -180,7 +181,8 @@ export class CodexAdapter implements HarnessAdapter {
     const note = options.note ? { developerInstructions: options.note } : {};
     // Both start on the parent's own model, so neither falls back to the CLI's configured default.
     // A full fork also keeps the parent's access; a side chat is pinned read-only with approvals off.
-    const parent = await this.resumeThread(source);
+    // A full fork of a side chat takes the model and access of the conversation it belongs to, not the side chat's.
+    const parent = await this.resumeThread(options.settingsFrom ?? source);
     const settings = options.readOnly
       ? { sandbox: 'read-only' as const, approvalPolicy: 'never' as const, approvalsReviewer: 'user' as const, config: await this.readOnlyConfig(projectPath), ...(parent.model ? { model: parent.model } : {}) }
       : forkSettingsFrom(parent);
@@ -536,6 +538,7 @@ function summaryFromThread(thread: Awaited<CodexRequestMap['thread/read']['resul
     ref: { provider: 'codex', nativeSessionId: thread.id, projectPath }, title,
     createdAt: thread.createdAt * 1000, updatedAt: thread.updatedAt * 1000,
     runtime: runtimeFor(thread.status), captureCompleteness,
+    ...(thread.forkedFromId ? { forkedFrom: { parentKey: conversationKey({ provider: 'codex', nativeSessionId: thread.forkedFromId }) } } : {}),
   };
 }
 

@@ -3,6 +3,7 @@ import type { FSWatcher, Stats } from 'node:fs';
 import path from 'node:path';
 import { NdjsonDecoder } from '@/main/harness/ndjson-decoder';
 import type { NativeEvent } from '@/main/harness/reconciler';
+import { conversationKey } from '@/shared/conversation-contract';
 import type { CaptureCompleteness, ConversationRef, ConversationSummary, ModelChoice } from '@/shared/conversation-contract';
 import type { NativeEventSink, Unsubscribe } from '@/main/harness/types';
 import {
@@ -211,10 +212,15 @@ async function summarizeConversation(filePath: string, dependencies: ClaudeHisto
       ? 'partial'
       : fileStat.size > SUMMARY_SCAN_BYTES * 2 ? 'unknown' : 'complete';
     const ref: ConversationRef = { provider: 'claude', nativeSessionId: identity.id, projectPath };
+    const forkParent = identity.parentId === undefined ? forkParentId(first.records) : undefined;
     return {
       ref,
       filePath,
-      summary: { ref, title, createdAt, updatedAt, runtime: 'unknown', captureCompleteness, ...(identity.parentId === undefined ? {} : { parentId: identity.parentId }) },
+      summary: {
+        ref, title, createdAt, updatedAt, runtime: 'unknown', captureCompleteness,
+        ...(identity.parentId === undefined ? {} : { parentId: identity.parentId }),
+        ...(forkParent === undefined || forkParent === identity.id ? {} : { forkedFrom: { parentKey: conversationKey({ provider: 'claude', nativeSessionId: forkParent }) } }),
+      },
     };
   } finally {
     await handle.close();
@@ -383,6 +389,12 @@ function titleFrom(records: ClaudeHistoryRecord[]): string | undefined {
 
 function stringAt(records: ClaudeHistoryRecord[], key: string): string | undefined {
   return records.map((record) => record[key]).find((value): value is string => typeof value === 'string');
+}
+
+// The Agent SDK's forkSession copies the parent's records into the new transcript, each
+// stamped forkedFrom: { sessionId, messageUuid }, so the first one names the parent.
+function forkParentId(records: ClaudeHistoryRecord[]): string | undefined {
+  return records.map((record) => objectValue(record.forkedFrom)?.sessionId).find((value): value is string => typeof value === 'string');
 }
 
 function timestampAt(record: ClaudeHistoryRecord | undefined): number | undefined {

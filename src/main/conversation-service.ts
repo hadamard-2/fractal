@@ -7,10 +7,10 @@ import { ConversationRuntimeController } from '@/main/conversation-runtime';
 import { nativeEventKey, reconcileNativeEvents, type NativeEvent } from '@/main/harness/reconciler';
 import { TurnProjector, type TurnProjectionUpdate } from '@/main/harness/turn-projector';
 import type { AgentPrompt, ConversationRun, Unsubscribe } from '@/main/harness/types';
-import { BUSY_RUNTIMES, conversationKey, parseConversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkPoint, type HarnessCapabilities, type ProviderId, type SideChatSummary, type UserDecision } from '@/shared/conversation-contract';
+import { BUSY_RUNTIMES, conversationKey, parseConversationKey, type BranchKind, type ConversationRef, type ConversationStreamEvent, type ConversationSummary, type ConversationTurn, type ForkLineage, type ForkPoint, type HarnessCapabilities, type ProviderId, type SideChatSummary, type UserDecision } from '@/shared/conversation-contract';
 import { MAX_BRANCH_POINT_TEXT_LENGTH, parseConversationRef, parseConversationTitle, parseLoadId } from '@/shared/conversation-ipc';
 
-type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities };
+type OpenResult = { summary: ConversationSummary; capabilities: HarnessCapabilities; forkedFrom?: ForkLineage };
 type StreamPayload = ConversationStreamEvent extends infer Event ? Event extends ConversationStreamEvent ? Omit<Event, 'loadId' | 'seq' | 'ref'> : never : never;
 type Load = {
   ref: ConversationRef;
@@ -36,7 +36,7 @@ type Load = {
 type OwnedRun = { ref: ConversationRef; id: string; rendererId: string; run: ConversationRun; runtime: ConversationRuntimeController; settled: Promise<void>; events: Map<string, NativeEvent>; requests: Map<string, Extract<ConversationStreamEvent, { type: 'request.opened' }>['request']>; revokedReason?: string; revokedRequests: Set<string> };
 type StartingRun = { id: string; rendererId: string; runtime: ConversationRuntimeController; cancelled: boolean; settled: Promise<void>; settle(): void };
 
-type Branches = Pick<BranchStore, 'get' | 'set' | 'delete' | 'descendants' | 'sideChatKeys'>;
+type Branches = Pick<BranchStore, 'get' | 'set' | 'delete' | 'descendants' | 'sideChatKeys' | 'forkKeys'>;
 
 export class ConversationService {
   private readonly loads = new Map<string, Load>();
@@ -58,13 +58,87 @@ export class ConversationService {
     if (!Number.isInteger(this.chunkSize) || this.chunkSize < 1 || this.chunkSize > 50) throw new Error('History chunk size must be between 1 and 50');
   }
 
-  /** Side chats stay out of the list: they are reached from the conversation they branched from. Forks are listed like any conversation. */
+  /**
+   * Side chats stay out of the list: they are reached from the conversation they branched from. Forks are listed like any conversation, with their lineage,
+   * including the recorded forks the agent's listing lacks: an unsent Claude draft, or a fork the agent does not list until it has run a turn of its own.
+   */
   async list() {
     this.assertAvailable();
     const listing = await this.registry.list();
-    const sideChats = this.branches?.sideChatKeys();
-    if (!sideChats?.size) return listing;
-    return { ...listing, projects: listing.projects.map((project) => ({ ...project, conversations: project.conversations.filter((conversation) => !sideChats.has(conversationKey(conversation.ref))) })) };
+    const branches = this.branches;
+    if (!branches) return listing;
+    const sideChats = branches.sideChatKeys();
+    const listed = new Map<string, string>();
+    for (const project of listing.projects) {
+      for (const conversation of project.conversations) listed.set(conversationKey(conversation.ref), conversation.ref.projectPath);
+    }
+    const projects = listing.projects.map((project) => ({ ...project, conversations: project.conversations.filter((conversation) => !sideChats.has(conversationKey(conversation.ref))).map((conversation) => this.withLineage(conversation)) }));
+    const unlisted = await Promise.all([...branches.forkKeys()].filter((key) => !listed.has(key)).map((key) => this.readUnlistedFork(key, listed)));
+    for (const summary of unlisted) {
+      if (summary) projects.find((project) => project.projectPath === summary.ref.projectPath)?.conversations.push(summary);
+    }
+    return { ...listing, projects };
+  }
+
+  /** The conversation a side chat belongs to, through any depth of side chats, under the given project; the conversation itself when it is not a side chat. */
+  mainConversationOf(input: ConversationRef): ConversationRef {
+    const ref = parseConversationRef(input);
+    const key = conversationKey(ref);
+    const mainKey = this.mainKeyOf(key);
+    return mainKey === key ? ref : { ...parseConversationKey(mainKey), projectPath: ref.projectPath };
+  }
+
+  /** Walks side chat records up from `key`, stopping at a key with no side chat record or one already visited. */
+  private mainKeyOf(key: string): string {
+    const visited = new Set([key]);
+    let current = key;
+    for (let record = this.branches?.get(current); record?.kind === 'side-chat' && !visited.has(record.parentKey); record = this.branches?.get(current)) {
+      current = record.parentKey;
+      visited.add(current);
+    }
+    return current;
+  }
+
+  /**
+   * Fractal's record when it has one: a fork's lineage, and none for a side chat, whose agent may report the copy it was made with as a fork.
+   * Without a record, the lineage the agent reports, nested under the main conversation of a side chat it names.
+   */
+  private lineageOf(key: string, reported: ForkLineage | undefined): ForkLineage | undefined {
+    const record = this.branches?.get(key);
+    if (record) return record.kind === 'fork' ? { parentKey: record.nestsUnder ?? record.parentKey, inheritedTurnCount: record.inheritedTurnCount } : undefined;
+    return reported && { ...reported, parentKey: this.mainKeyOf(reported.parentKey) };
+  }
+
+  /** A fork Fractal recorded started when Fractal made it: the agent may report the start of the history it copied from its parent. */
+  private withLineage(summary: ConversationSummary): ConversationSummary {
+    const key = conversationKey(summary.ref);
+    const forkedFrom = this.lineageOf(key, summary.forkedFrom);
+    if (!forkedFrom) return summary;
+    const record = this.branches?.get(key);
+    return { ...summary, forkedFrom, ...(record?.kind === 'fork' ? { createdAt: record.createdAt } : {}) };
+  }
+
+  /**
+   * A recorded fork the listing lacks: an unsent draft, or the agent's own summary read under the project of its nearest listed ancestor or of the main conversation it nests under.
+   * Null when it has no listed ancestor, or the agent does not have it or cannot read it.
+   */
+  private async readUnlistedFork(key: string, listed: Map<string, string>): Promise<ConversationSummary | null> {
+    const draft = this.drafts.get(key);
+    if (draft) return this.withLineage(structuredClone(draft));
+    const visited = new Set([key]);
+    let projectPath: string | undefined;
+    for (let record = this.branches?.get(key); record && projectPath === undefined && !visited.has(record.parentKey); record = this.branches?.get(record.parentKey)) {
+      // nestsUnder first: once a side chat is deleted its record is gone, and the walk through parentKey ends at it.
+      projectPath = (record.nestsUnder === undefined ? undefined : listed.get(record.nestsUnder)) ?? listed.get(record.parentKey);
+      visited.add(record.parentKey);
+    }
+    if (projectPath === undefined) return null;
+    try {
+      const summary = await this.registry.readUnlisted({ ...parseConversationKey(key), projectPath });
+      return summary?.ref.projectPath === projectPath ? this.withLineage(summary) : null;
+    } catch {
+      return null;
+    }
   }
 
   branchKind(input: ConversationRef): BranchKind | undefined {
@@ -105,7 +179,8 @@ export class ConversationService {
     const draft = this.drafts.get(key);
     if (draft?.ref.projectPath === ref.projectPath) {
       load.phase = 'live';
-      load.promise = Promise.resolve({ summary: structuredClone(draft), capabilities: this.registry.resolve(ref).capabilities() });
+      const forkedFrom = this.lineageOf(key, undefined);
+      load.promise = Promise.resolve({ summary: structuredClone(draft), capabilities: this.registry.resolve(ref).capabilities(), ...(forkedFrom ? { forkedFrom } : {}) });
       this.send(load, { type: 'history.complete' });
       this.replayOwnedRun(load);
       return load.promise;
@@ -145,6 +220,21 @@ export class ConversationService {
     return ref;
   }
 
+  /**
+   * A new conversation with a title: a Claude draft carries it until its first send names it, and an agent session is renamed,
+   * best effort, since it already exists and is usable untitled.
+   */
+  private async createTitled(provider: ProviderId, projectPath: string, title: string): Promise<ConversationRef> {
+    const ref = await this.create(provider, projectPath);
+    const draft = this.drafts.get(conversationKey(ref));
+    if (draft) {
+      draft.title = title;
+      return ref;
+    }
+    try { await this.registry.resolve(ref).renameConversation?.(ref, title); } catch { /* the conversation is usable without its title */ }
+    return ref;
+  }
+
   async fork(input: ConversationRef, point: ForkPoint, kind: BranchKind): Promise<ConversationRef> {
     this.assertAvailable();
     const branches = this.branches;
@@ -164,19 +254,26 @@ export class ConversationService {
     const afterIndex = after ? index : index - 1;
     const afterTurn = turns[afterIndex] as ConversationTurn | undefined;
     const summary = await this.registry.validate(source);
+    // A side chat is read-only and approval-free, so a fork of one takes the settings of the conversation the side chat belongs to.
+    const mainRef = this.mainConversationOf(source);
+    const settingsFrom = kind === 'fork' && conversationKey(mainRef) !== key ? mainRef : undefined;
+    // A fork of a side chat nests under the main conversation, so it is named after it.
+    const baseTitle = settingsFrom ? (await this.registry.validate(settingsFrom)).title : summary.title;
     if (this.deleting.has(key)) throw new Error('Conversation is not idle');
     // A history may never record a turn's end, so an active turn is only in progress while the conversation is busy.
     const busy = BUSY_RUNTIMES.has(summary.runtime) || this.ownedRuns.has(key) || this.startingRuns.has(key);
     if (afterTurn?.status === 'active' && busy) throw new Error('Cannot fork from a turn in progress');
     if (summary.parentId !== undefined) throw new Error('Subagent conversations are read-only');
     const note = kind === 'side-chat' ? SIDE_CHAT_NOTE : afterIndex !== turns.length - 1 ? FORK_NOTE : undefined;
-    const title = `${summary.title} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
+    const title = `${baseTitle} (${kind === 'side-chat' ? 'side chat' : 'fork'})`;
     const ref = afterTurn
-      ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), title })
-      : await this.create(source.provider, source.projectPath);
+      ? await this.registry.fork(source, afterTurn.id, { readOnly: kind === 'side-chat', ...(note === undefined ? {} : { note }), ...(settingsFrom ? { settingsFrom } : {}), title })
+      : await this.createTitled(source.provider, source.projectPath, title);
     const branchPointText = kind === 'side-chat' && afterTurn ? branchPointOf(afterTurn) : undefined;
+    // A fork of a side chat nests under the main conversation in the sidebar, and keeps nesting there once the side chat is deleted.
+    const mainKey = kind === 'fork' ? this.mainKeyOf(key) : key;
     try {
-      branches.set(conversationKey(ref), { kind, parentKey: conversationKey(source), afterTurnId: afterTurn?.id ?? null, inheritedTurnCount: afterIndex + 1, ...(note === undefined ? {} : { note }), createdAt: Date.now(), ...(branchPointText ? { branchPointText } : {}) });
+      branches.set(conversationKey(ref), { kind, parentKey: key, afterTurnId: afterTurn?.id ?? null, inheritedTurnCount: afterIndex + 1, ...(note === undefined ? {} : { note }), createdAt: Date.now(), ...(branchPointText ? { branchPointText } : {}), ...(mainKey === key ? {} : { nestsUnder: mainKey }) });
     } catch (error) {
       // Without its record the new session would show up as an ordinary conversation, and a side chat would not be read-only.
       this.drafts.delete(conversationKey(ref));
@@ -521,9 +618,11 @@ export class ConversationService {
       load.phase = 'live';
       this.replayOwnedRun(load);
       const { title, updatedAt, createdAt, runtime, captureCompleteness } = loaded.summary;
+      const forkedFrom = this.lineageOf(conversationKey(summary.ref), summary.forkedFrom);
       return {
         summary: { ref: summary.ref, title, updatedAt, runtime, captureCompleteness, ...(createdAt === undefined ? {} : { createdAt }) },
         capabilities: structuredClone(adapter.capabilities()),
+        ...(forkedFrom ? { forkedFrom } : {}),
       };
     } catch {
       const cancelled = load.closed;
