@@ -172,6 +172,21 @@ describe('Codex native normalization', () => {
     } }, createCodexLiveNormalizationContext())).toEqual([]);
   });
 
+  test('drops the automatic approval review Codex runs before an action', () => {
+    // Shaped after the app server's generated ItemGuardianApprovalReview*Notification types.
+    const reviewed = {
+      threadId: 'thread-1', turnId: 'turn-1', startedAtMs: 1_000, reviewId: 'review-1', targetItemId: 'item-1',
+      action: { type: 'applyPatch', cwd: '/repo', files: ['/repo/hello.txt'] },
+    };
+    const context = createCodexLiveNormalizationContext();
+    expect(normalizeCodexNotification({ method: 'item/autoApprovalReview/started', params: {
+      ...reviewed, review: { status: 'inProgress', riskLevel: null, userAuthorization: null, rationale: null },
+    } } as never, context)).toEqual([]);
+    expect(normalizeCodexNotification({ method: 'item/autoApprovalReview/completed', params: {
+      ...reviewed, completedAtMs: 1_200, decisionSource: 'agent', review: { status: 'approved', riskLevel: 'low', userAuthorization: null, rationale: 'Writes one file in the project.' },
+    } } as never, context)).toEqual([]);
+  });
+
   test('finishes a failed turn whose completion carries no loaded items', () => {
     const events = normalizeCodexNotification({ method: 'turn/completed', params: { threadId: 'thread-1', turn: {
       id: 'turn-1', items: [], itemsView: 'notLoaded', status: 'failed', error: { message: 'The model is not available for this account.', codexErrorInfo: null, additionalDetails: null }, startedAt: 1, completedAt: 2, durationMs: 1_000,

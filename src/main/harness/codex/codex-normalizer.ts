@@ -90,6 +90,10 @@ export function normalizeCodexNotification(notification: ServerNotification, con
     case 'thread/tokenUsage/updated':
       // Token counts after each model response: accounting, not conversation content.
       return [];
+    case 'item/autoApprovalReview/started':
+    case 'item/autoApprovalReview/completed':
+      // Codex's automatic check of an action before it runs; the action's own item carries what happened.
+      return [];
     default:
       return [unsupported(notificationId(notification, context), notification.method, 0, notificationTurnId(notification))];
   }
